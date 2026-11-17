@@ -29,10 +29,12 @@ class _FetchPageState extends State<FetchPage> {
   static const _kWebInitTimeout = Duration(seconds: 15);
 
   /// 预览面板高度上限。必须是真实可见区域，PlatformView 才会被创建。
-  /// 120 而非 180：用户反馈 180 太占地，而整页缩放（见 useWideViewPort /
-  /// loadWithOverviewMode）之后，120 已足够看清挑战页的版面结构，
-  /// 真想细看还有「放大」档（屏高 55%）。
-  static const _kPreviewMaxHeight = 120.0;
+  ///
+  /// 60（原 120/180）：抓取已改为**直连 API**，页面预览只在「被 CDN 拦截、
+  /// 需要用户手动过验证」时才用得着，所以压到最小但仍可见（不能删、不能藏，
+  /// 否则 PlatformView 不 attach，`onWebViewCreated` 不触发 → `_web` 为 null）。
+  /// 真要看清验证码时点标题行的「放大」即可（屏高 55%）。
+  static const _kPreviewMaxHeight = 60.0;
 
   /// 预览面板「折叠档」的高度下限，同时是键盘弹出时的面板高度。
   /// 绝对不能压到 0 或移出屏外——那会让 PlatformView 被销毁、`_web` 置空、
@@ -165,14 +167,114 @@ class _FetchPageState extends State<FetchPage> {
       return;
     }
 
-    _loadWaiter = Completer<void>();
-    await web.loadUrl(urlRequest: URLRequest(url: WebUri('$_origin/search')));
+    // ── 路径一：直连 API ──────────────────────────────────────────────
+    // 用户要求「直接访问我的连接」：不再先加载 /search 页面，直接把
+    // `https://platform.censys.io/api/search?q=...` 交给 WebView 加载，
+    // 返回的 body 就是 JSON。省掉一次页面加载 + 一次脚本注入。
+    final apiUrl = '$_origin$_searchPath?q=${Uri.encodeQueryComponent(query)}';
+    String? body;
+    var viaApi = false;
 
-    // 等页面加载完（onLoadStop），或超时
+    setState(() => _diag = '直连 API…');
+    body = await _fetchDirect(web, apiUrl);
+    viaApi = body != null;
+
+    if (body == null) {
+      // ── 路径二（fallback）：被 CDN 挑战拦截 ──────────────────────────
+      // 直连拿到的是 HTML 挑战页时，只能先加载页面把 Cookie 过出来，
+      // 再在页面内 fetch（带 credentials: include）。
+      setState(() => _diag = '直连被拦截，加载页面过验证…');
+      body = await _fetchViaPage(web, query);
+    }
+
+    await _clearProxy();
+
+    if (body == null) {
+      setState(() {
+        _fetching = false;
+        // 若 fallback 已写入更具体的原因（如「浏览器内请求失败」），不要覆盖
+        _error ??= '直连 API 与「经页面过验证」都没拿到数据。'
+            '可点「浏览器打开」手动过一次验证后再试';
+      });
+      return;
+    }
+
+    var hits = 0;
     try {
-      await _loadWaiter!.future.timeout(const Duration(seconds: 25));
+      final obj = jsonDecode(body) as Map<String, dynamic>;
+      final results = obj['results'] as Map<String, dynamic>?;
+      hits = (results?['total_hits'] as num?)?.toInt() ?? 0;
+    } catch (_) {}
+
+    // 预览卡要给人看「拉到了什么」，而不是几百 KB 裸 JSON。
+    // 解析一次即缓存，容错到任何字段缺失都不抛异常。
+    final targets = _parseHits(body);
+    final rawHead = _head(body, 200);
+
+    await state.saveArchive(body);
+
+    setState(() {
+      _fetching = false;
+      _payload = body;
+      _hits = hits;
+      _bytes = body!.length;
+      _costMs = DateTime.now().difference(started).inMilliseconds;
+      _previewTargets = targets;
+      _previewRaw = rawHead;
+      // 状态串里写清楚走的是哪条路，便于以后排障（用户也能据此判断要不要手动过验证）
+      _diag = viaApi ? '直连 API 完成' : '经页面过验证完成';
+    });
+    _toast('获取成功：$hits 条');
+  }
+
+  /// 路径一：直接加载 API URL，body 即 JSON。
+  ///
+  /// 返回 null = 没拿到数据（CDN 挑战页 / HTML / 非 JSON），由调用方走 fallback。
+  /// 与旧实现的差别：不再先加载 `/search` 页面、也不再注入脚本。
+  Future<String?> _fetchDirect(
+      InAppWebViewController web, String apiUrl) async {
+    final waiter = Completer<void>();
+    _loadWaiter = waiter;
+    try {
+      await web.loadUrl(urlRequest: URLRequest(url: WebUri(apiUrl)));
+      await waiter.future.timeout(const Duration(seconds: 25));
+    } on Object {
+      // 超时/加载中断：仍尝试读一次 body —— 挑战页也可能已渲染完，能读到就说明被拦
+    }
+    return _asCensysJson(await _readBody(web));
+  }
+
+  /// 读 `document.body.innerText`；WebView 渲染 JSON 时这里就是原始 JSON 文本。
+  Future<String> _readBody(InAppWebViewController web) async {
+    try {
+      final raw = await web.evaluateJavascript(
+        source: 'document.body ? document.body.innerText : ""',
+      );
+      return (raw?.toString() ?? '').trim();
+    } on Object {
+      return '';
+    }
+  }
+
+  /// 判定「这是不是 Censys 数据」——委托给顶层 [censysJsonOrNull]，
+  /// 便于在 `test/fetch_parse_test.dart` 里脱离 WebView 直接断言。
+  static String? _asCensysJson(String text) => censysJsonOrNull(text);
+
+  /// 路径二（fallback）：先加载 `/search` 过 CDN 挑战，再在页面内 fetch API。
+  ///
+  /// 必须保留这段：直连在某些网络/风控下只会拿到挑战 HTML；
+  /// 页面内 fetch 带着已通过的 Cookie（`credentials: include`），是唯一绕法。
+  Future<String?> _fetchViaPage(
+    InAppWebViewController web,
+    String query,
+  ) async {
+    final waiter = Completer<void>();
+    _loadWaiter = waiter;
+    await web.loadUrl(urlRequest: URLRequest(url: WebUri('$_origin/search')));
+    try {
+      await waiter.future.timeout(const Duration(seconds: 25));
     } catch (_) {
-      // 超时继续，挑战可能仍在进行
+      // 超时继续：挑战可能仍在进行
     }
 
     // 注入轮询脚本，与桌面端一致：页面内发起 fetch，结果写全局变量
@@ -202,7 +304,6 @@ class _FetchPageState extends State<FetchPage> {
 })()
 ''';
 
-    String? body;
     for (var i = 0; i < 20; i++) {
       await Future.delayed(const Duration(milliseconds: 900));
       try {
@@ -214,56 +315,17 @@ class _FetchPageState extends State<FetchPage> {
               await web.evaluateJavascript(source: 'window.__cytestResult');
           final str = got?.toString() ?? '';
           if (str.startsWith('{') && str.endsWith('}')) {
-            body = str;
-            break;
+            return str;
           }
         } else if (text.startsWith('err:')) {
-          setState(() {
-            _fetching = false;
-            _error = '浏览器内请求失败：${text.substring(4)}';
-          });
-          await _clearProxy();
-          return;
+          setState(() => _error = '浏览器内请求失败：${text.substring(4)}');
+          return null;
         }
       } catch (_) {
         // 页面可能正在 reload（挑战），继续重试
       }
     }
-
-    await _clearProxy();
-
-    if (body == null) {
-      setState(() {
-        _fetching = false;
-        _error = '30 秒内没有拿到数据，可能挑战未通过。可点「浏览器打开」手动过一次验证';
-      });
-      return;
-    }
-
-    var hits = 0;
-    try {
-      final obj = jsonDecode(body) as Map<String, dynamic>;
-      final results = obj['results'] as Map<String, dynamic>?;
-      hits = (results?['total_hits'] as num?)?.toInt() ?? 0;
-    } catch (_) {}
-
-    // 预览卡要给人看「拉到了什么」，而不是几百 KB 裸 JSON。
-    // 解析一次即缓存，容错到任何字段缺失都不抛异常。
-    final targets = _parseHits(body);
-    final rawHead = _head(body, 200);
-
-    await state.saveArchive(body);
-
-    setState(() {
-      _fetching = false;
-      _payload = body;
-      _hits = hits;
-      _bytes = body!.length;
-      _costMs = DateTime.now().difference(started).inMilliseconds;
-      _previewTargets = targets;
-      _previewRaw = rawHead;
-    });
-    _toast('获取成功：$hits 条');
+    return null;
   }
 
   Future<void> _setProxy(int port) async {
@@ -596,8 +658,8 @@ class _FetchPageState extends State<FetchPage> {
                 children: [
                   Flexible(
                     child: Text(
-                      // 说清这块是干什么的：用户之前不知道预览窗口的用途
-                      '页面预览（过验证用，可放大）',
+                      // 抓取已改直连 API；这块只在需要手动过验证时才用得上
+                      '页面预览（仅在需要过验证时使用）',
                       style: theme.textTheme.labelMedium,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -794,4 +856,26 @@ class _FetchPageState extends State<FetchPage> {
           ),
         ),
       );
+}
+
+/// 判定「这段文本是不是 Censys 搜索结果」。
+///
+/// 直连 `/api/search` 时，WebView 的 `document.body.innerText` 有两种可能：
+/// 1. 真数据：一段 JSON 对象，含 `results` 字段 → 返回原文（两侧空白已 trim）；
+/// 2. 被 CDN 挑战拦截：HTML 页面、空内容，或 JSON 但不是搜索结果（错误响应）。
+///    这几种一律返回 null，交给调用方走「加载页面过验证」的 fallback。
+///
+/// 为什么单独抽成顶层函数：这是「直连 vs fallback」的唯一判据，
+/// 也是最容易写错的地方（例如把 HTML 当数据、或忘了校验 `results`），
+/// 抽出来才能脱离 WebView 用纯 Dart 单测钉住。
+String? censysJsonOrNull(String text) {
+  final trimmed = text.trim();
+  if (trimmed.isEmpty || !trimmed.startsWith('{')) return null;
+  try {
+    final decoded = jsonDecode(trimmed);
+    if (decoded is Map && decoded['results'] != null) return trimmed;
+  } on Object {
+    return null;
+  }
+  return null;
 }
