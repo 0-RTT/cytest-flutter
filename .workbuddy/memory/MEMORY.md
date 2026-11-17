@@ -46,7 +46,12 @@ GitHub Actions：`subosito/flutter-action@v2` + runner 预装 Android SDK，`flu
 APK 37.5MB，包名 `com.cytest.cytest`，minSdk 29 / targetSdk 36，与 Kotlin 版（com.cytest.app）可共存。
 
 发版：`git tag -a v1.x.x -m "..." && git push origin v1.x.x` → release job 下载 artifact、
-重命名为 cytest-flutter.apk 后发正式版。日常 push main 只上传 artifact（不发 release）。
+重命名为 cytest-flutter.apk 后发正式版。
+**2026-11-17 起 workflow 只监听 tag**（`on.push.tags: ['v*']`），已去掉 `branches: [main]`。
+原因：发版要先 `push main` 再 `push tag`，两个触发条件会让同一 commit 被完整构建两遍
+（历史 #20/#21、#22/#23、#24/#25 全是成对的）。现在日常验证走本地 `flutter analyze` + `flutter test`，
+或开 PR（`pull_request` 触发保留）。改完配置后 push main 不会再产生 run，可用 actions 页面确认。
+
 **必须在 workflow 顶层声明 `permissions: contents: write`**，否则 softprops 发 release 报 403
 （generate_release_notes 也依赖这个权限）。
 
