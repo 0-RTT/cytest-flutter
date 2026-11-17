@@ -43,6 +43,10 @@ class AppSettings {
   String remotePassword;
   String remoteKeyPath;
 
+  /// Censys 人机验证过一次后拿到的 `Cookie:` 头值（空 = 还没验证过）。
+  /// 有了它，抓取走纯 HTTP 不再触发挑战。
+  String censysCookie;
+
   AppSettings({
     this.speedUrl = Defaults.speedUrl,
     this.fingerprint = Defaults.fingerprint,
@@ -64,6 +68,7 @@ class AppSettings {
     this.remoteUser = 'root',
     this.remotePassword = '',
     this.remoteKeyPath = '',
+    this.censysCookie = '',
   });
 
   static const _key = 'cytest.settings.v1';
@@ -93,6 +98,7 @@ class AppSettings {
     String? remoteUser,
     String? remotePassword,
     String? remoteKeyPath,
+    String? censysCookie,
   }) =>
       AppSettings(
         speedUrl: speedUrl,
@@ -115,12 +121,14 @@ class AppSettings {
         remoteUser: remoteUser ?? this.remoteUser,
         remotePassword: remotePassword ?? this.remotePassword,
         remoteKeyPath: remoteKeyPath ?? this.remoteKeyPath,
+        censysCookie: censysCookie ?? this.censysCookie,
       );
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
         speedUrl: json['speedUrl'] as String? ?? Defaults.speedUrl,
         fingerprint: json['fingerprint'] as String? ?? Defaults.fingerprint,
-        sha1Concurrency: json['sha1Concurrency'] as int? ?? Defaults.sha1Concurrency,
+        sha1Concurrency:
+            json['sha1Concurrency'] as int? ?? Defaults.sha1Concurrency,
         latencyConcurrency:
             json['latencyConcurrency'] as int? ?? Defaults.latencyConcurrency,
         speedConcurrency:
@@ -141,6 +149,7 @@ class AppSettings {
         remoteUser: json['remoteUser'] as String? ?? 'root',
         remotePassword: json['remotePassword'] as String? ?? '',
         remoteKeyPath: json['remoteKeyPath'] as String? ?? '',
+        censysCookie: json['censysCookie'] as String? ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -164,5 +173,6 @@ class AppSettings {
         'remoteUser': remoteUser,
         'remotePassword': remotePassword,
         'remoteKeyPath': remoteKeyPath,
+        'censysCookie': censysCookie,
       };
 }

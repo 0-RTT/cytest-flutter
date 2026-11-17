@@ -7,18 +7,24 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/settings.dart';
+import '../../data/censys_http.dart';
 import '../../data/vless.dart';
 import '../../state/app_state.dart';
+import 'censys_verify_page.dart';
 import 'test_page.dart';
 
-/// 获取数据：用**后台（headless）WebView** 直接打开 Censys 搜索 API，读回 JSON。
+/// 获取数据：**纯 HTTP 优先，必要时才开一次全屏验证页**。
 ///
-/// 为什么用 `HeadlessInAppWebView` 而不是可见的 `InAppWebView`：
-/// - 它不走 PlatformView 机制（MethodChannel 通信、不进视图树），**不需要可见**，
-///   所以页面里可以完全没有任何 WebView 区域 —— 这正是用户要的「不要预览」；
-/// - 仍然复用系统 WebView 内核与 Cookie 池，能过 CDN 挑战、能带登录态请求。
+/// 实测结论（决定了整个设计）：
+/// - Censys 对未认证请求返回 **HTTP 200 + ~3KB 挑战页 HTML**（带严格 CSP
+///   `default-src 'self'`），既不是 403 也不是 JSON；
+/// - 该 CSP 会挡掉注入的 `fetch`，所以在 headless WebView 里执行
+///   `fetch('/api/search')` 必然得到 `TypeError: Failed to fetch`；
+/// - 因此 **WebView 只能用来过一次人机验证换 Cookie**，数据请求走 `HttpClient`
+///   （`lib/data/censys_http.dart`，带 Cookie + 完整浏览器头）。
 ///
-/// 抓取顺序：**直连 API** → 判定 → 不是数据才走 **加载页面过验证 + 页面内 fetch**。
+/// 本页自身**没有任何 WebView**：验证页是独立的按需全屏路由
+/// （`lib/ui/pages/censys_verify_page.dart`）。
 class FetchPage extends StatefulWidget {
   const FetchPage({super.key});
 
@@ -30,16 +36,6 @@ class _FetchPageState extends State<FetchPage> {
   static const _origin = 'https://platform.censys.io';
   static const _searchPath = '/api/search';
 
-  /// 桌面 Chrome UA：Censys 会对明显的 WebView UA 收紧风控。
-  static const _kUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-
-  /// headless 实例建好、拿到 controller 的最长等待时间。
-  static const _kHeadlessInitTimeout = Duration(seconds: 10);
-
-  /// 单次页面加载（含 CDN 挑战）的最长等待时间。
-  static const _kLoadTimeout = Duration(seconds: 25);
-
   late final TextEditingController _cql =
       TextEditingController(text: Defaults.buildQuery(Defaults.fingerprint));
 
@@ -49,8 +45,6 @@ class _FetchPageState extends State<FetchPage> {
   /// 删掉预览之后，这是用户与排障者唯一的可观测信息。
   String _diag = '待命';
 
-  /// 最近一次走的是「直连 API」（true）还是「过验证页面」（false）。
-  bool _viaApi = false;
   int? _usedProxyPort;
 
   /// 本次成功时用的 proxyip（null = 链接原样），只用于状态串展示。
@@ -109,9 +103,10 @@ class _FetchPageState extends State<FetchPage> {
     final state = context.read<AppState>();
     final started = DateTime.now();
 
-    // 起 Xray 并**按 ordered 顺序轮换 proxyip**：失败就记一次 failure 换下一条。
-    // 原版就是这套语义（ordered/recordSuccess/recordFailure），
-    // 之前这里只取 pool.first，20 条里第一条挂了就全挂。
+    // ① 纯 HTTP：带上次验证得到的 Cookie，走 Xray 本地端口。
+    //    实测 Censys 对未认证请求返回「HTTP 200 + 挑战页 HTML」，且该页 CSP
+    //    (`default-src 'self'`) 会挡掉注入的 fetch —— 所以 WebView 只用来换 Cookie，
+    //    真正的数据请求交给 HttpClient（见 data/censys_http.dart 的注释）。
     final hasLine = state.settings.vlessLinks.isNotEmpty;
     final candidates = hasLine ? state.orderedProxyPool : const <ProxyIp>[];
     final attempts = candidates.isEmpty
@@ -119,51 +114,88 @@ class _FetchPageState extends State<FetchPage> {
         : candidates.map<ProxyIp?>((item) => item).toList(growable: false);
 
     String? body;
-    ProxyIp? usedProxy;
+    String? lastError;
+    var viaVerify = false;
+    var usedCookie = state.settings.censysCookie.isNotEmpty;
+
     for (final proxy in attempts) {
-      int? proxyPort;
-      try {
-        if (hasLine) {
-          await state.startLineWith(proxy);
-          if (state.xray.running) proxyPort = state.xray.port;
-        }
-      } catch (e) {
-        state.pushLog('线路启动失败（proxyip=${proxy?.key ?? "原样"}）：$e');
+      final port = await _startProxy(state, proxy, hasLine);
+      if (hasLine && port == null) {
         await state.recordProxyResult(proxy, false);
         continue;
       }
-
-      _usedProxyPort = proxyPort;
-      if (proxyPort != null) {
-        await _setProxy(proxyPort);
-      } else {
-        await _clearProxy();
-      }
-
-      try {
-        body = await _fetchBody(state, query);
-      } catch (e) {
-        state.pushLog('抓取异常（proxyip=${proxy?.key ?? "原样"}）：$e');
-        body = null;
-      }
+      final result = await fetchCensysJson(
+        query: query,
+        cookie: state.settings.censysCookie,
+        proxyPort: port,
+      );
       await _clearProxy();
-
-      if (body != null) {
-        usedProxy = proxy;
+      if (result.ok) {
+        body = result.json;
+        _usedProxy = proxy?.key;
         await state.recordProxyResult(proxy, true);
         break;
       }
+      lastError = result.error;
+      state.pushLog(
+        '纯 HTTP 未拿到 JSON（proxyip=${proxy?.key ?? "原样"}）：${result.error}'
+        '｜Content-Type ${result.contentType}｜开头：${result.head}',
+      );
       await state.recordProxyResult(proxy, false);
       if (!mounted) break;
     }
-    if (usedProxy != null) _usedProxy = usedProxy.key;
+
+    // ② 仍然没有数据 → 打开**全屏**验证页过一次人机验证，换 Cookie 后再试一次 HTTP。
+    //    验证页只在需要时出现，主页仍然没有任何 WebView。
+    if (body == null && mounted) {
+      final verifyProxy = candidates.isEmpty ? null : candidates.first;
+      final port = await _startProxy(state, verifyProxy, hasLine);
+      final verified = await Navigator.of(context).push<CensysVerifyResult>(
+        MaterialPageRoute(
+          builder: (_) => CensysVerifyPage(apiUrl: _apiUrl),
+        ),
+      );
+      await _clearProxy();
+
+      if (verified == null) {
+        lastError ??= '已取消人机验证';
+        state.pushLog('用户取消了人机验证');
+      } else {
+        if (verified.cookie.isNotEmpty) {
+          state.settings.censysCookie = verified.cookie;
+          usedCookie = true;
+          await state.saveSettings();
+          state.pushLog('已保存 Censys Cookie（${verified.cookie.length} 字节）');
+        }
+        body = verified.json;
+        viaVerify = body != null;
+        if (body == null && verified.cookie.isNotEmpty) {
+          // 验证页通常只拿到 Cookie（页面本身是搜索页/挑战页），用它再试一次纯 HTTP
+          final retry = await fetchCensysJson(
+            query: query,
+            cookie: verified.cookie,
+            proxyPort: port,
+          );
+          body = retry.json;
+          viaVerify = body != null;
+          lastError = retry.error ?? lastError;
+          if (body == null) {
+            state.pushLog('用验证后的 Cookie 重试仍失败：${retry.error}');
+          }
+        }
+        if (body != null && verifyProxy != null) {
+          _usedProxy = verifyProxy.key;
+          await state.recordProxyResult(verifyProxy, true);
+        }
+      }
+    }
 
     if (!mounted) return;
     if (body == null) {
       setState(() {
         _fetching = false;
-        // 若抓取过程已写入更具体的原因（如「浏览器内请求失败」），不要覆盖
-        _error ??= '直连 API 与「过验证页面后重试」都没有拿到数据，见日志。';
+        _error = lastError ?? '没有拿到数据';
+        _diag = '失败';
       });
       return;
     }
@@ -189,232 +221,12 @@ class _FetchPageState extends State<FetchPage> {
       _costMs = DateTime.now().difference(started).inMilliseconds;
       _previewTargets = targets;
       _previewRaw = rawHead;
-      final via = _viaApi ? '直连 API 完成' : '经页面过验证完成';
-      _diag = _usedProxy == null ? via : '$via · proxyip $_usedProxy';
+      final via = viaVerify ? '经验证页完成' : '直连 API';
+      final cookieNote = usedCookie ? ' · 已复用验证' : '';
+      _diag = '$via$cookieNote'
+          '${_usedProxy == null ? '' : ' · proxyip $_usedProxy'}';
     });
     _toast('获取成功：$hits 条');
-  }
-
-  /// 建一个后台 WebView，按「直连 → 过验证」两条路径抓数据；返回 null 表示都失败。
-  ///
-  /// 每次 `_fetch` 一个实例 + `finally` 里 dispose：headless 实例各自持有一个原生
-  /// WebView，不复用、不释放会稳定泄漏（每个都有独立渲染进程/连接）。
-  Future<String?> _fetchBody(AppState state, String query) async {
-    final controllerReady = Completer<InAppWebViewController>();
-
-    /// 当前这次页面加载的完成信号（每次 loadUrl 前重建）。
-    Completer<void>? pendingLoad;
-
-    final headless = HeadlessInAppWebView(
-      // 关键：默认 initialSize 是 Size.zero → window.innerWidth/Height 都是 0。
-      // Cloudflare 等 bot 检测会看视口尺寸/渲染能力，零尺寸等于自报「我是 headless」，
-      // 挑战永远过不去（表现为页面内 fetch 被拦）。这里给一个桌面视口。
-      initialSize: const Size(1280, 800),
-      initialSettings: InAppWebViewSettings(
-        javaScriptEnabled: true,
-        // 复用系统 WebView 的 Cookie 池：用户之前登录过就直接带登录态，
-        // 省掉一次 CDN 挑战。
-        sharedCookiesEnabled: true,
-        thirdPartyCookiesEnabled: true,
-        userAgent: _kUserAgent,
-        transparentBackground: true,
-        isInspectable: false,
-      ),
-      onWebViewCreated: (controller) {
-        if (!controllerReady.isCompleted) controllerReady.complete(controller);
-      },
-      onLoadStop: (controller, url) {
-        final waiter = pendingLoad;
-        if (waiter != null && !waiter.isCompleted) waiter.complete();
-      },
-      onReceivedError: (controller, request, error) {
-        // 删掉预览后，「加载失败」只能靠日志留痕 —— 否则失败是纯黑盒
-        state.pushLog('加载失败：${error.description} · ${request.url}');
-      },
-      onReceivedHttpError: (controller, request, response) {
-        // 401/403/429 这类只能从 HTTP 状态码看出来，onReceivedError 收不到
-        state.pushLog('HTTP ${response.statusCode} · ${request.url}');
-      },
-    );
-
-    /// 加载指定 URL 并等 onLoadStop（超时也继续：挑战页可能已经渲染出内容）。
-    ///
-    /// [headers] 只给**直连 API** 那次用（`Accept: application/json`）：
-    /// fallback 加载 `/search` 时不能带，否则服务器可能直接回 JSON，
-    /// 页面脚本环境就没了，反而把挑战流程弄坏。
-    Future<void> loadAndWait(
-      InAppWebViewController controller,
-      String url, {
-      Map<String, String>? headers,
-    }) async {
-      final waiter = Completer<void>();
-      pendingLoad = waiter;
-      await controller.loadUrl(
-        urlRequest: URLRequest(url: WebUri(url), headers: headers),
-      );
-      try {
-        await waiter.future.timeout(_kLoadTimeout);
-      } on TimeoutException {
-        state.pushLog('加载超时（${_kLoadTimeout.inSeconds}s）：$url');
-      }
-    }
-
-    /// 读响应/页面元信息，用于「直连没拿到 JSON」时的排障：
-    /// contentType 区分 HTML/JSON，title 通常是挑战页标题（"Just a moment..."），
-    /// 视口尺寸能直接验证 `initialSize` 是否生效（0×0 就是没生效）。
-    Future<String> readDocMeta(InAppWebViewController controller) async {
-      try {
-        final raw = await controller.evaluateJavascript(
-          source: 'JSON.stringify({'
-              'contentType: document.contentType || "", '
-              'title: (document.title || "").slice(0, 60), '
-              'w: window.innerWidth, h: window.innerHeight})',
-        );
-        return raw is String ? raw : '$raw';
-      } on Object catch (e) {
-        return '（读取元信息失败：$e）';
-      }
-    }
-
-    /// 读页面正文文本。直连 API 时这里就是原始 JSON。
-    Future<String> readBody(InAppWebViewController controller) async {
-      try {
-        final raw = await controller.evaluateJavascript(
-          source: 'document.body ? document.body.innerText : ""',
-        );
-        return (raw is String ? raw : '$raw').trim();
-      } on Object catch (e) {
-        state.pushLog('读取页面文本失败：$e');
-        return '';
-      }
-    }
-
-    try {
-      // ① 启动：构造只登记参数，必须 run() 才会真正创建原生 WebView
-      await headless.run();
-      final controller =
-          await controllerReady.future.timeout(_kHeadlessInitTimeout);
-
-      // ② 路径一：直连 API
-      if (mounted) setState(() => _diag = '直连 API…');
-      state.pushLog('直连 API：$_apiUrl');
-      try {
-        // 带 Accept: application/json —— 不带时 Censys 可能回 HTML 外壳，
-        // 页面内判定就会误判成「被挑战」。只加在这一次（见 loadAndWait 注释）。
-        await loadAndWait(
-          controller,
-          _apiUrl,
-          headers: const {'Accept': 'application/json, text/plain, */*'},
-        );
-      } on Object catch (e) {
-        state.pushLog('直连加载异常：$e');
-      }
-      final directText = await readBody(controller);
-      final direct = censysJsonOrNull(directText);
-      if (direct != null) {
-        _viaApi = true;
-        return direct;
-      }
-
-      // 不是 JSON：把「拿到了什么」写进日志，否则无从判断是被挑战还是结构变了
-      state.pushLog(
-        '直连未拿到 JSON（${directText.length} 字节），开头：${_head(directText, 120)}',
-      );
-      state.pushLog('直连响应元信息：${await readDocMeta(controller)}');
-
-      // ③ 路径二：加载搜索页过 CDN 挑战，再在页面内 fetch（带 Cookie）
-      if (mounted) setState(() => _diag = '直连被拦截，加载页面过验证…');
-      final viaPage = await _fetchViaPage(
-        controller: controller,
-        state: state,
-        query: query,
-        loadAndWait: loadAndWait,
-        readBody: readBody,
-      );
-      if (viaPage == null) {
-        state.pushLog('过验证后仍未拿到数据');
-      } else {
-        _viaApi = false;
-      }
-      return viaPage;
-    } finally {
-      // 必须 dispose：否则每次抓取泄漏一个原生 WebView
-      try {
-        await headless.dispose();
-      } on Object catch (e) {
-        state.pushLog('释放 headless WebView 失败：$e');
-      }
-    }
-  }
-
-  /// 路径二（fallback）：先加载 `/search` 过 CDN 挑战，再在页面内 fetch API。
-  ///
-  /// 为什么保留：直连在某些网络/风控下只会拿到挑战 HTML。页面内 fetch 带着
-  /// 已通过的 Cookie（`credentials: include`），是绕过挑战的唯一方式。
-  Future<String?> _fetchViaPage({
-    required InAppWebViewController controller,
-    required AppState state,
-    required String query,
-    required Future<void> Function(InAppWebViewController, String) loadAndWait,
-    required Future<String> Function(InAppWebViewController) readBody,
-  }) async {
-    await loadAndWait(controller, '$_origin/search');
-
-    final quoted = jsonEncode(query);
-    final kick = '''
-(function(){
-  if (window.__cytestStarted) return "started";
-  window.__cytestStarted = true;
-  window.__cytestResult = null;
-  window.__cytestError = null;
-  fetch("$_searchPath?q=" + encodeURIComponent($quoted), {
-    credentials: "include",
-    headers: { "Accept": "application/json, text/plain, */*" }
-  }).then(function(r){ return r.text(); })
-    .then(function(t){ window.__cytestResult = t; })
-    .catch(function(e){ window.__cytestError = String(e); });
-  return "kicked";
-})()
-''';
-
-    final probe = '''
-(function(){
-  if (window.__cytestError) return "err:" + window.__cytestError;
-  if (window.__cytestResult !== null && window.__cytestResult !== undefined)
-    return "ok:" + window.__cytestResult.length;
-  return "wait";
-})()
-''';
-
-    for (var i = 0; i < 20; i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 900));
-      if (!mounted) return null;
-      try {
-        await controller.evaluateJavascript(source: kick);
-        final raw = await controller.evaluateJavascript(source: probe);
-        final text = raw is String ? raw : '$raw';
-        if (text.startsWith('ok:')) {
-          final got = await controller.evaluateJavascript(
-              source: 'window.__cytestResult');
-          final parsed = censysJsonOrNull(got is String ? got : '$got');
-          if (parsed != null) return parsed;
-        } else if (text.startsWith('err:')) {
-          final reason = text.substring(4);
-          state.pushLog('页面内 fetch 失败：$reason');
-          if (mounted) setState(() => _error = '浏览器内请求失败：$reason');
-          return null;
-        }
-        // 挑战通过后页面可能自己跳到了 API：每隔几轮直接读一次正文兜底
-        if (i % 5 == 4) {
-          final body = censysJsonOrNull(await readBody(controller));
-          if (body != null) return body;
-        }
-      } on Object catch (e) {
-        // 页面可能正在 reload（挑战），继续重试
-        state.pushLog('注入脚本异常（重试中）：$e');
-      }
-    }
-    return null;
   }
 
   /// 复制 API 链接到剪贴板。
@@ -483,6 +295,32 @@ class _FetchPageState extends State<FetchPage> {
     if (body == null) return;
     await Clipboard.setData(ClipboardData(text: body));
     _toast('已复制原始 JSON（${(body.length / 1024).toStringAsFixed(0)} KB）');
+  }
+
+  /// 用 [proxy] 起单线路代理并把本机设备代理指向它的端口。
+  ///
+  /// 返回 null 表示没有可用端口：`hasLine == false`（没配线路，走直连）时这是正常值；
+  /// `hasLine == true` 时说明线路没起来，调用方应记一次 proxyip failure 换下一条。
+  Future<int?> _startProxy(AppState state, ProxyIp? proxy, bool hasLine) async {
+    if (!hasLine) {
+      _usedProxyPort = null;
+      await _clearProxy();
+      return null;
+    }
+    try {
+      await state.startLineWith(proxy);
+      final port = state.xray.running ? state.xray.port : null;
+      _usedProxyPort = port;
+      if (port != null) {
+        await _setProxy(port);
+      } else {
+        await _clearProxy();
+      }
+      return port;
+    } on Object catch (e) {
+      state.pushLog('线路启动失败（proxyip=${proxy?.key ?? "原样"}）：$e');
+      return null;
+    }
   }
 
   Future<void> _setProxy(int port) async {
@@ -751,25 +589,4 @@ class _FetchPageState extends State<FetchPage> {
           ),
         ),
       );
-}
-
-/// 判定「这段文本是不是 Censys 搜索结果」。
-///
-/// 直连 `/api/search` 时，WebView 的 `document.body.innerText` 有两种可能：
-/// 1. 真数据：一段 JSON 对象，含 `results` 字段 → 返回原文（两侧空白已 trim）；
-/// 2. 被 CDN 挑战拦截：HTML 页面、空内容，或 JSON 但不是搜索结果（错误响应）。
-///    这几种一律返回 null，交给调用方走「加载页面过验证」的 fallback。
-///
-/// 为什么单独抽成顶层函数：这是「直连 vs fallback」的唯一判据，也是最容易写错的
-/// 地方（例如把 HTML 当数据、或忘了校验 `results`），抽出来才能脱离 WebView 单测。
-String? censysJsonOrNull(String text) {
-  final trimmed = text.trim();
-  if (trimmed.isEmpty || !trimmed.startsWith('{')) return null;
-  try {
-    final decoded = jsonDecode(trimmed);
-    if (decoded is Map && decoded['results'] != null) return trimmed;
-  } on Object {
-    return null;
-  }
-  return null;
 }
