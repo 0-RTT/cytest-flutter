@@ -58,8 +58,9 @@ class _TestPageState extends State<TestPage> {
 
     // 日志区高度按屏高自适应：写死 240 在小屏上会把输入区挤出首屏，大屏又浪费空间。
     // 这里用 MediaQuery 估算即可——它在 ListView 内部，再套 LayoutBuilder 会变成嵌套滚动度量。
-    final logHeight =
-        (MediaQuery.sizeOf(context).height * 0.3).clamp(160.0, 240.0).toDouble();
+    final logHeight = (MediaQuery.sizeOf(context).height * 0.3)
+        .clamp(160.0, 240.0)
+        .toDouble();
 
     return Scaffold(
       appBar: AppBar(
@@ -68,7 +69,8 @@ class _TestPageState extends State<TestPage> {
           if (state.running)
             TextButton(
               onPressed: () => state.cancel(),
-              child: Text('取消', style: TextStyle(color: theme.colorScheme.error)),
+              child:
+                  Text('取消', style: TextStyle(color: theme.colorScheme.error)),
             ),
         ],
       ),
@@ -86,11 +88,22 @@ class _TestPageState extends State<TestPage> {
                 children: [
                   Row(
                     children: [
-                      _stat(theme, '候选总量', state.progressTotal > 0 ? '${state.progressTotal}' : '—'),
+                      _stat(
+                          theme,
+                          '候选总量',
+                          state.progressTotal > 0
+                              ? '${state.progressTotal}'
+                              : '—'),
                       const SizedBox(width: 10),
-                      _stat(theme, '当前阶段', state.progressStage.isEmpty ? '待开始' : _trim(state.progressStage)),
+                      _stat(
+                          theme,
+                          '当前阶段',
+                          state.progressStage.isEmpty
+                              ? '待开始'
+                              : _trim(state.progressStage)),
                       const SizedBox(width: 10),
-                      _stat(theme, '可用', state.rows.isEmpty ? '—' : '${state.usableCount}'),
+                      _stat(theme, '可用',
+                          state.rows.isEmpty ? '—' : '${state.usableCount}'),
                     ],
                   ),
                   const SizedBox(height: 14),
@@ -107,14 +120,17 @@ class _TestPageState extends State<TestPage> {
                               const Spacer(),
                               SegmentedButton<String>(
                                 segments: const [
-                                  ButtonSegment(value: 'full', label: Text('完整三阶段')),
-                                  ButtonSegment(value: 'speed', label: Text('只测速')),
+                                  ButtonSegment(
+                                      value: 'full', label: Text('完整三阶段')),
+                                  ButtonSegment(
+                                      value: 'speed', label: Text('只测速')),
                                 ],
                                 selected: {_mode},
                                 onSelectionChanged: (s) =>
                                     setState(() => _mode = s.first),
                                 showSelectedIcon: false,
-                                style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                                style: const ButtonStyle(
+                                    visualDensity: VisualDensity.compact),
                               ),
                             ],
                           ),
@@ -122,7 +138,12 @@ class _TestPageState extends State<TestPage> {
                           TextField(
                             controller: _input,
                             maxLines: 6,
-                            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              // Android 的 monospace 族不含完整中文字形，缺 fallback 会显示方块
+                              fontFamilyFallback: ['sans-serif'],
+                              fontSize: 12,
+                            ),
                             decoration: InputDecoration(
                               border: const OutlineInputBorder(),
                               isDense: true,
@@ -209,8 +230,10 @@ class _TestPageState extends State<TestPage> {
                             child: state.logs.isEmpty
                                 ? Center(
                                     child: Text('暂无输出',
-                                        style: theme.textTheme.bodySmall?.copyWith(
-                                            color: theme.colorScheme.onSurfaceVariant)),
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                                color: theme.colorScheme
+                                                    .onSurfaceVariant)),
                                   )
                                 : ListView.builder(
                                     controller: _logScroll,
@@ -222,8 +245,13 @@ class _TestPageState extends State<TestPage> {
                                         line,
                                         style: TextStyle(
                                           fontFamily: 'monospace',
+                                          // 日志是中文，monospace 里没有中文字形，必须回落系统字体
+                                          fontFamilyFallback: const [
+                                            'sans-serif'
+                                          ],
                                           fontSize: 11.5,
-                                          color: line.contains('✗') || line.contains('失败')
+                                          color: line.contains('✗') ||
+                                                  line.contains('失败')
                                               ? theme.colorScheme.error
                                               : line.contains('阶段')
                                                   ? theme.colorScheme.primary
@@ -240,7 +268,8 @@ class _TestPageState extends State<TestPage> {
                   if (state.lastError != null) ...[
                     const SizedBox(height: 12),
                     Text(state.lastError!,
-                        style: TextStyle(color: theme.colorScheme.error, fontSize: 12)),
+                        style: TextStyle(
+                            color: theme.colorScheme.error, fontSize: 12)),
                   ],
                 ],
               ),
@@ -314,7 +343,11 @@ class _QuickResult extends StatelessWidget {
                 '${r['IP']}:${r['Port']}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontFamilyFallback: ['sans-serif'],
+                  fontSize: 13,
+                ),
               ),
               subtitle: ok
                   ? null
@@ -327,7 +360,8 @@ class _QuickResult extends StatelessWidget {
               trailing: ok
                   ? Text(
                       '${(double.tryParse(r['Speed (MiB/s)'] ?? '') ?? 0).toStringAsFixed(2)} MiB/s',
-                      style: TextStyle(color: theme.colorScheme.primary, fontSize: 12),
+                      style: TextStyle(
+                          color: theme.colorScheme.primary, fontSize: 12),
                     )
                   : Text('${r['Latency (ms)']} ms',
                       style: TextStyle(color: theme.hintColor, fontSize: 12)),

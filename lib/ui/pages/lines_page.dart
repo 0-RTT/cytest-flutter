@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/settings.dart';
-import '../../data/vless.dart';
+import '../../data/link_test.dart';
+import '../../data/xray.dart';
 import '../../state/app_state.dart';
+import '../widgets/link_test_panel.dart';
 
-/// 线路与代理：VLESS 链接 + proxyip，与 Android 端「线路与代理」同构。
+/// 线路与代理：VLESS 链接 + proxyip + 链路测速。
+///
+/// 测速部分已从「逐条起 Xray 记进程启动耗时」换成真正的 TTFB + 吞吐测量
+/// （设计 §0：旧实现测的不是延迟，是「谁先起床」）。
 class LinesPage extends StatefulWidget {
   const LinesPage({super.key});
 
@@ -16,8 +20,12 @@ class LinesPage extends StatefulWidget {
 class _LinesPageState extends State<LinesPage> {
   late final TextEditingController _links;
   late final TextEditingController _proxies;
-  bool _busy = false;
-  List<(String, String)> _probeRows = const [];
+
+  /// 测速模式，默认自动（先延迟后速度，最省时间的推荐路径）。
+  LinkTestMode _mode = LinkTestMode.auto;
+
+  /// 「启动线路」按钮的局部忙碌态（测速忙碌态由 [AppState.linkTestRunning] 表达）。
+  bool _starting = false;
 
   @override
   void initState() {
@@ -36,77 +44,76 @@ class _LinesPageState extends State<LinesPage> {
 
   Future<void> _save() async {
     final state = context.read<AppState>();
-    state.settings.vlessLinks = _links.text
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-    state.settings.proxyIps = _proxies.text
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
+    state.settings.vlessLinks = _lines(_links.text);
+    state.settings.proxyIps = _lines(_proxies.text);
     await state.saveSettings();
     if (mounted) _toast('已保存');
   }
 
+  List<String> _lines(String text) =>
+      text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
   Future<void> _start() async {
-    setState(() => _busy = true);
+    final state = context.read<AppState>();
+    // 测速期间启动单线路代理会被 XrayProc 拒绝（K4），这里先给出可读提示，
+    // 不让用户看到一句冷冰冰的异常。
+    if (state.linkTestRunning) {
+      _toast('测速进行中，请先停止测速');
+      return;
+    }
+    setState(() => _starting = true);
     try {
       await _save();
-      await context.read<AppState>().startLine();
+      await state.startLine();
       if (mounted) _toast('线路已启动');
     } catch (e) {
       if (mounted) _toast('启动失败：$e');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _starting = false);
     }
   }
 
   Future<void> _stop() async {
+    if (context.read<AppState>().linkTestRunning) {
+      _toast('测速进行中，请先停止测速');
+      return;
+    }
     await context.read<AppState>().stopLine();
     if (mounted) _toast('已停止');
   }
 
-  /// 批量测试所有链接：逐个起 Xray + 走 gstatic 探活。
-  Future<void> _probe() async {
-    setState(() {
-      _busy = true;
-      _probeRows = const [];
-    });
+  /// 测速：交给 [AppState.runLinkTest]，UI 只负责收集链接与展示进度。
+  Future<void> _runLinkTest() async {
     final state = context.read<AppState>();
-    final links = _links.text
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
-
-    final rows = <(String, String)>[];
-    for (final link in links) {
-      final v = Vless.tryParse(link);
-      if (v == null) {
-        rows.add((link, '解析失败'));
-        continue;
-      }
-      final started = DateTime.now();
-      try {
-        await state.xray.start(v);
-        rows.add(('${v.host}:${v.port}',
-            '${DateTime.now().difference(started).inMilliseconds} ms'));
-      } catch (e) {
-        rows.add(('${v.host}:${v.port}', '失败：$e'));
-      }
+    final links = _lines(_links.text);
+    if (links.isEmpty) {
+      _toast('先填一条 VLESS 链接');
+      return;
     }
-    await state.xray.stop();
-    if (mounted) {
-      setState(() {
-        _busy = false;
-        _probeRows = rows;
-      });
+    await _save();
+    if (!mounted) return;
+
+    // K4 预告：开测会停掉当前单线路代理，用户必须提前知道
+    if (state.xray.mode == XrayMode.line) {
+      _toast('测速将停止当前代理线路');
+    }
+
+    final ok = await state.runLinkTest(links, mode: _mode);
+    if (!mounted) return;
+
+    // 一次性消费「代理已被测速停掉」的提示（读一次即清，不会反复弹）
+    final notice = state.takeProxyStopNotice();
+    if (notice != null) {
+      _toast(notice);
+    } else if (ok) {
+      _toast('测速完成 · ${state.linkOkCount} 条可用');
+    } else if (state.linkTestError != null) {
+      _toast(state.linkTestError!);
     }
   }
 
   void _toast(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
     );
@@ -116,12 +123,15 @@ class _LinesPageState extends State<LinesPage> {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final theme = Theme.of(context);
+    final testing = state.linkTestRunning;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('线路与代理'),
         actions: [
-          if (state.xray.running)
+          // 测速期间隐藏「停止线路」：点它会把批量进程杀掉，而 UI 上看起来
+          // 像一次正常操作（批量模式不是「线路」，不该给这个入口）。
+          if (state.xray.running && !testing)
             TextButton(onPressed: _stop, child: const Text('停止线路')),
           const SizedBox(width: 6),
         ],
@@ -136,11 +146,18 @@ class _LinesPageState extends State<LinesPage> {
           children: [
             Row(
               children: [
-                _stat(theme, '状态', state.xray.running ? '已连接' : state.xray.note),
+                _stat(
+                    theme,
+                    '状态',
+                    testing
+                        ? '测速中'
+                        : (state.xray.running ? '已连接' : state.xray.note)),
                 const SizedBox(width: 10),
-                _stat(theme, '端口', state.xray.running ? '${state.xray.port}' : '—'),
+                _stat(theme, '端口',
+                    state.xray.running ? '${state.xray.port}' : '—'),
                 const SizedBox(width: 10),
-                _stat(theme, 'proxyip', state.xray.proxyIp.isEmpty ? '链接原样' : state.xray.proxyIp),
+                _stat(theme, 'proxyip',
+                    state.xray.proxyIp.isEmpty ? '链接原样' : state.xray.proxyIp),
               ],
             ),
             const SizedBox(height: 14),
@@ -153,17 +170,22 @@ class _LinesPageState extends State<LinesPage> {
                   children: [
                     Text('VLESS 链接', style: theme.textTheme.titleSmall),
                     const SizedBox(height: 6),
-                    Text('每行一条，取第一条可解析的',
-                        style: theme.textTheme.labelSmall),
+                    Text('每行一条，取第一条可解析的', style: theme.textTheme.labelSmall),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _links,
                       maxLines: 4,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        // Android 的 monospace 不含完整中文字形，中文备注会显示成方块
+                        fontFamilyFallback: <String>['sans-serif'],
+                        fontSize: 11.5,
+                      ),
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         isDense: true,
-                        hintText: 'vless://uuid@host:443?type=xhttp&security=tls&...',
+                        hintText:
+                            'vless://uuid@host:443?type=xhttp&security=tls&...',
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -175,7 +197,11 @@ class _LinesPageState extends State<LinesPage> {
                     TextField(
                       controller: _proxies,
                       maxLines: 4,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontFamilyFallback: <String>['sans-serif'],
+                        fontSize: 11.5,
+                      ),
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         isDense: true,
@@ -186,53 +212,71 @@ class _LinesPageState extends State<LinesPage> {
                     Row(
                       children: [
                         FilledButton(
-                          onPressed: _busy ? null : _start,
-                          child: Text(_busy ? '处理中…' : '启动线路'),
+                          // 测速期间禁用「启动线路」：批量与单线路互斥（K4）
+                          onPressed: (_starting || testing) ? null : _start,
+                          child: Text(_starting ? '处理中…' : '启动线路'),
                         ),
                         const SizedBox(width: 8),
                         OutlinedButton(
-                          onPressed: _busy ? null : _probe,
-                          child: const Text('测试全部线路'),
+                          onPressed: testing ? null : _runLinkTest,
+                          child: Text(testing ? '测速中…' : '测试全部线路'),
                         ),
                         const Spacer(),
                         TextButton(onPressed: _save, child: const Text('保存')),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Text('测速模式', style: theme.textTheme.labelSmall),
+                        const SizedBox(width: 10),
+                        SegmentedButton<LinkTestMode>(
+                          segments: const [
+                            ButtonSegment(
+                                value: LinkTestMode.latency, label: Text('延迟')),
+                            ButtonSegment(
+                                value: LinkTestMode.speed, label: Text('速度')),
+                            ButtonSegment(
+                                value: LinkTestMode.auto, label: Text('自动')),
+                          ],
+                          selected: <LinkTestMode>{_mode},
+                          onSelectionChanged: testing
+                              ? null
+                              : (s) => setState(() => _mode = s.first),
+                          showSelectedIcon: false,
+                          style: const ButtonStyle(
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
                       ],
                     ),
                   ],
                 ),
               ),
             ),
-            if (_probeRows.isNotEmpty) ...[
+            if (state.linkTestError != null) ...[
               const SizedBox(height: 12),
               Card(
                 margin: EdgeInsets.zero,
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-                      child: Row(
-                        children: [
-                          Text('线路测速', style: theme.textTheme.titleSmall),
-                          const Spacer(),
-                          Text('${_probeRows.length} 条', style: theme.textTheme.labelSmall),
-                        ],
-                      ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    state.linkTestError!,
+                    style: TextStyle(
+                      color: theme.colorScheme.error,
+                      fontSize: 12,
                     ),
-                    for (final (key, value) in _probeRows)
-                      ListTile(
-                        dense: true,
-                        title: Text(key,
-                            style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-                        trailing: Text(value,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: value.contains('失败')
-                                  ? theme.colorScheme.error
-                                  : theme.colorScheme.primary,
-                            )),
-                      ),
-                  ],
+                  ),
                 ),
+              ),
+            ],
+            if (state.linkTestRunning || state.linkResults.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              LinkTestPanel(
+                results: state.linkResults,
+                stage: state.linkStage,
+                running: state.linkTestRunning,
+                onCancel: state.cancelLinkTest,
               ),
             ],
           ],

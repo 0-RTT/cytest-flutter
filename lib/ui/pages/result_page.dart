@@ -56,7 +56,8 @@ class ResultPage extends StatelessWidget {
                 children: [
                   _stat(theme, '可用', '${state.usableCount}'),
                   const SizedBox(width: 10),
-                  _stat(theme, '最快', '${state.fastestSpeed.toStringAsFixed(2)} MiB/s'),
+                  _stat(theme, '最快',
+                      '${state.fastestSpeed.toStringAsFixed(2)} MiB/s'),
                   const SizedBox(width: 10),
                   _stat(theme, '均延迟', '${state.averageLatency} ms'),
                 ],
@@ -77,28 +78,39 @@ class ResultPage extends StatelessWidget {
                     leading: SizedBox(
                       width: 28,
                       child: Text('${i + 1}',
-                          style: theme.textTheme.labelSmall?.copyWith(color: theme.hintColor)),
+                          style: theme.textTheme.labelSmall
+                              ?.copyWith(color: theme.hintColor)),
                     ),
                     // 长地址 / 长 Reason 会顶破 ListTile，单行省略。
                     title: Text(
                       '${r['IP']}:${r['Port']}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        // monospace 不含中文字形，缺 fallback 时含中文的行会显示方块
+                        fontFamilyFallback: ['sans-serif'],
+                        fontSize: 13,
+                      ),
                     ),
                     subtitle: ok
                         ? Text('${r['Latency (ms)']} ms',
-                            style: TextStyle(fontSize: 11, color: theme.hintColor))
+                            style:
+                                TextStyle(fontSize: 11, color: theme.hintColor))
                         : Text(
                             r['Reason'] ?? '',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11, color: theme.hintColor),
+                            style:
+                                TextStyle(fontSize: 11, color: theme.hintColor),
                           ),
                     trailing: ok
                         ? Text(
-                            speed > 0 ? '${speed.toStringAsFixed(2)} MiB/s' : '—',
-                            style: TextStyle(color: theme.colorScheme.primary, fontSize: 12),
+                            speed > 0
+                                ? '${speed.toStringAsFixed(2)} MiB/s'
+                                : '—',
+                            style: TextStyle(
+                                color: theme.colorScheme.primary, fontSize: 12),
                           )
                         : const SizedBox.shrink(),
                   );
@@ -140,7 +152,8 @@ class ResultPage extends StatelessWidget {
       case 'csv':
         final buf = StringBuffer('IP,Port,Latency (ms),Speed (MiB/s),Reason\n');
         for (final r in state.rows) {
-          buf.writeln('${r['IP']},${r['Port']},${r['Latency (ms)']},${r['Speed (MiB/s)']},${r['Reason']}');
+          buf.writeln(
+              '${r['IP']},${r['Port']},${r['Latency (ms)']},${r['Speed (MiB/s)']},${r['Reason']}');
         }
         await Clipboard.setData(ClipboardData(text: buf.toString()));
         _toast(context, 'CSV 已复制到剪贴板');
@@ -180,7 +193,8 @@ class ResultPage extends StatelessWidget {
           _toast(context, '先在「线路与代理」填一条 vless 链接');
           return;
         }
-        final body = subscription(expandTemplate(state.settings.vlessLinks.first, targets));
+        final body = subscription(
+            expandTemplate(state.settings.vlessLinks.first, targets));
         try {
           final path = await GitHub.push(
             token: state.settings.githubToken,

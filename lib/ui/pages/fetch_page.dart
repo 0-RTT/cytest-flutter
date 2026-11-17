@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 
@@ -28,7 +29,10 @@ class _FetchPageState extends State<FetchPage> {
   static const _kWebInitTimeout = Duration(seconds: 15);
 
   /// 预览面板高度上限。必须是真实可见区域，PlatformView 才会被创建。
-  static const _kPreviewMaxHeight = 180.0;
+  /// 120 而非 180：用户反馈 180 太占地，而整页缩放（见 useWideViewPort /
+  /// loadWithOverviewMode）之后，120 已足够看清挑战页的版面结构，
+  /// 真想细看还有「放大」档（屏高 55%）。
+  static const _kPreviewMaxHeight = 120.0;
 
   /// 预览面板「折叠档」的高度下限，同时是键盘弹出时的面板高度。
   /// 绝对不能压到 0 或移出屏外——那会让 PlatformView 被销毁、`_web` 置空、
@@ -41,7 +45,7 @@ class _FetchPageState extends State<FetchPage> {
   static const _kPreviewScreenRatio = 0.28;
 
   /// 用户点「放大」后预览区占屏高的比例。
-  /// 180 高只露出网页一小条，看不清验证码/挑战页，所以给一个接近半屏的档位。
+  /// 窄条只露出网页一小片，看不清验证码/挑战页，所以给一个接近半屏的档位。
   static const _kPreviewLargeRatio = 0.55;
 
   /// 放大后仍要留给上方表单的最小高度。
@@ -75,6 +79,13 @@ class _FetchPageState extends State<FetchPage> {
   int _bytes = 0;
   int _costMs = 0;
 
+  /// 预览卡里展示的前几条 ip:port，在 _fetch 成功时解析一次并缓存。
+  /// 不能放在 build 里解析：响应有几百 KB，每次 setState 都 jsonDecode 会明显掉帧。
+  List<String> _previewTargets = const [];
+
+  /// 解析不出 hits 时的兜底展示（原始 JSON 前 200 字符），同样在 _fetch 时算好。
+  String _previewRaw = '';
+
   @override
   void dispose() {
     _poll?.cancel();
@@ -89,6 +100,15 @@ class _FetchPageState extends State<FetchPage> {
       return;
     }
 
+    // 测速期间必须拒绝：下面「线路没跑就先 startLine()」会走 XrayProc.start()，
+    // 而 start() 首行是 stop() —— 会把正在跑的批量测速进程直接杀掉，
+    // 用户完全看不出发生了什么。这里只拦这一个条件，其余抓取链路不动。
+    final appState = context.read<AppState>();
+    if (appState.linkTestRunning) {
+      _toast('测速进行中，请先停止测速');
+      return;
+    }
+
     setState(() {
       _fetching = true;
       _error = null;
@@ -96,6 +116,8 @@ class _FetchPageState extends State<FetchPage> {
       _hits = 0;
       _bytes = 0;
       _costMs = 0;
+      _previewTargets = const [];
+      _previewRaw = '';
     });
 
     final state = context.read<AppState>();
@@ -188,7 +210,8 @@ class _FetchPageState extends State<FetchPage> {
         final raw = await web.evaluateJavascript(source: probe);
         final text = raw?.toString() ?? '';
         if (text.startsWith('ok:')) {
-          final got = await web.evaluateJavascript(source: 'window.__cytestResult');
+          final got =
+              await web.evaluateJavascript(source: 'window.__cytestResult');
           final str = got?.toString() ?? '';
           if (str.startsWith('{') && str.endsWith('}')) {
             body = str;
@@ -224,6 +247,11 @@ class _FetchPageState extends State<FetchPage> {
       hits = (results?['total_hits'] as num?)?.toInt() ?? 0;
     } catch (_) {}
 
+    // 预览卡要给人看「拉到了什么」，而不是几百 KB 裸 JSON。
+    // 解析一次即缓存，容错到任何字段缺失都不抛异常。
+    final targets = _parseHits(body);
+    final rawHead = _head(body, 200);
+
     await state.saveArchive(body);
 
     setState(() {
@@ -232,6 +260,8 @@ class _FetchPageState extends State<FetchPage> {
       _hits = hits;
       _bytes = body!.length;
       _costMs = DateTime.now().difference(started).inMilliseconds;
+      _previewTargets = targets;
+      _previewRaw = rawHead;
     });
     _toast('获取成功：$hits 条');
   }
@@ -274,10 +304,69 @@ class _FetchPageState extends State<FetchPage> {
     _toast('如出现验证，请完成后再点「获取」');
   }
 
+  /// 从 Censys 响应里抠出前 [limit] 条 `ip:port`，用于预览卡摘要。
+  ///
+  /// 全程容错：`results` / `hits` 任意一层缺失或类型不对都只返回空列表，
+  /// 绝不抛异常（接口出错时拿到的可能是错误页 HTML 或半截 JSON）。
+  List<String> _parseHits(String json, {int limit = 5}) {
+    final out = <String>[];
+    try {
+      final dynamic decoded = jsonDecode(json);
+      if (decoded is! Map) return out;
+      final dynamic results = decoded['results'];
+      if (results is! Map) return out;
+      final dynamic hits = results['hits'];
+      if (hits is! List) return out;
+      for (final dynamic hit in hits) {
+        if (out.length >= limit) break;
+        if (hit is! Map) continue;
+        final dynamic host = hit['host'];
+        if (host is! Map) continue;
+        final dynamic ip = host['ip'];
+        final dynamic port = host['port'];
+        if (ip == null || port == null) continue;
+        out.add('$ip:$port');
+      }
+    } catch (_) {
+      // 不是合法 JSON（错误页、被截断的响应）：交给调用方退回原文展示
+      return out;
+    }
+    return out;
+  }
+
+  /// 取 [s] 的前 [limit] 个 UTF-16 码元，且不把代理对（emoji 等）从中间切断，
+  /// 否则尾部会出现半个字符（渲染成「�」）。
+  String _head(String s, int limit) {
+    if (s.length <= limit) return s;
+    var end = limit;
+    final unit = s.codeUnitAt(end - 1);
+    if (unit >= 0xD800 && unit <= 0xDBFF && end < s.length) end += 1;
+    return '${s.substring(0, end)}…';
+  }
+
+  /// 整段原始 JSON 复制到剪贴板。之前预览只是一段不可选的 Text，用户想复制
+  /// 去别处分析/求助时无从下手，所以给一个显式按钮。
+  Future<void> _copyPayload() async {
+    final body = _payload;
+    if (body == null) return;
+    await Clipboard.setData(ClipboardData(text: body));
+    _toast('已复制原始 JSON（${(body.length / 1024).toStringAsFixed(0)} KB）');
+  }
+
+  /// 把当前拉到的 JSON 直接带进「本地测试」页。
+  ///
+  /// 旧实现是 `Navigator.pop(body)` 把 JSON 当返回值弹回去，但调用方
+  /// （home.dart 的 `_push(context, const FetchPage())`）从来不 await，
+  /// 返回值直接丢弃 —— 用户看到的就是「点一下就回首页、数据没了」。
+  /// 改成主动 push：不依赖返回值，push 返回后本页状态（含 _payload 与预览）
+  /// 完整保留，用户从测试页返回还能接着看。
+  /// 传的是完整 JSON：三阶段漏斗需要原始 Censys 结构，只给 ip:port 列表会丢信息。
   void _import() {
     final body = _payload;
     if (body == null) return;
-    Navigator.of(context).pop(body);
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => TestPage(initialInput: body)),
+    );
   }
 
   void _toast(String msg) {
@@ -294,7 +383,7 @@ class _FetchPageState extends State<FetchPage> {
 
     // 预览区高度：
     // - 键盘弹出时压到 60（标题行整行隐藏，网页实际可见 52；PlatformView 不会被销毁）；
-    // - 平时取 min(180, 屏高 * 28%)，横屏/小屏不至于挤掉一半内容，且不低于 60；
+    // - 平时取 min(120, 屏高 * 28%)，横屏/小屏不至于挤掉一半内容，且不低于 60；
     // - 「放大」档取 屏高 * 55%，但必须给上方表单留出至少 200 的空间。
     // 注意：这里必须用 build 的 context（在 Scaffold 之上）读 viewInsets——
     // Scaffold 在 resizeToAvoidBottomInset: true 时会把 body 的 viewInsets 底部抹成 0，
@@ -318,7 +407,9 @@ class _FetchPageState extends State<FetchPage> {
       appBar: AppBar(
         title: const Text('获取数据'),
         actions: [
-          TextButton(onPressed: _fetching ? null : _openInBrowser, child: const Text('浏览器打开')),
+          TextButton(
+              onPressed: _fetching ? null : _openInBrowser,
+              child: const Text('浏览器打开')),
           const SizedBox(width: 4),
           Padding(
             padding: const EdgeInsets.only(right: 10),
@@ -348,7 +439,12 @@ class _FetchPageState extends State<FetchPage> {
                     children: [
                       _stat(theme, '命中总数', _hits > 0 ? '$_hits' : '—'),
                       const SizedBox(width: 10),
-                      _stat(theme, '响应大小', _bytes > 0 ? '${(_bytes / 1024).toStringAsFixed(0)} KB' : '—'),
+                      _stat(
+                          theme,
+                          '响应大小',
+                          _bytes > 0
+                              ? '${(_bytes / 1024).toStringAsFixed(0)} KB'
+                              : '—'),
                       const SizedBox(width: 10),
                       _stat(theme, '耗时', _costMs > 0 ? '$_costMs ms' : '—'),
                     ],
@@ -366,7 +462,12 @@ class _FetchPageState extends State<FetchPage> {
                           TextField(
                             controller: _cql,
                             maxLines: 5,
-                            style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5),
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              // monospace 在 Android 上没有中文字形，缺 fallback 中文变方块
+                              fontFamilyFallback: ['sans-serif'],
+                              fontSize: 12.5,
+                            ),
                             decoration: const InputDecoration(
                               border: OutlineInputBorder(),
                               isDense: true,
@@ -377,7 +478,8 @@ class _FetchPageState extends State<FetchPage> {
                             children: [
                               TextButton(
                                 onPressed: () => setState(() {
-                                  _cql.text = Defaults.buildQuery(Defaults.fingerprint);
+                                  _cql.text =
+                                      Defaults.buildQuery(Defaults.fingerprint);
                                 }),
                                 child: const Text('恢复默认'),
                               ),
@@ -403,7 +505,9 @@ class _FetchPageState extends State<FetchPage> {
                           Text('状态', style: theme.textTheme.titleSmall),
                           const SizedBox(height: 8),
                           if (_error != null) ...[
-                            Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                            Text(_error!,
+                                style:
+                                    TextStyle(color: theme.colorScheme.error)),
                             const SizedBox(height: 8),
                             Row(
                               children: [
@@ -413,7 +517,8 @@ class _FetchPageState extends State<FetchPage> {
                                 ),
                                 TextButton(
                                   onPressed: () => Navigator.of(context).push(
-                                    MaterialPageRoute(builder: (_) => const TestPage()),
+                                    MaterialPageRoute(
+                                        builder: (_) => const TestPage()),
                                   ),
                                   child: const Text('手动粘贴 JSON'),
                                 ),
@@ -424,9 +529,12 @@ class _FetchPageState extends State<FetchPage> {
                               style: theme.textTheme.labelSmall,
                             ),
                           ] else if (_web == null)
-                            Text(_diag, style: TextStyle(color: theme.colorScheme.onSurfaceVariant))
+                            Text(_diag,
+                                style: TextStyle(
+                                    color: theme.colorScheme.onSurfaceVariant))
                           else if (_payload != null)
-                            Text('获取成功，命中 $_hits 条，响应 $_bytes 字节。点「导入到本地测试」开始跑三阶段。')
+                            Text(
+                                '获取成功，命中 $_hits 条，响应 $_bytes 字节。点「导入到本地测试」开始跑三阶段。')
                           else
                             Text(
                               '$_diag · 出站 ${_usedProxyPort != null ? "Xray 127.0.0.1:$_usedProxyPort" : "直连"}'
@@ -442,24 +550,7 @@ class _FetchPageState extends State<FetchPage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  if (_payload != null)
-                    Card(
-                      margin: EdgeInsets.zero,
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('预览', style: theme.textTheme.titleSmall),
-                            const SizedBox(height: 6),
-                            Text(
-                              _payload!.length > 500 ? '${_payload!.substring(0, 500)}…' : _payload!,
-                              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  if (_payload != null) _payloadCard(theme),
                 ],
               ),
             ),
@@ -544,7 +635,7 @@ class _FetchPageState extends State<FetchPage> {
               ),
             ),
           Expanded(
-            // 套一层描边容器：180 高的预览里网页和页面底色容易糊成一片，
+            // 套一层描边容器：预览区不高，网页和页面底色容易糊成一片，
             // 有边界用户才知道这块是嵌进来的网页。
             child: Container(
               margin: const EdgeInsets.fromLTRB(10, 0, 10, 6),
@@ -554,12 +645,25 @@ class _FetchPageState extends State<FetchPage> {
                 border: Border.all(color: theme.colorScheme.outlineVariant),
               ),
               child: InAppWebView(
+                // 这五项是「像浏览器那样整页显示」的关键，缺一个就会退化成 1:1
+                // 原尺寸渲染：桌面版 Censys 页面按 1024/1280 布局，塞进 120px 高的
+                // 窄条里只能看到左上角一小块，文字巨大且溢出——用户口中的「乱码」
+                // 就是这种放大看局部的效果，并不是编码问题。
+                // - useWideViewPort + loadWithOverviewMode：按页面 viewport 宽度
+                //   等比缩放到容器内，看到的是整页缩略全景；
+                // - supportZoom + builtInZoomControls：保留双指缩放，方便看清验证码；
+                // - displayZoomControls: false：隐藏老式的 +/- 悬浮按钮（丑且挡内容）。
                 initialSettings: InAppWebViewSettings(
                   javaScriptEnabled: true,
                   thirdPartyCookiesEnabled: true,
                   sharedCookiesEnabled: true,
                   transparentBackground: true,
                   isInspectable: false,
+                  useWideViewPort: true,
+                  loadWithOverviewMode: true,
+                  supportZoom: true,
+                  builtInZoomControls: true,
+                  displayZoomControls: false,
                 ),
                 onWebViewCreated: (c) {
                   _web = c;
@@ -588,6 +692,88 @@ class _FetchPageState extends State<FetchPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 预览卡：一屏讲清「这次拉到了什么」。
+  ///
+  /// 旧版直接把 `_payload` 前 500 字符当 Text 甩出来：几百 KB 的 JSON 被硬切成
+  /// 半截、不可选不可复制，用户看到的就是一堆乱码般的括号引号。
+  /// 现在改成「一行摘要 + 前 5 条 ip:port + 复制原始 JSON」——
+  /// 摘要回答体量与耗时，ip:port 回答内容，复制按钮保留原始数据的可用性。
+  Widget _payloadCard(ThemeData theme) {
+    final kb = (_bytes / 1024).toStringAsFixed(0);
+    final sec = (_costMs / 1000).toStringAsFixed(1);
+    final totalLabel = _hits > 0 ? '$_hits' : '${_previewTargets.length}';
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text('预览', style: theme.textTheme.titleSmall),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '命中 $totalLabel 条 · $kb KB · $sec s',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_previewTargets.isEmpty)
+              // 解析不出 hits（错误页 / 结构变动）：退回展示原始文本开头，
+              // 让用户仍能判断拿到的是不是想要的东西。
+              Text(
+                _previewRaw.isEmpty ? '（没有可展示的内容）' : _previewRaw,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  // Android 的 monospace 族不含完整中文字形，缺 fallback 中文会显示成方块
+                  fontFamilyFallback: ['sans-serif'],
+                  fontSize: 11,
+                ),
+              )
+            else ...[
+              ..._previewTargets.asMap().entries.map(
+                    (e) => Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text(
+                        '${e.key + 1}. ${e.value}',
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontFamilyFallback: ['sans-serif'],
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+              const SizedBox(height: 2),
+              Text(
+                '共 $totalLabel 条候选，这里只列前 ${_previewTargets.length} 条',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _copyPayload,
+                icon: const Icon(Icons.copy_all_outlined, size: 16),
+                label: const Text('复制原始 JSON'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

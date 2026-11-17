@@ -4,7 +4,25 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:cytest/data/link_probe.dart';
+import 'package:cytest/data/vless.dart';
 import 'package:cytest/data/xray.dart';
+
+/// 造一个最小可用的 Vless（只填 buildBatchConfig 会读的字段）。
+Vless _vless(String host, int port) => Vless(
+      uuid: 'b831381d-6324-4d53-ad4f-8cda48b30811',
+      host: host,
+      port: port,
+      network: 'ws',
+      security: 'tls',
+      sni: host,
+      wsHost: host,
+      wsPath: '/ws',
+      alpn: '',
+      fingerprint: '',
+      mode: 'auto',
+      name: host,
+    );
 
 /// 构造 [ProcessException] 的简写。
 /// 真实签名是 `(executable, arguments, [message, errorCode])`。
@@ -262,6 +280,204 @@ void main() {
       expect(lines, <String>['ok']);
     });
   });
+
+  group('buildBatchConfig 批量配置（单进程 N 入站）', () {
+    test('两个节点 → 两个 mixed 入站 + 两条 routing 规则 + direct/block 兜底', () {
+      final nodes = <(Vless, int)>[
+        (_vless('a.example', 443), 20000),
+        (_vless('b.example', 8443), 20001),
+      ];
+
+      final map = jsonDecode(buildBatchConfig(nodes)) as Map<String, dynamic>;
+      final inbounds = (map['inbounds'] as List).cast<Map<String, dynamic>>();
+      final outbounds = (map['outbounds'] as List).cast<Map<String, dynamic>>();
+      final rules = ((map['routing'] as Map)['rules'] as List)
+          .cast<Map<String, dynamic>>();
+
+      expect(inbounds.length, 2);
+      expect(inbounds[0]['protocol'], 'mixed');
+      expect(inbounds[0]['listen'], '127.0.0.1');
+      expect(inbounds[0]['port'], 20000);
+      expect(inbounds[1]['port'], 20001);
+
+      expect(outbounds.length, 4, reason: '2 个节点出站 + direct + block');
+      expect(outbounds[2]['tag'], 'direct');
+      expect(outbounds[3]['tag'], 'block');
+
+      expect(rules.length, 2);
+      expect(rules[0]['inboundTag'], <String>['in-0']);
+      expect(rules[0]['outboundTag'], 'out-0');
+      expect(rules[1]['inboundTag'], <String>['in-1']);
+      expect(rules[1]['outboundTag'], 'out-1');
+
+      expect((map['log'] as Map)['loglevel'], 'warning');
+    });
+
+    test('入站口与节点一一对应：out-N 指向第 N 个节点的 host/port', () {
+      final nodes = <(Vless, int)>[
+        (_vless('a.example', 443), 20000),
+        (_vless('b.example', 8443), 20001),
+      ];
+
+      final map = jsonDecode(buildBatchConfig(nodes)) as Map<String, dynamic>;
+      final outbounds = (map['outbounds'] as List).cast<Map<String, dynamic>>();
+
+      final first =
+          (((outbounds[0]['settings'] as Map)['vnext'] as List).first as Map);
+      final second =
+          (((outbounds[1]['settings'] as Map)['vnext'] as List).first as Map);
+
+      expect(outbounds[0]['tag'], 'out-0');
+      expect(first['address'], 'a.example');
+      expect(first['port'], 443);
+      expect(outbounds[1]['tag'], 'out-1');
+      expect(second['address'], 'b.example');
+      expect(second['port'], 8443);
+    });
+  });
+
+  group('waitPorts 端口就绪门禁（K5：全部就绪才算成功）', () {
+    test('真实监听中的端口 → true', () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close());
+      final port = server.port;
+
+      final ok = await XrayProc().waitPorts(
+        <int>[port],
+        timeout: const Duration(seconds: 2),
+      );
+
+      expect(ok, isTrue);
+    });
+
+    test('没有监听的端口 → false（超时返回，不抛异常）', () async {
+      final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final port = probe.port;
+      await probe.close(); // 关掉后这个口没人监听
+
+      final watch = Stopwatch()..start();
+      final ok = await XrayProc().waitPorts(
+        <int>[port],
+        timeout: const Duration(milliseconds: 400),
+      );
+
+      expect(ok, isFalse);
+      expect(watch.elapsedMilliseconds, lessThan(5000));
+    });
+
+    test('有一个端口没就绪就整体 false（不允许「部分就绪」进探测）', () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close());
+      final dead = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final deadPort = dead.port;
+      await dead.close();
+
+      final ok = await XrayProc().waitPorts(
+        <int>[server.port, deadPort],
+        timeout: const Duration(milliseconds: 400),
+      );
+
+      expect(ok, isFalse);
+    });
+
+    test('空列表视为就绪（没有端口要等）', () async {
+      expect(await XrayProc().waitPorts(const <int>[]), isTrue);
+    });
+  });
+
+  group('K4 批量模式语义（running 只代表单线路代理）', () {
+    test('mode == batch 时 running 为 false（批量进程不是可用代理）', () {
+      final proc = XrayProc()..debugSetModeForTest(XrayMode.batch);
+
+      expect(proc.mode, XrayMode.batch);
+      expect(proc.running, isFalse);
+    });
+
+    test('mode == line 时 running 为 true，none 时为 false', () {
+      final proc = XrayProc();
+      expect(proc.running, isFalse);
+
+      proc.debugSetModeForTest(XrayMode.line);
+      expect(proc.running, isTrue);
+
+      proc.debugSetModeForTest(XrayMode.none);
+      expect(proc.running, isFalse);
+    });
+
+    test('批量运行中调用 start() 抛 XrayBusyException，文案可直接展示', () async {
+      final proc = XrayProc()..debugSetModeForTest(XrayMode.batch);
+
+      await expectLater(
+        proc.start(_vless('a.example', 443)),
+        throwsA(
+          isA<XrayBusyException>()
+              .having((e) => e.message, 'message', kBatchRunningMessage)
+              .having((e) => e.toString(), 'toString', kBatchRunningMessage),
+        ),
+      );
+    });
+
+    test('K4 提示文案常量（T04 直接引用，改动会同时让此处失败）', () {
+      expect(kBatchRunningMessage, '测速进行中，请先停止测速');
+      expect(kProxyStoppedByTestMessage, '测速已停止代理线路');
+    });
+
+    test('startBatch 传空列表直接返回可读错误，不起进程', () async {
+      final error = await XrayProc().startBatch(const <(Vless, int)>[]);
+
+      expect(error, '没有可测的节点');
+    });
+  });
+
+  group('terminateProcess（T02 验收 2：stop 返回后进程确已退出）', () {
+    test('长跑进程被终止：返回时 exitCode 已 resolve，且不无限等', () async {
+      final proc = await _spawnLongRunning();
+      addTearDown(() => proc.kill(ProcessSignal.sigkill));
+
+      final watch = Stopwatch()..start();
+      await terminateProcess(proc, grace: const Duration(milliseconds: 800));
+      watch.stop();
+
+      // 返回后必须已经能拿到退出码（不是「还在退出中」）
+      final code = await proc.exitCode.timeout(const Duration(seconds: 2));
+      expect(code, isNotNull);
+      expect(
+        watch.elapsedMilliseconds,
+        lessThan(4000),
+        reason: '最多两个宽限期（2×800ms）+ 调度余量',
+      );
+    });
+
+    test('幂等：进程已退出后再调用不抛异常', () async {
+      final proc = await _spawnLongRunning();
+      await terminateProcess(proc, grace: const Duration(milliseconds: 500));
+
+      await expectLater(
+        terminateProcess(proc, grace: const Duration(milliseconds: 500)),
+        completes,
+      );
+    });
+
+    test('批量端口超时只有一份口径：直接引用 link_probe 的 kPortReadyTimeout', () {
+      expect(kPortReadyTimeout, const Duration(seconds: 12));
+      // xray.dart 不得再定义同名/同值的第二个常量（T03 会两处各改一处而漏另一处）
+      expect(kPortReadyTimeout.inSeconds, 12);
+    });
+  });
+}
+
+/// 起一个「会跑很久」的进程，用来验证 terminateProcess 真的能把它收掉。
+///
+/// Windows 的 `ping -n 30` 约 29s；POSIX 的 `sleep 30` 同理。
+/// 必须把 stdout/stderr 读走：否则子进程写满管道缓冲区会阻塞，
+/// 「终止」测试就变成了「测管道」。
+Future<Process> _spawnLongRunning() async {
+  final proc = Platform.isWindows
+      ? await Process.start('ping', const <String>['-n', '30', '127.0.0.1'])
+      : await Process.start('sleep', const <String>['30']);
+  unawaited(proc.stdout.drain<void>());
+  unawaited(proc.stderr.drain<void>());
+  return proc;
 }
 
 List<int> _utf8(String s) => const Utf8Codec().encode(s);

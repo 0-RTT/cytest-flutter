@@ -81,8 +81,8 @@ class _RemotePageState extends State<RemotePage> {
   }
 
   void _toast(String msg) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
   }
 
   @override
@@ -157,7 +157,12 @@ class _RemotePageState extends State<RemotePage> {
                     TextField(
                       controller: _data,
                       maxLines: 6,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        // monospace 在 Android 上不含中文字形，缺 fallback 中文显示方块
+                        fontFamilyFallback: ['sans-serif'],
+                        fontSize: 11.5,
+                      ),
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         isDense: true,
@@ -194,7 +199,9 @@ class _RemotePageState extends State<RemotePage> {
                       child: _log.isEmpty
                           ? Center(
                               child: Text('未执行',
-                                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+                                  style: TextStyle(
+                                      color:
+                                          theme.colorScheme.onSurfaceVariant)),
                             )
                           : ListView.builder(
                               controller: _logScroll,
@@ -202,13 +209,20 @@ class _RemotePageState extends State<RemotePage> {
                               itemCount: _log.length,
                               itemBuilder: (_, i) => Text(
                                 _log[i],
-                                style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  // 远端日志常含中文，必须回落系统字体
+                                  fontFamilyFallback: ['sans-serif'],
+                                  fontSize: 11.5,
+                                ),
                               ),
                             ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 8),
-                      Text(_error!, style: TextStyle(color: theme.colorScheme.error, fontSize: 12)),
+                      Text(_error!,
+                          style: TextStyle(
+                              color: theme.colorScheme.error, fontSize: 12)),
                     ],
                   ],
                 ),

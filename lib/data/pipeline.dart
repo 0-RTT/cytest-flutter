@@ -5,6 +5,7 @@ import 'dart:io';
 import '../core/bin.dart';
 import '../core/paths.dart';
 import '../core/settings.dart';
+import 'xray.dart' show terminateProcess;
 
 /// 一次本地测试的产物。
 class RunOutput {
@@ -21,17 +22,60 @@ class RunOutput {
       .fold<double>(0, (a, b) => b > a ? b : a);
 }
 
+/// 三阶段运行的取消令牌：持有 [Process] 句柄，取消时走 sigterm → sigkill。
+///
+/// 为什么必须有它：旧实现是「按进程名匹配去杀」（`Process.run` 跑一条 name-match
+/// 命令），而真实可执行文件是 `nativeLibraryDir/libpipeline.so` —— 名字匹配不到
+/// 这个路径，**取消是空操作**，只是给用户一个「已取消」的错觉（设计 §2.3）。
+/// 只有握着 `Process` 句柄去 kill 才是真的。
+class PipelineCancelToken {
+  Process? _proc;
+  bool _cancelled = false;
+
+  /// 是否已经请求取消。
+  bool get cancelled => _cancelled;
+
+  /// 进程是否还挂着（诊断用）。
+  bool get attached => _proc != null;
+
+  /// 由 [Pipeline.run] 在起进程后调用。若此前已取消，立刻终止。
+  void attach(Process proc) {
+    _proc = proc;
+    if (_cancelled) {
+      unawaited(terminateProcess(proc));
+    }
+  }
+
+  /// 进程结束后解绑，避免持有已死句柄。
+  void detach() {
+    _proc = null;
+  }
+
+  /// 取消：置位 + 终止进程（幂等；未起进程时只置位，起进程时会立刻被杀）。
+  Future<void> cancel() async {
+    _cancelled = true;
+    final proc = _proc;
+    if (proc == null) return;
+    _proc = null;
+    await terminateProcess(proc);
+  }
+}
+
 /// 三阶段引擎的 Dart 侧封装：调用打包的 Go 二进制，流式回传日志。
 class Pipeline {
   Pipeline._();
 
   /// [mode] 为 full（Censys JSON，跑三阶段）或 speed（ip:port 列表，只测速）。
+  ///
+  /// [token] 用于取消：调用方 `await token.cancel()` 后本方法会在
+  /// `proc.exitCode` 处自然返回（进程已死），无需额外中断逻辑。
   static Future<RunOutput> run({
     required String mode,
     required String input,
     required AppSettings settings,
     required void Function(String line) onLine,
     void Function(int current, int total, String stage)? onProgress,
+    PipelineCancelToken? token,
   }) async {
     final exePath = await Bins.path('pipeline');
     final runsRoot = await Paths.runs();
@@ -48,20 +92,32 @@ class Pipeline {
     await cfgFile.writeAsString(_configJson(settings), flush: true);
 
     final args = <String>[
-      '-config', cfgFile.path,
-      '-result', resultFile.path,
-      if (mode == 'speed') ...['-only-speed', '-targets', inputFile.path]
-      else ...['-data', inputFile.path],
+      '-config',
+      cfgFile.path,
+      '-result',
+      resultFile.path,
+      if (mode == 'speed') ...[
+        '-only-speed',
+        '-targets',
+        inputFile.path
+      ] else ...[
+        '-data',
+        inputFile.path
+      ],
     ];
 
-    final proc = await Process.start(exePath, args, workingDirectory: runDir.path);
+    final proc =
+        await Process.start(exePath, args, workingDirectory: runDir.path);
+    // 先把句柄交给令牌再读输出：否则「刚起进程就被取消」的窗口里会漏杀
+    token?.attach(proc);
     final logSink = consoleFile.openWrite();
 
     final progressRe = RegExp(r'\[[^\]]*?(\d+)/(\d+)\]');
     var stage = '';
 
     Future<void> pump(Stream<List<int>> stream) async {
-      await for (final chunk in stream.transform(utf8.decoder).transform(const LineSplitter())) {
+      await for (final chunk
+          in stream.transform(utf8.decoder).transform(const LineSplitter())) {
         onLine(chunk);
         logSink.writeln(chunk);
         if (chunk.contains('阶段') && chunk.runes.length < 80) {
@@ -81,6 +137,7 @@ class Pipeline {
     final outDone = pump(proc.stdout);
     final errDone = pump(proc.stderr);
     final code = await proc.exitCode;
+    token?.detach();
     await Future.wait([outDone, errDone]);
     await logSink.flush();
     await logSink.close();
@@ -105,7 +162,8 @@ class Pipeline {
         '${two(now.hour)}${two(now.minute)}${two(now.second)}';
   }
 
-  static String _configJson(AppSettings s) => const JsonEncoder.withIndent('  ').convert({
+  static String _configJson(AppSettings s) =>
+      const JsonEncoder.withIndent('  ').convert({
         'TargetSHA1Hash': s.fingerprint,
         'MaxSha1Concurrency': s.sha1Concurrency,
         'speedTestURL': s.speedUrl,

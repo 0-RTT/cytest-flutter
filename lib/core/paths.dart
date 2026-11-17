@@ -28,8 +28,14 @@ class Paths {
   static Future<Directory> xray() async =>
       _ensure('${(await root()).path}/xray');
 
-  static Future<Directory> bin() async =>
-      _ensure('${(await root()).path}/bin');
+  static Future<Directory> bin() async => _ensure('${(await root()).path}/bin');
+
+  /// 链路测速历史（`cytest/linktest/<ts>.json`，只保留最近 20 个）。
+  ///
+  /// 与 [runs] 分开：`runs` 是三阶段漏斗的运行记录，两者生命周期与
+  /// 保留策略不同，混在一起 prune 会互相删。
+  static Future<Directory> linktest() async =>
+      _ensure('${(await root()).path}/linktest');
 
   static Future<Directory> _ensure(String path) async {
     final dir = Directory(path);

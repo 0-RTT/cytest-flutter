@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cytest/data/node_template.dart';
+import 'package:cytest/data/pipeline.dart';
 import 'package:cytest/data/vless.dart';
 
 const _sample = 'vless://11111111-2222-3333-4444-555555555555@example.com:443'
@@ -50,7 +53,8 @@ void main() {
 
     test('替换保留查询后缀', () {
       expect(
-        replacePathIp('/1.2.3.4:443?ed=2048', const ProxyIp('104.16.0.1', 2053)),
+        replacePathIp(
+            '/1.2.3.4:443?ed=2048', const ProxyIp('104.16.0.1', 2053)),
         '/104.16.0.1:2053?ed=2048',
       );
       expect(
@@ -154,4 +158,53 @@ bad-line
       expect('xhttp-opts:'.allMatches(yaml).length, 2);
     });
   });
+
+  group('PipelineCancelToken（T05：句柄 kill 取代按名匹配）', () {
+    test('attach 后 cancel：进程真的被终止，句柄解绑', () async {
+      final proc = await _spawnLongRunning();
+      addTearDown(() => proc.kill(ProcessSignal.sigkill));
+      final token = PipelineCancelToken()..attach(proc);
+
+      expect(token.attached, isTrue);
+      await token.cancel();
+      expect(token.cancelled, isTrue);
+      expect(token.attached, isFalse);
+
+      // 「返回时进程已退出」：exitCode 必须已 resolve
+      final code = await proc.exitCode.timeout(const Duration(seconds: 2));
+      expect(code, isNotNull);
+    });
+
+    test('先 cancel 再 attach：起来就被杀，不漏杀', () async {
+      final token = PipelineCancelToken();
+      await token.cancel();
+      expect(token.cancelled, isTrue);
+
+      final proc = await _spawnLongRunning();
+      addTearDown(() => proc.kill(ProcessSignal.sigkill));
+      token.attach(proc);
+
+      final code = await proc.exitCode.timeout(const Duration(seconds: 5));
+      expect(code, isNotNull, reason: 'attach 时发现已取消，必须立刻终止');
+    });
+
+    test('cancel 幂等，未 attach 时不抛异常', () async {
+      final token = PipelineCancelToken();
+
+      await token.cancel();
+      await expectLater(token.cancel(), completes);
+      expect(token.cancelled, isTrue);
+    });
+  });
+}
+
+/// 起一个会跑很久的进程（Windows `ping -n 30` ≈ 29s；POSIX `sleep 30`）。
+/// stdout/stderr 必须读走，否则子进程写满管道会阻塞。
+Future<Process> _spawnLongRunning() async {
+  final proc = Platform.isWindows
+      ? await Process.start('ping', const <String>['-n', '30', '127.0.0.1'])
+      : await Process.start('sleep', const <String>['30']);
+  unawaited(proc.stdout.drain<void>());
+  unawaited(proc.stderr.drain<void>());
+  return proc;
 }

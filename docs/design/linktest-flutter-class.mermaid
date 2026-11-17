@@ -1,0 +1,114 @@
+%% cytest · 链路测速类图（Flutter 侧目标结构）
+classDiagram
+  class LinkTestMode {
+    <<enumeration>>
+    latency
+    speed
+    auto
+  }
+
+  class ProbeState {
+    <<enumeration>>
+    pending
+    running
+    done
+    failed
+    cancelled
+  }
+
+  class LinkTestResult {
+    +String link
+    +String name
+    +String host
+    +int port
+    +int latencyMs
+    +double? speedMib
+    +String? error
+    +int elapsedMs
+    +ProbeState state
+    +bool ok
+    +bool latencyKnown
+    +bool hasSpeed
+  }
+
+  class LinkTestRun {
+    +String id
+    +int createdAt
+    +LinkTestMode mode
+    +List~LinkTestResult~ results
+    +int okCount
+    +double fastest
+  }
+
+  class LinkProbeOutcome {
+    +int ttfbMs
+    +double? speedMib
+    +String? error
+    +int elapsedMs
+    +bool cancelled
+  }
+
+  class SpeedMeter {
+    +int warmupBytes
+    +int budgetMs
+    +int maxBytes
+    +int minWindowMs
+    +int firstByteMs
+    +int total
+    +bool needStop
+    +void onChunk(int bytes, int elapsedMs)
+    +double? sample()
+  }
+
+  class LinkProbe {
+    +String speedUrl
+    +int localPort
+    +HttpClient? client
+    +bool cancelled
+    +Future~LinkProbeOutcome~ latency()
+    +Future~LinkProbeOutcome~ speed()
+    +void cancel()
+  }
+
+  class PortPool {
+    +int base
+    +int span
+    +Future~List~int~~ pick(int n)
+  }
+
+  class LinkTestRunner {
+    +Semaphore latencyGate
+    +Semaphore speedGate
+    +bool cancelled
+    +List~LinkProbe~ live
+    +int epoch
+    +Future~LinkTestRun~ run(List~String~ links, LinkTestMode mode, onUpdate, onStage)
+    +Future~void~ cancel()
+    +void _flush()
+  }
+
+  class XrayProc {
+    +Process? proc
+    +XrayMode mode
+    +List~String~ lastOutput
+    +Future~void~ start(Vless v, ProxyIp? proxy)
+    +Future~String?~ startBatch(List nodes)
+    +Future~void~ stop()
+    +Future~bool~ waitPorts(List~int~ ports, Duration timeout)
+  }
+
+  class LinkTestStore {
+    +Future~void~ save(LinkTestRun run)
+    +Future~List~LinkTestRun~~ list()
+    +Future~void~ prune(int max)
+  }
+
+  LinkTestRunner --> LinkProbe : 每节点一个实例
+  LinkTestRunner --> PortPool
+  LinkTestRunner --> XrayProc
+  LinkTestRunner --> LinkTestStore
+  LinkTestRunner --> Semaphore : 延迟 6 / 速度 2
+  LinkProbe --> SpeedMeter
+  LinkProbe ..> LinkProbeOutcome : 产出
+  LinkTestRunner ..> LinkTestRun : 产出
+  LinkTestRun *-- LinkTestResult

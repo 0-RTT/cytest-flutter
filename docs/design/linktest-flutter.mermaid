@@ -1,0 +1,45 @@
+%% cytest · 链路测速（AUTO 模式）主流程 —— 对齐 Kotlin LinkTestController + LinkProbe + XrayController.startBatch
+sequenceDiagram
+  participant UI as LinesPage
+  participant R as LinkTestRunner
+  participant P as PortPool
+  participant X as XrayProc
+  participant PR as LinkProbe
+  participant S as LinkTestStore
+
+  UI->>R: run(links, mode: auto)
+  R->>R: 解析 + 逐条预检（非法 → failed 直接进结果）
+  R->>P: pick(n)
+  alt 端口不足
+    P-->>R: (m, n)
+    R-->>UI: 提示「可用本地端口只剩 m 个」并结束（不起进程）
+  else 端口足够
+    P-->>R: ports[0..n)
+    R->>R: buildBatchConfig([(vless_i, ports[i])])
+    R->>X: startBatch(nodes)
+    X->>X: await stop()（sigterm → sigkill，await 退出）
+    X->>X: 写 paths.xray()/batch.json
+    X->>X: Process.start(libxray.so run -c batch.json)
+    X->>X: waitPorts(ports, 12s)
+    X-->>R: null（全部端口就绪）或 错误串（尾部日志）
+    alt 启动失败
+      R-->>UI: 提示错误（不把节点标失败）
+    else 就绪
+      loop 延迟波 · Semaphore(6)
+        R->>PR: latency(ports[i])
+        PR->>PR: HttpClient(findProxy 127.0.0.1:port) → 首字节计时
+        PR-->>R: Outcome(ttfbMs, error, elapsedMs)
+        R-->>UI: 每 8 条 flush 一次
+      end
+      R->>R: candidates = error == null（AUTO）
+      loop 速度波 · Semaphore(2)
+        R->>PR: speed(ports[j])
+        PR->>PR: 256KiB 预热 → 3s/64MiB 窗口 → MiB/s
+        PR-->>R: Outcome(ttfbMs, speedMib?, error)
+        R-->>UI: 每 8 条 flush 一次
+      end
+      R->>S: save(run)（失败仅提示，不影响结果）
+      R->>X: stop()
+      R-->>UI: 完成 · K 条可用
+    end
+  end

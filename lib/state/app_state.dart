@@ -7,14 +7,30 @@ import '../core/bin.dart';
 import '../core/paths.dart';
 import '../core/settings.dart';
 import '../data/history.dart';
+import '../data/link_test.dart';
+import '../data/link_test_store.dart';
 import '../data/pipeline.dart';
 import '../data/vless.dart';
 import '../data/xray.dart';
 
 /// 全局状态：设置、线路、测试运行、结果。与 Android 端 TestViewModel 的职责对齐。
 class AppState extends ChangeNotifier {
+  /// [runner] 仅供单测注入（默认按真实 [xray] + 真实落盘构造）。
+  ///
+  /// 之所以留这个口子：`runLinkTest` 的「防重入」必须能被单测断言
+  /// （第二次调用不能清掉第一轮的进度、不能把「在跑」标成「没跑」），
+  /// 而真跑一轮测速需要 xray 二进制 —— 不注入就永远验不了。
+  AppState({XrayProc? xray, LinkTestRunner? runner})
+      : xray = xray ?? XrayProc() {
+    linkTestRunner =
+        runner ?? LinkTestRunner(xray: this.xray, saver: LinkTestStore().save);
+  }
+
   AppSettings settings = AppSettings();
-  final XrayProc xray = XrayProc();
+  final XrayProc xray;
+
+  /// 链路测速编排器。
+  late final LinkTestRunner linkTestRunner;
 
   List<Map<String, String>> rows = const [];
   Directory? lastRunDir;
@@ -28,6 +44,69 @@ class AppState extends ChangeNotifier {
 
   bool booting = true;
   String binStatus = '';
+
+  /// 当前三阶段运行的取消令牌（null = 没有在跑）。
+  ///
+  /// 每轮新建：令牌一旦 cancelled 就永久置位，复用会让下一轮刚起进程就被杀掉。
+  PipelineCancelToken? _runToken;
+
+  // --- 链路测速（T03） -------------------------------------------------------
+
+  /// 测速进度结果（UI 只读）。
+  List<LinkTestResult> linkResults = const [];
+
+  /// 当前阶段文字（「准备中 / 延迟探测 / 速度探测 / 完成 / 已取消」）。
+  String linkStage = '';
+
+  /// 是否正在测速。**不要复用它判断「有没有代理」**：代理的唯一真相是
+  /// `xray.mode`（`xray.running` 只在 `mode == line` 时为真）。UI 判「测速中」
+  /// 请用 `linkTestRunning || xray.mode == XrayMode.batch`。
+  bool linkTestRunning = false;
+
+  /// 测速失败的可读原因（null = 没有错误）。
+  String? linkTestError;
+
+  /// R12 预留：为什么代理被停了（一次性、读取即消费）。
+  ///
+  /// **A 方案下不写值**，只为 B/C 方案预留接口（设计 §9.1）。
+  /// 禁止用它参与任何判定——代理是否可用只看 `xray.mode`。
+  String? proxyStopReason;
+
+  /// 「代理刚被测速停掉」的一次性提示（内部存储，只经 [takeProxyStopNotice] 读取）。
+  String? _proxyStopNotice;
+
+  /// 取走提示（**one-shot：读取即置空**）。
+  ///
+  /// 为什么必须一次性：T04 需要在用户切到「获取数据」时提示「测速已停止代理线路」。
+  /// 用持久 bool 存「谁停的代理」会与 `xray.mode` 形成两份事实副本，
+  /// 用户改链接/杀进程重进后会永久僵死为 true（架构师 §9.1 明确否掉这种写法）。
+  /// 读完即清 → 提示只出现一次，且永远不会与真实状态打架。
+  String? takeProxyStopNotice() {
+    final notice = _proxyStopNotice;
+    _proxyStopNotice = null;
+    return notice;
+  }
+
+  /// 仅供单测：直接置位提示，用于验证「读取即消费」不会僵死。
+  ///
+  /// 生产代码里只有 [runLinkTest] 会写这个字段；加这个方法是为了让 one-shot
+  /// 语义有可执行的断言（否则只能靠读代码，等于没验）。
+  void debugSetProxyStopNoticeForTest(String? value) {
+    _proxyStopNotice = value;
+  }
+
+  /// 可用条数。
+  int get linkOkCount => linkResults.where((r) => r.ok).length;
+
+  /// 最快速度（MiB/s）。
+  double get linkFastest {
+    var best = 0.0;
+    for (final r in linkResults) {
+      final speed = r.speedMib ?? 0;
+      if (r.hasSpeed && speed > best) best = speed;
+    }
+    return best;
+  }
 
   Future<void> boot() async {
     settings = await AppSettings.load();
@@ -103,11 +182,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final token = PipelineCancelToken();
+      _runToken = token;
       final out = await Pipeline.run(
         mode: mode,
         input: input,
         settings: settings,
         onLine: pushLog,
+        token: token,
         onProgress: (cur, total, stage) {
           progressCur = cur;
           progressTotal = total;
@@ -123,16 +205,90 @@ class AppState extends ChangeNotifier {
       pushLog('✗ $e');
       return false;
     } finally {
+      _runToken = null;
       running = false;
       notifyListeners();
     }
   }
 
   Future<void> cancel() async {
-    // pipeline 进程由 Pipeline.run 内部持有；这里通过杀同名进程兜底
+    // 三阶段取消：必须走 Process 句柄 kill。旧实现按进程名匹配去杀，
+    // 匹配不到真实可执行文件（nativeLibraryDir/libpipeline.so），
+    // 是彻底的空操作 —— 用户以为取消了，进程还在跑（设计 §2.3）。
+    final token = _runToken;
+    if (token == null) {
+      pushLog('没有正在运行的三阶段测试');
+      return;
+    }
+    pushLog('正在取消…');
+    await token.cancel();
+    pushLog('已取消');
+  }
+
+  /// 跑一次链路测速。返回是否成功（失败原因在 [linkTestError]）。
+  ///
+  /// 与三阶段本地测试互斥：两者都会重压 CPU/网络，同时跑测出来的数没意义。
+  Future<bool> runLinkTest(
+    List<String> links, {
+    LinkTestMode mode = LinkTestMode.auto,
+  }) async {
+    // 防重入必须在**任何状态改写之前**：否则第二次调用会先把 linkResults 清空
+    // （抹掉第一轮进度），再被 runner 抛「上一次测速还在进行」，最后 finally 把
+    // linkTestRunning 置 false —— 第一轮还在跑，UI 却以为没在跑。
+    // 判据用 runner 自己的运行态（唯一真相），不看 linkTestRunning 这个副本。
+    if (linkTestRunner.running) {
+      linkTestError = '测速进行中，请先停止测速';
+      notifyListeners();
+      return false;
+    }
+    if (running) {
+      linkTestError = '三阶段测试进行中，请先等待完成';
+      notifyListeners();
+      return false;
+    }
+    linkTestRunning = true;
+    linkTestError = null;
+    linkResults = const [];
+    linkStage = '准备中';
+    notifyListeners();
+
     try {
-      await Process.run('pkill', ['-f', 'cytest/pipeline']);
-    } catch (_) {}
+      final run = await linkTestRunner.run(
+        links,
+        mode: mode,
+        onProgress: (results, stage) {
+          linkResults = results;
+          linkStage = stage;
+          notifyListeners();
+        },
+      );
+      linkResults = run.results;
+      linkStage = linkTestRunner.cancelled ? '已取消' : '完成';
+      // K4：只提示、不自动恢复代理（R12 = A：代理是否恢复由用户下一次显式动作决定）
+      if (linkTestRunner.stoppedUserProxy) {
+        _proxyStopNotice = kProxyStoppedByTestMessage;
+        pushLog(kProxyStoppedByTestMessage);
+      }
+      return true;
+    } on LinkTestException catch (e) {
+      linkTestError = e.message;
+      pushLog('✗ ${e.message}');
+      return false;
+    } on Object catch (e) {
+      linkTestError = e.toString();
+      pushLog('✗ $e');
+      return false;
+    } finally {
+      linkTestRunning = false;
+      notifyListeners();
+    }
+  }
+
+  /// 取消测速：置位 → 关在途客户端 → 杀批量进程（三段由 runner 内部完成）。
+  Future<void> cancelLinkTest() async {
+    await linkTestRunner.cancel();
+    linkStage = '已取消';
+    notifyListeners();
   }
 
   List<(String, String)> get usableTargets {
