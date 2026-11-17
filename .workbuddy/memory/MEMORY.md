@@ -39,3 +39,14 @@ mihomo 只保留 proxies/groups/rules 核心段（无 rule-providers、假 IP �
 ## 产物
 APK 走 `flutter build apk --release --target-platform android-arm64`，
 二进制（pipeline / pipeline-linux / xray）由 `scripts/fetch-assets.sh` 或 CI 生成，不入库。
+
+## CI 与发布（2026-11-17 打通）
+GitHub Actions：`subosito/flutter-action@v2` + runner 预装 Android SDK，`flutter analyze` →
+`flutter test`（12 项）→ `flutter build apk --release --target-platform android-arm64` 全绿。
+APK 37.5MB，包名 `com.cytest.cytest`，minSdk 29 / targetSdk 36，与 Kotlin 版（com.cytest.app）可共存。
+
+发版：`git tag -a v1.x.x -m "..." && git push origin v1.x.x` → release job 下载 artifact、
+重命名为 cytest-flutter.apk 后发正式版。日常 push main 只上传 artifact（不发 release）。
+
+注意：CI 里 `Download pipeline binaries` 步骤实际是用 engine/pipeline.go 现场编译（Go 1.27.1），
+不是从 cytest-app 的 release 拉——engine/pipeline.go 必须与 tools/pipeline/pipeline.go 保持同步。
