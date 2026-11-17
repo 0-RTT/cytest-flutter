@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- release 包只合并 main，这条必须写在 main 里；否则 app UID 无权创建 AF_INET
+         socket，xray 子进程无法 listen，WebView 也加载不了任何网页。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="cytest"
         android:name="${applicationName}"

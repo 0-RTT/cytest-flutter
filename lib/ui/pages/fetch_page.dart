@@ -23,6 +23,21 @@ class _FetchPageState extends State<FetchPage> {
   static const _origin = 'https://platform.censys.io';
   static const _searchPath = '/api/search';
 
+  /// WebView 首次创建的最长等待时间。
+  /// 低端机首次创建 PlatformView 经常超过 3 秒，3 秒就判失败是误杀。
+  static const _kWebInitTimeout = Duration(seconds: 15);
+
+  /// 预览面板高度上限。必须是真实可见区域，PlatformView 才会被创建。
+  static const _kPreviewMaxHeight = 180.0;
+
+  /// 预览面板高度下限：键盘弹出时压到这个高度。
+  /// 绝对不能压到 0 或移出屏外——那会让 PlatformView 被销毁、`_web` 置空、
+  /// 正在跑的 loadUrl 丢失，正好又踩回「onWebViewCreated 不触发」的老坑。
+  static const _kPreviewMinHeight = 60.0;
+
+  /// 预览面板占屏高的比例，用于横屏/小屏时收窄。
+  static const _kPreviewScreenRatio = 0.28;
+
   late final TextEditingController _cql =
       TextEditingController(text: Defaults.buildQuery(Defaults.fingerprint));
 
@@ -34,6 +49,9 @@ class _FetchPageState extends State<FetchPage> {
   String _diag = 'WebView 初始化中…';
   int? _usedProxyPort;
   String? _error;
+
+  /// 最近一次 onReceivedError 的描述（含失败 URL），失败时原样显示给用户。
+  String? _lastError;
   String? _payload;
   int _hits = 0;
   int _bytes = 0;
@@ -86,15 +104,23 @@ class _FetchPageState extends State<FetchPage> {
       await _clearProxy();
     }
 
-    // 首次进入页面时 WebView 可能还没 attach，等最多 3 秒
-    for (var i = 0; i < 30 && _web == null; i++) {
-      await Future.delayed(const Duration(milliseconds: 100));
+    // 首次进入页面时 WebView 可能还没 attach。低端机创建 PlatformView 常超过
+    // 3 秒，这里等最多 15 秒，并把已等秒数显示出来，避免用户误以为卡死。
+    final webStart = DateTime.now();
+    while (_web == null &&
+        DateTime.now().difference(webStart) < _kWebInitTimeout) {
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (!mounted) return;
+      if (_web == null) {
+        final waited = DateTime.now().difference(webStart).inSeconds;
+        setState(() => _diag = 'WebView 创建中…（已等 $waited 秒）');
+      }
     }
     final web = _web;
     if (web == null) {
       setState(() {
         _fetching = false;
-        _error = 'WebView 初始化失败（可能缺少系统 WebView 组件）';
+        _error = _webInitFailure();
       });
       return;
     }
@@ -210,6 +236,18 @@ class _FetchPageState extends State<FetchPage> {
     } catch (_) {}
   }
 
+  /// WebView 创建失败的具体原因：优先给出最近一次真实的加载错误。
+  String _webInitFailure() {
+    final last = _lastError;
+    if (last != null && last.isNotEmpty) {
+      return 'WebView 创建失败：${_kWebInitTimeout.inSeconds} 秒内没有完成初始化。\n'
+          '最近一次加载错误：$last';
+    }
+    return 'WebView 创建失败：${_kWebInitTimeout.inSeconds} 秒内没有收到 onWebViewCreated。\n'
+        '排查建议：设置 → 应用 → Android System WebView（或 Chrome）→ 启用并更新；'
+        '若已被禁用或卸载，页面无法加载任何内容。';
+  }
+
   Future<void> _openInBrowser() async {
     final web = _web;
     if (web == null) return;
@@ -236,6 +274,20 @@ class _FetchPageState extends State<FetchPage> {
     final theme = Theme.of(context);
     final hasLine = context.watch<AppState>().settings.vlessLinks.isNotEmpty;
 
+    // 预览区高度：
+    // - 键盘弹出时压到 60（仍可见，PlatformView 不会被销毁；键盘也不会把预览挤成 0 高度）；
+    // - 平时取 min(180, 屏高 * 28%)，横屏/小屏不至于挤掉一半内容，且不低于 60。
+    // 注意：这里必须用 build 的 context（在 Scaffold 之上）读 viewInsets——
+    // Scaffold 在 resizeToAvoidBottomInset: true 时会把 body 的 viewInsets 底部抹成 0，
+    // 一旦把这段判断挪进 body 内部就会永远读到 0。
+    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final previewHeight = keyboardUp
+        ? _kPreviewMinHeight
+        : (screenHeight * _kPreviewScreenRatio)
+            .clamp(_kPreviewMinHeight, _kPreviewMaxHeight)
+            .toDouble();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('获取数据'),
@@ -251,11 +303,11 @@ class _FetchPageState extends State<FetchPage> {
           ),
         ],
       ),
-      body: Stack(
-        fit: StackFit.expand,
+      // 保持可 resize：编辑查询语句时键盘不能盖住输入框。
+      // 键盘占掉的高度由预览区（压到 60）和可滚动的 ListView 吸收。
+      resizeToAvoidBottomInset: true,
+      body: Column(
         children: [
-          Column(
-            children: [
           Expanded(
             child: ListView(
               padding: const EdgeInsets.all(14),
@@ -379,17 +431,56 @@ class _FetchPageState extends State<FetchPage> {
               ],
             ),
           ),
-            ],
+          // 预览面板必须放在真实可见的位置，Flutter 才会真正创建 PlatformView。
+          // 之前用过 SizedBox(height:1) / Positioned(left:-3000) / Opacity(0.01)，
+          // 三种写法都会导致 onWebViewCreated 不触发，于是「WebView 初始化失败」。
+          SizedBox(
+            height: previewHeight,
+            child: _previewPanel(theme),
           ),
-          // 必须留在可见区域内：Flutter 的 PlatformView 对完全不可见区域会跳过创建，
-          // 之前用 SizedBox(height:1) 或 Positioned(left:-3000) 都会导致 onWebViewCreated 不触发。
-          // 这里铺满但全透明 + 不接触摸。
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Opacity(
-                // 不能用 0：Flutter 会跳过渲染，PlatformView 可能仍不创建
-                opacity: 0.01,
-                child: InAppWebView(
+        ],
+      ),
+    );
+  }
+
+  /// 底部 WebView 预览区：可见即可创建，同时让用户直接看到挑战页进度。
+  Widget _previewPanel(ThemeData theme) {
+    final ready = _web != null;
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          top: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    '页面预览（过验证用）',
+                    style: theme.textTheme.labelMedium,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  ready ? '已就绪' : '未就绪',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: ready
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: InAppWebView(
               initialSettings: InAppWebViewSettings(
                 javaScriptEnabled: true,
                 thirdPartyCookiesEnabled: true,
@@ -397,11 +488,6 @@ class _FetchPageState extends State<FetchPage> {
                 transparentBackground: true,
                 isInspectable: false,
               ),
-              onLoadStop: (c, url) {
-                if (mounted) setState(() => _diag = '页面加载完成');
-                final w = _loadWaiter;
-                if (w != null && !w.isCompleted) w.complete();
-              },
               onWebViewCreated: (c) {
                 _web = c;
                 if (mounted) setState(() => _diag = 'WebView 已创建');
@@ -409,18 +495,27 @@ class _FetchPageState extends State<FetchPage> {
               onLoadStart: (c, url) {
                 if (mounted) setState(() => _diag = '加载 ${url?.host ?? ''}…');
               },
+              onLoadStop: (c, url) {
+                if (mounted) setState(() => _diag = '页面加载完成');
+                final w = _loadWaiter;
+                if (w != null && !w.isCompleted) w.complete();
+              },
               onReceivedError: (c, req, err) {
+                // 主文档的错误最有诊断价值，子资源错误不覆盖它
+                if (req.isForMainFrame == false && _lastError != null) return;
+                final text = '${err.description}（${req.url}）';
                 if (mounted) {
-                  setState(() => _diag = '加载错误：${err.description}');
+                  setState(() {
+                    _lastError = text;
+                    _diag = '加载错误：$text';
+                  });
                 }
               },
-                ),
-              ),
             ),
           ),
-          ],
-        ),
-      );
+        ],
+      ),
+    );
   }
 
   Widget _stat(ThemeData theme, String label, String value) => Expanded(
