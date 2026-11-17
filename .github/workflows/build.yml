@@ -1,8 +1,11 @@
 name: Flutter CI
 
 on:
+  # 只监听 tag：发版是唯一需要出包的时刻。
+  # 之前同时监听 branches: [main]，导致「push main + push tag」同一份代码
+  # 被完整构建两遍（历史上 #20/#21、#22/#23、#24/#25 全是成对的）。
+  # main 的日常验证走本地（flutter analyze + flutter test）或开 PR。
   push:
-    branches: [ main ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
