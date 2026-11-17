@@ -41,6 +41,20 @@ jobs:
           channel: stable
           cache: true
 
+      # subosito 的 cache 只缓存 Flutter SDK，不管 Maven 依赖。
+      # v1.0.7 曾因 Maven Central 对共享 runner 返回 429 Too Many Requests，
+      # Gradle 在配置阶段拉不到 Kotlin 插件直接失败（35s，编译都还没开始）。
+      # 缓存 ~/.gradle 后重复构建不再下载依赖，既避开限流也快很多。
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
       - name: Fetch native binaries
         run: |
           set -euo pipefail
