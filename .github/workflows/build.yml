@@ -92,7 +92,12 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze --no-fatal-infos || true
+        # 不能用 `|| true`：那会把 error 的退出码一起吞掉，即使 analyze 报 error
+        # CI 也会继续构建并出包（曾经踩过：并发编辑期间出现 undefined_identifier，
+        # 若那时打 tag 就会带着 error 发版，而 CI 仍是绿的）。
+        # --no-fatal-warnings 是因为当前有 4 条基线 warning（remote×2、app_state:7、
+        # fetch_page:10），先容忍 warning 让 error 真正能拦；清完 warning 后去掉它。
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Unit tests
         run: flutter test
