@@ -1,0 +1,27 @@
+name: cytest
+description: 候选代理筛选工具（Flutter 版）
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.2
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  flutter_inappwebview: ^6.1.5
+  ssh2: ^2.2.3
+  crypto: ^3.0.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/

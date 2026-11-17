@@ -1,0 +1,25 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.metadata
+
+# Android
+android/.gradle/
+android/local.properties
+android/app/release/
+*.jks
+*.keystore
+
+# 原生二进制（由 scripts/fetch-assets.sh 或 CI 生成，不入库）
+assets/pipeline
+assets/xray
+assets/pipeline-linux
+!assets/.gitkeep
+
+# 其它
+.DS_Store

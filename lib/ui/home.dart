@@ -1,0 +1,243 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../state/app_state.dart';
+import 'pages/fetch_page.dart';
+import 'pages/history_page.dart';
+import 'pages/lines_page.dart';
+import 'pages/remote_page.dart';
+import 'pages/result_page.dart';
+import 'pages/settings_page.dart';
+import 'pages/test_page.dart';
+
+/// 底部两 Tab：首页 / 设置。首页用两列卡片进入各功能，与 Android 端结构一致。
+class HomeShell extends StatefulWidget {
+  const HomeShell({super.key});
+
+  @override
+  State<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<HomeShell> {
+  int _index = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _index,
+        children: const [
+          _HomeTab(),
+          SettingsPage(),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _index,
+        onDestinationSelected: (i) => setState(() => _index = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: '首页',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: '设置',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeTab extends StatelessWidget {
+  const _HomeTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('cytest'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Center(
+              child: Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: state.xray.running ? Colors.green : theme.hintColor,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    state.xray.running ? '线路已连接' : '线路未启动',
+                    style: theme.textTheme.labelSmall,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async => state.boot(),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
+          children: [
+            if (state.rows.isNotEmpty) _SummaryBar(state: state),
+            const SizedBox(height: 8),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 12,
+              crossAxisSpacing: 12,
+              childAspectRatio: 1.42,
+              children: [
+                _NavCard(
+                  icon: Icons.cloud_download_outlined,
+                  title: '获取数据',
+                  subtitle: 'Censys 拉候选',
+                  onTap: () => _push(context, const FetchPage()),
+                ),
+                _NavCard(
+                  icon: Icons.science_outlined,
+                  title: '本地测试',
+                  subtitle: '三阶段漏斗',
+                  onTap: () => _push(context, const TestPage()),
+                ),
+                _NavCard(
+                  icon: Icons.bar_chart_outlined,
+                  title: '结果',
+                  subtitle: state.rows.isEmpty
+                      ? '暂无数据'
+                      : '${state.usableCount} 条可用',
+                  onTap: () => _push(context, const ResultPage()),
+                ),
+                _NavCard(
+                  icon: Icons.hub_outlined,
+                  title: '线路与代理',
+                  subtitle: state.settings.vlessLinks.isEmpty
+                      ? '未配置'
+                      : '${state.settings.vlessLinks.length} 条链接',
+                  onTap: () => _push(context, const LinesPage()),
+                ),
+                _NavCard(
+                  icon: Icons.history,
+                  title: '记录',
+                  subtitle: '历史与存档',
+                  onTap: () => _push(context, const HistoryPage()),
+                ),
+                _NavCard(
+                  icon: Icons.dns_outlined,
+                  title: '远程执行',
+                  subtitle: '服务器跑三阶段',
+                  onTap: () => _push(context, const RemotePage()),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _push(BuildContext context, Widget page) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  }
+}
+
+class _SummaryBar extends StatelessWidget {
+  const _SummaryBar({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget cell(String label, String value) => Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: theme.textTheme.labelSmall),
+              const SizedBox(height: 2),
+              Text(value, style: theme.textTheme.titleMedium),
+            ],
+          ),
+        );
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            cell('可用', '${state.usableCount}'),
+            cell('最快', '${state.fastestSpeed.toStringAsFixed(2)} MiB/s'),
+            cell('均延迟', '${state.averageLatency} ms'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NavCard extends StatelessWidget {
+  const _NavCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Icon(icon, size: 26, color: theme.colorScheme.primary),
+              const SizedBox(height: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
