@@ -52,3 +52,10 @@ APK 37.5MB，包名 `com.cytest.cytest`，minSdk 29 / targetSdk 36，与 Kotlin 
 
 注意：CI 里 `Download pipeline binaries` 步骤实际是用 engine/pipeline.go 现场编译（Go 1.27.1），
 不是从 cytest-app 的 release 拉——engine/pipeline.go 必须与 tools/pipeline/pipeline.go 保持同步。
+
+## WebView 必须放屏幕外，不能塞小容器
+`InAppWebView` 放在 `SizedBox(height: 1)` 里时，原生 View 不会 attach，
+`onWebViewCreated` 永远不触发，`_web` 保持 null → 点「获取」直接报「WebView 尚未就绪」。
+正确做法：`Stack` + `Positioned(left: -3000, width: 1080, height: 1600)` + `IgnorePointer`。
+另外点击抓取前要等最多 3 秒让 controller 就绪；状态卡实时显示 WebView 阶段
+（创建中/加载中/完成/错误）与出站方式（Xray 端口 or 直连），便于远程排障。

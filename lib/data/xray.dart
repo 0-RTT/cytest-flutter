@@ -51,7 +51,7 @@ class XrayProc {
   Future<void> start(Vless v, {ProxyIp? proxy}) async {
     await stop();
 
-    final exe = await Bins.ensure('xray');
+    final exePath = await Bins.path('xray');
     final dir = await Paths.xray();
     final port = await freePort();
 
@@ -78,7 +78,7 @@ class XrayProc {
     await cfgFile.writeAsString(xrayConfigJson(effective, port), flush: true);
 
     final proc = await Process.start(
-      exe.path,
+      exePath,
       ['run', '-c', cfgFile.path],
       workingDirectory: dir.path,
     );
@@ -122,10 +122,10 @@ class XrayProc {
   /// 供「测试线路」使用：用现成配置启动（批量模式）。
   Future<void> startWithConfig(String configPath) async {
     await stop();
-    final exe = await Bins.ensure('xray');
+    final exePath = await Bins.path('xray');
     final dir = await Paths.xray();
     final proc = await Process.start(
-      exe.path,
+      exePath,
       ['run', '-c', configPath],
       workingDirectory: dir.path,
     );

@@ -29,3 +29,6 @@ assets/pipeline-linux
 !.workbuddy/memory/
 .workbuddy/memory/*
 !.workbuddy/memory/MEMORY.md
+
+# 原生二进制（CI/脚本生成，不入库）
+android/app/src/main/jniLibs/**/*.so

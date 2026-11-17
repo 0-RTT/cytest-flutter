@@ -30,4 +30,5 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/
+    # pipeline / xray 走 jniLibs（lib*.so），这里只保留远程执行用的 Linux 版
+    - assets/pipeline-linux

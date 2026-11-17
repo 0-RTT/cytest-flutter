@@ -33,7 +33,7 @@ class Pipeline {
     required void Function(String line) onLine,
     void Function(int current, int total, String stage)? onProgress,
   }) async {
-    final exe = await Bins.ensure('pipeline');
+    final exePath = await Bins.path('pipeline');
     final runsRoot = await Paths.runs();
     final stamp = _stamp();
     final runDir = Directory('${runsRoot.path}/$stamp');
@@ -54,7 +54,7 @@ class Pipeline {
       else ...['-data', inputFile.path],
     ];
 
-    final proc = await Process.start(exe.path, args, workingDirectory: runDir.path);
+    final proc = await Process.start(exePath, args, workingDirectory: runDir.path);
     final logSink = consoleFile.openWrite();
 
     final progressRe = RegExp(r'\[[^\]]*?(\d+)/(\d+)\]');

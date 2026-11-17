@@ -39,7 +39,7 @@ class AppState extends ChangeNotifier {
   /// 预释放二进制，避免第一次测试时卡几秒。
   Future<void> _warmBinaries() async {
     try {
-      await Bins.ensure('pipeline');
+      await Bins.path('pipeline');
       binStatus = '引擎就绪';
     } catch (e) {
       binStatus = '引擎异常：$e';

@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:dartssh2/dartssh2.dart';
 
+import '../core/bin.dart';
 import '../core/settings.dart';
 import 'pipeline.dart';
 
@@ -79,9 +79,8 @@ class RemoteRunner {
   }
 
   static Future<Uint8List> _loadPipeline() async {
-    // 远程执行需要 Linux 版，随 APK 一起打包在 assets
-    final data = await rootBundle.load('assets/pipeline-linux');
-    return data.buffer.asUint8List(0, data.lengthInBytes);
+    // 远程执行需要 Linux 版，随 APK 打包在 assets
+    return Uint8List.fromList(await Bins.loadLinuxPipeline());
   }
 
   static String _readIdentity(String path) {

@@ -1,54 +1,51 @@
 import 'dart:io';
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show MethodChannel, rootBundle;
 
-import 'paths.dart';
-
-/// 把打包进 assets 的原生二进制释放到可执行目录（Android 不能直接执行 assets）。
+/// 原生二进制访问。
+///
+/// Android 上不能直接执行 assets 里的文件（SELinux 会拒绝），
+/// 因此 pipeline / xray 以 `lib*.so` 形式打进 jniLibs，
+/// 由系统解压到 nativeLibraryDir 并获得可执行权限。
 class Bins {
   Bins._();
 
-  static const _assets = {
-    'pipeline': 'assets/pipeline',
-    'xray': 'assets/xray',
-  };
+  static const _channel = MethodChannel('cytest/native');
+  static String? _nativeDir;
 
-  static Future<File> ensure(String name) async {
-    final assetPath = _assets[name];
-    if (assetPath == null) {
-      throw ArgumentError('未知的二进制：$name');
-    }
-    final dir = await Paths.bin();
-    final file = File('${dir.path}/$name');
-    final data = await rootBundle.load(assetPath);
-
-    // 已存在且大小一致则跳过（与桌面端的内容指纹策略一致，但这里用大小足够：
-    // 二进制随 APK 版本变化，升级安装时 APK 已变，大小通常也变）
-    if (await file.exists()) {
-      final st = await file.stat();
-      if (st.size == data.lengthInBytes) {
-        await _chmod(file.path);
-        return file;
+  /// 返回可执行的二进制路径。
+  /// [name] 为 'pipeline' 或 'xray'。
+  static Future<String> path(String name) async {
+    if (Platform.isAndroid) {
+      _nativeDir ??= await _channel.invokeMethod<String>('nativeLibraryDir');
+      final dir = _nativeDir;
+      if (dir == null || dir.isEmpty) {
+        throw Exception('拿不到 nativeLibraryDir');
       }
+      final file = File('$dir/lib$name.so');
+      if (!await file.exists()) {
+        throw Exception('未找到 $dir/lib$name.so（打包时未放入 jniLibs？）');
+      }
+      return file.path;
     }
 
-    if (await file.exists()) {
-      await file.delete();
+    // 桌面 / 测试环境：与旧逻辑一致，从 assets 释放到可执行目录
+    final dir = Directory('${Directory.systemTemp.path}/cytest-bin');
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
     }
-    await file.writeAsBytes(
-      data.buffer.asUint8List(0, data.lengthInBytes),
-      flush: true,
-    );
-    await _chmod(file.path);
-    return file;
+    final file = File('${dir.path}/$name');
+    if (!await file.exists()) {
+      final data = await rootBundle.load('assets/$name');
+      await file.writeAsBytes(data.buffer.asUint8List(0, data.lengthInBytes));
+      await Process.run('chmod', ['755', file.path]);
+    }
+    return file.path;
   }
 
-  static Future<void> _chmod(String path) async {
-    if (!Platform.isAndroid && !Platform.isLinux) return;
-    try {
-      await Process.run('chmod', ['755', path]);
-    } catch (_) {
-      // 某些环境无 chmod，忽略
-    }
+  /// 远程执行用的 Linux 版引擎仍走 assets（不上 jniLibs，避免三份二进制）。
+  static Future<List<int>> loadLinuxPipeline() async {
+    final data = await rootBundle.load('assets/pipeline-linux');
+    return data.buffer.asUint8List(0, data.lengthInBytes);
   }
 }

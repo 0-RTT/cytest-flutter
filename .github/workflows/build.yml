@@ -64,11 +64,22 @@ jobs:
               go build -trimpath -ldflags="-s -w" -o assets/pipeline engine/pipeline.go
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
               go build -trimpath -ldflags="-s -w" -o assets/pipeline-linux engine/pipeline.go
-            ls -lh assets/pipeline assets/pipeline-linux
+            ls -lh android/app/src/main/jniLibs/arm64-v8a/libpipeline.so assets/pipeline-linux
           else
             echo "::error title=缺少引擎::engine/pipeline.go 不存在，无法产出 pipeline 二进制"
             exit 1
           fi
+
+      - name: Resolve version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "BUILD_NAME=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_NAME=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+          echo "BUILD_NUMBER=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
       - name: Flutter pub get
         run: flutter pub get
@@ -81,7 +92,7 @@ jobs:
 
       - name: Build release APK
         run: |
-          flutter build apk --release --target-platform android-arm64
+          flutter build apk --release --target-platform android-arm64             --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
           ls -lh build/app/outputs/flutter-apk/
 
       - name: Upload APK
