@@ -1,5 +1,9 @@
 allprojects {
     repositories {
+        // 国内镜像优先，避免直连 Maven 时大包下载中断
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
         google()
         mavenCentral()
     }

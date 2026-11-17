@@ -23,3 +23,9 @@ assets/pipeline-linux
 
 # 其它
 .DS_Store
+
+# WorkBuddy 工作目录（只保留项目记忆，其余忽略）
+.workbuddy/*
+!.workbuddy/memory/
+.workbuddy/memory/*
+!.workbuddy/memory/MEMORY.md

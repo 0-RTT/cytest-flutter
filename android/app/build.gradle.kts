@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.cytest.cytest"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37  // 本机 SDK 已有 37，避免额外下载 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
