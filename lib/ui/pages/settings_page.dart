@@ -119,47 +119,54 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(14),
-          children: [
-            _section(theme, '并发', '测速并发过高会互相抢带宽，单条读数偏低', [
-              _num('指纹筛选并发', _sha1, hint: '默认 30'),
-              _num('延迟测试并发', _latency, hint: '默认 100'),
-              _num('速度测试并发', _speed, hint: '默认 2，建议 4-6'),
-              _num('延迟上限（ms）', _maxLatency, hint: '0 表示不限'),
-            ]),
-            _section(theme, '超时', '网络抖动大时适当放宽', [
-              _num('连接超时（秒）', _dial, hint: '默认 5'),
-              _num('下载超时（秒）', _download, hint: '默认 10'),
-            ]),
-            _section(theme, '测速', '窗口 3s / 上限 64MiB，首 256KiB 预热丢弃', [
-              _text('测速地址', _speedUrl),
-              _text('测速代理', _httpProxy, hint: '可选，留空直连'),
-              _text('抓取代理', _fetchProxy, hint: 'WebView 抓取用，留空走 Xray 或直连'),
-            ]),
-            _section(theme, 'GitHub 推送', '把订阅写到仓库文件', [
-              _text('仓库', _ghRepo, hint: 'owner/name'),
-              _text('文件路径', _ghPath, hint: '默认 cytest-sub.txt'),
-              _text('Token', _ghToken, obscure: true, hint: '需要 repo contents 写权限'),
-            ]),
-            _section(theme, '远程执行', 'SSH 到服务器跑三阶段', [
-              _text('主机', _remoteHost, hint: '1.2.3.4'),
-              _num('端口', _remotePort, hint: '默认 22'),
-              _text('用户', _remoteUser, hint: '默认 root'),
-              _text('密码', _remotePassword, obscure: true),
-              _text('私钥路径', _remoteKey, hint: '留空则用密码'),
-            ]),
-            const SizedBox(height: 20),
-            Center(
-              child: Text(
-                '参数保存在本机（SharedPreferences），下次启动自动恢复',
-                style: theme.textTheme.labelSmall,
+      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
+      // 不包这层底部内容会被系统栏压住。
+      // top: false —— 顶部已由 AppBar 处理。
+      body: SafeArea(
+        top: false,
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+            children: [
+              _section(theme, '并发', '测速并发过高会互相抢带宽，单条读数偏低', [
+                _num('指纹筛选并发', _sha1, hint: '默认 30'),
+                _num('延迟测试并发', _latency, hint: '默认 100'),
+                _num('速度测试并发', _speed, hint: '默认 2，建议 4-6'),
+                _num('延迟上限（ms）', _maxLatency, hint: '0 表示不限'),
+              ]),
+              _section(theme, '超时', '网络抖动大时适当放宽', [
+                _num('连接超时（秒）', _dial, hint: '默认 5'),
+                _num('下载超时（秒）', _download, hint: '默认 10'),
+              ]),
+              _section(theme, '测速', '窗口 3s / 上限 64MiB，首 256KiB 预热丢弃', [
+                _text('测速地址', _speedUrl),
+                _text('测速代理', _httpProxy, hint: '可选，留空直连'),
+                _text('抓取代理', _fetchProxy, hint: 'WebView 抓取用，留空走 Xray 或直连'),
+              ]),
+              _section(theme, 'GitHub 推送', '把订阅写到仓库文件', [
+                _text('仓库', _ghRepo, hint: 'owner/name'),
+                _text('文件路径', _ghPath, hint: '默认 cytest-sub.txt'),
+                _text('Token', _ghToken, obscure: true, hint: '需要 repo contents 写权限'),
+              ]),
+              _section(theme, '远程执行', 'SSH 到服务器跑三阶段', [
+                _text('主机', _remoteHost, hint: '1.2.3.4'),
+                _num('端口', _remotePort, hint: '默认 22'),
+                _text('用户', _remoteUser, hint: '默认 root'),
+                _text('密码', _remotePassword, obscure: true),
+                _text('私钥路径', _remoteKey, hint: '留空则用密码'),
+              ]),
+              const SizedBox(height: 20),
+              Center(
+                child: Text(
+                  '参数保存在本机（SharedPreferences），下次启动自动恢复',
+                  style: theme.textTheme.labelSmall,
+                ),
               ),
-            ),
-            const SizedBox(height: 30),
-          ],
+              const SizedBox(height: 30),
+            ],
+          ),
         ),
       ),
     );

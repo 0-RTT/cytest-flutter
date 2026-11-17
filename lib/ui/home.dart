@@ -87,64 +87,70 @@ class _HomeTab extends StatelessWidget {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () async => state.boot(),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
-          children: [
-            if (state.rows.isNotEmpty) _SummaryBar(state: state),
-            const SizedBox(height: 8),
-            GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 1.42,
-              children: [
-                _NavCard(
-                  icon: Icons.cloud_download_outlined,
-                  title: '获取数据',
-                  subtitle: 'Censys 拉候选',
-                  onTap: () => _push(context, const FetchPage()),
-                ),
-                _NavCard(
-                  icon: Icons.science_outlined,
-                  title: '本地测试',
-                  subtitle: '三阶段漏斗',
-                  onTap: () => _push(context, const TestPage()),
-                ),
-                _NavCard(
-                  icon: Icons.bar_chart_outlined,
-                  title: '结果',
-                  subtitle: state.rows.isEmpty
-                      ? '暂无数据'
-                      : '${state.usableCount} 条可用',
-                  onTap: () => _push(context, const ResultPage()),
-                ),
-                _NavCard(
-                  icon: Icons.hub_outlined,
-                  title: '线路与代理',
-                  subtitle: state.settings.vlessLinks.isEmpty
-                      ? '未配置'
-                      : '${state.settings.vlessLinks.length} 条链接',
-                  onTap: () => _push(context, const LinesPage()),
-                ),
-                _NavCard(
-                  icon: Icons.history,
-                  title: '记录',
-                  subtitle: '历史与存档',
-                  onTap: () => _push(context, const HistoryPage()),
-                ),
-                _NavCard(
-                  icon: Icons.dns_outlined,
-                  title: '远程执行',
-                  subtitle: '服务器跑三阶段',
-                  onTap: () => _push(context, const RemotePage()),
-                ),
-              ],
-            ),
-          ],
+      // 底部 SafeArea：外层 HomeShell 的 NavigationBar 已吃掉底部 inset，
+      // 这里加一层只为与其它页面保持一致（重复应用 inset 时 SafeArea 取 0，无害）。
+      // top: false —— 顶部已由 AppBar 处理。
+      body: SafeArea(
+        top: false,
+        child: RefreshIndicator(
+          onRefresh: () async => state.boot(),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
+            children: [
+              if (state.rows.isNotEmpty) _SummaryBar(state: state),
+              const SizedBox(height: 8),
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.42,
+                children: [
+                  _NavCard(
+                    icon: Icons.cloud_download_outlined,
+                    title: '获取数据',
+                    subtitle: 'Censys 拉候选',
+                    onTap: () => _push(context, const FetchPage()),
+                  ),
+                  _NavCard(
+                    icon: Icons.science_outlined,
+                    title: '本地测试',
+                    subtitle: '三阶段漏斗',
+                    onTap: () => _push(context, const TestPage()),
+                  ),
+                  _NavCard(
+                    icon: Icons.bar_chart_outlined,
+                    title: '结果',
+                    subtitle: state.rows.isEmpty
+                        ? '暂无数据'
+                        : '${state.usableCount} 条可用',
+                    onTap: () => _push(context, const ResultPage()),
+                  ),
+                  _NavCard(
+                    icon: Icons.hub_outlined,
+                    title: '线路与代理',
+                    subtitle: state.settings.vlessLinks.isEmpty
+                        ? '未配置'
+                        : '${state.settings.vlessLinks.length} 条链接',
+                    onTap: () => _push(context, const LinesPage()),
+                  ),
+                  _NavCard(
+                    icon: Icons.history,
+                    title: '记录',
+                    subtitle: '历史与存档',
+                    onTap: () => _push(context, const HistoryPage()),
+                  ),
+                  _NavCard(
+                    icon: Icons.dns_outlined,
+                    title: '远程执行',
+                    subtitle: '服务器跑三阶段',
+                    onTap: () => _push(context, const RemotePage()),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

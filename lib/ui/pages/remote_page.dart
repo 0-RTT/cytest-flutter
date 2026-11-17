@@ -103,112 +103,119 @@ class _RemotePageState extends State<RemotePage> {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          Card(
-            margin: EdgeInsets.zero,
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('服务器', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 6),
-                  Text(
-                    s.remoteHost.isEmpty
-                        ? '未配置，请到「设置 → 远程执行」填写'
-                        : '${s.remoteUser}@${s.remoteHost}:${s.remotePort}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: s.remoteHost.isEmpty
-                          ? theme.colorScheme.error
-                          : theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            margin: EdgeInsets.zero,
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text('候选数据', style: theme.textTheme.titleSmall),
-                      const Spacer(),
-                      TextButton(
-                        onPressed: _useTestInput,
-                        child: const Text('说明'),
+      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
+      // 不包这层底部内容会被系统栏压住。
+      // top: false —— 顶部已由 AppBar 处理。
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+          children: [
+            Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('服务器', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 6),
+                    Text(
+                      s.remoteHost.isEmpty
+                          ? '未配置，请到「设置 → 远程执行」填写'
+                          : '${s.remoteUser}@${s.remoteHost}:${s.remotePort}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: s.remoteHost.isEmpty
+                            ? theme.colorScheme.error
+                            : theme.colorScheme.onSurfaceVariant,
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: _data,
-                    maxLines: 6,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                      hintText: '粘贴 Censys JSON，或从「记录 → 存档」载入',
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            margin: EdgeInsets.zero,
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text('远端输出', style: theme.textTheme.titleSmall),
-                      const Spacer(),
-                      Text(_running ? '执行中' : '${_log.length} 行',
-                          style: theme.textTheme.labelSmall),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    height: 220,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: _log.isEmpty
-                        ? Center(
-                            child: Text('未执行',
-                                style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
-                          )
-                        : ListView.builder(
-                            controller: _logScroll,
-                            padding: const EdgeInsets.all(10),
-                            itemCount: _log.length,
-                            itemBuilder: (_, i) => Text(
-                              _log[i],
-                              style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
-                            ),
-                          ),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 8),
-                    Text(_error!, style: TextStyle(color: theme.colorScheme.error, fontSize: 12)),
                   ],
-                ],
+                ),
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text('候选数据', style: theme.textTheme.titleSmall),
+                        const Spacer(),
+                        TextButton(
+                          onPressed: _useTestInput,
+                          child: const Text('说明'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    TextField(
+                      controller: _data,
+                      maxLines: 6,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        hintText: '粘贴 Censys JSON，或从「记录 → 存档」载入',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text('远端输出', style: theme.textTheme.titleSmall),
+                        const Spacer(),
+                        Text(_running ? '执行中' : '${_log.length} 行',
+                            style: theme.textTheme.labelSmall),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      height: 220,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: _log.isEmpty
+                          ? Center(
+                              child: Text('未执行',
+                                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
+                            )
+                          : ListView.builder(
+                              controller: _logScroll,
+                              padding: const EdgeInsets.all(10),
+                              itemCount: _log.length,
+                              itemBuilder: (_, i) => Text(
+                                _log[i],
+                                style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                              ),
+                            ),
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 8),
+                      Text(_error!, style: TextStyle(color: theme.colorScheme.error, fontSize: 12)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

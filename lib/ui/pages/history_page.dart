@@ -110,113 +110,120 @@ class _HistoryPageState extends State<HistoryPage> {
           IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _reload,
-              child: ListView(
-                padding: const EdgeInsets.all(14),
-                children: [
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-                          child: Row(
-                            children: [
-                              Text('测试历史', style: theme.textTheme.titleSmall),
-                              const Spacer(),
-                              Text('${_runs.length} 条', style: theme.textTheme.labelSmall),
-                            ],
-                          ),
-                        ),
-                        if (_runs.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(14, 4, 14, 14),
-                            child: Text('暂无记录，先跑一次本地测试',
-                                style: TextStyle(fontSize: 12.5)),
-                          )
-                        else
-                          for (final r in _runs)
-                            ListTile(
-                              dense: true,
-                              onTap: () => _openRun(r),
-                              title: Text(r.at, style: const TextStyle(fontSize: 13)),
-                              subtitle: Text(
-                                '${r.usable} / ${r.total} 可用',
-                                style: const TextStyle(fontSize: 11.5),
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    r.fastest > 0 ? '${r.fastest.toStringAsFixed(2)} MiB/s' : '—',
-                                    style: TextStyle(
-                                        fontSize: 11.5, color: theme.colorScheme.primary),
-                                  ),
-                                  IconButton(
-                                    iconSize: 18,
-                                    onPressed: () => _delete(r),
-                                    icon: Icon(Icons.close, color: theme.hintColor),
-                                  ),
-                                ],
-                              ),
+      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
+      // 不包这层底部内容会被系统栏压住。
+      // top: false —— 顶部已由 AppBar 处理。
+      body: SafeArea(
+        top: false,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : RefreshIndicator(
+                onRefresh: _reload,
+                child: ListView(
+                  // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+                  children: [
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+                            child: Row(
+                              children: [
+                                Text('测试历史', style: theme.textTheme.titleSmall),
+                                const Spacer(),
+                                Text('${_runs.length} 条', style: theme.textTheme.labelSmall),
+                              ],
                             ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-                          child: Row(
-                            children: [
-                              Text('Censys 存档', style: theme.textTheme.titleSmall),
-                              const Spacer(),
-                              Text('${_archives.length} 条', style: theme.textTheme.labelSmall),
-                            ],
                           ),
-                        ),
-                        if (_archives.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(14, 4, 14, 14),
-                            child: Text('暂无存档，抓取成功会自动存一份',
-                                style: TextStyle(fontSize: 12.5)),
-                          )
-                        else
-                          for (final a in _archives)
-                            ListTile(
-                              dense: true,
-                              onTap: () => _openArchive(a),
-                              title: Text(a.at, style: const TextStyle(fontSize: 13)),
-                              subtitle: Text('${a.total} 命中',
-                                  style: const TextStyle(fontSize: 11.5)),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text('${(a.bytes / 1024).toStringAsFixed(0)} KB',
+                          if (_runs.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.fromLTRB(14, 4, 14, 14),
+                              child: Text('暂无记录，先跑一次本地测试',
+                                  style: TextStyle(fontSize: 12.5)),
+                            )
+                          else
+                            for (final r in _runs)
+                              ListTile(
+                                dense: true,
+                                onTap: () => _openRun(r),
+                                title: Text(r.at, style: const TextStyle(fontSize: 13)),
+                                subtitle: Text(
+                                  '${r.usable} / ${r.total} 可用',
+                                  style: const TextStyle(fontSize: 11.5),
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      r.fastest > 0 ? '${r.fastest.toStringAsFixed(2)} MiB/s' : '—',
                                       style: TextStyle(
-                                          fontSize: 11.5, color: theme.hintColor)),
-                                  IconButton(
-                                    iconSize: 18,
-                                    onPressed: () => _delete(a),
-                                    icon: Icon(Icons.close, color: theme.hintColor),
-                                  ),
-                                ],
+                                          fontSize: 11.5, color: theme.colorScheme.primary),
+                                    ),
+                                    IconButton(
+                                      iconSize: 18,
+                                      onPressed: () => _delete(r),
+                                      icon: Icon(Icons.close, color: theme.hintColor),
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+                            child: Row(
+                              children: [
+                                Text('Censys 存档', style: theme.textTheme.titleSmall),
+                                const Spacer(),
+                                Text('${_archives.length} 条', style: theme.textTheme.labelSmall),
+                              ],
+                            ),
+                          ),
+                          if (_archives.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.fromLTRB(14, 4, 14, 14),
+                              child: Text('暂无存档，抓取成功会自动存一份',
+                                  style: TextStyle(fontSize: 12.5)),
+                            )
+                          else
+                            for (final a in _archives)
+                              ListTile(
+                                dense: true,
+                                onTap: () => _openArchive(a),
+                                title: Text(a.at, style: const TextStyle(fontSize: 13)),
+                                subtitle: Text('${a.total} 命中',
+                                    style: const TextStyle(fontSize: 11.5)),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text('${(a.bytes / 1024).toStringAsFixed(0)} KB',
+                                        style: TextStyle(
+                                            fontSize: 11.5, color: theme.hintColor)),
+                                    IconButton(
+                                      iconSize: 18,
+                                      onPressed: () => _delete(a),
+                                      icon: Icon(Icons.close, color: theme.hintColor),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 }

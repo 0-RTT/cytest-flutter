@@ -17,9 +17,13 @@ class ResultPage extends StatelessWidget {
     if (state.rows.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: const Text('结果')),
-        body: Center(
-          child: Text('还没有结果，先跑一次本地测试',
-              style: TextStyle(color: theme.hintColor)),
+        // 底部 SafeArea：Scaffold 的 body 不避让系统手势条 / 三键导航。
+        body: SafeArea(
+          top: false,
+          child: Center(
+            child: Text('还没有结果，先跑一次本地测试',
+                style: TextStyle(color: theme.hintColor)),
+          ),
         ),
       );
     }
@@ -39,53 +43,70 @@ class ResultPage extends StatelessWidget {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-            child: Row(
-              children: [
-                _stat(theme, '可用', '${state.usableCount}'),
-                const SizedBox(width: 10),
-                _stat(theme, '最快', '${state.fastestSpeed.toStringAsFixed(2)} MiB/s'),
-                const SizedBox(width: 10),
-                _stat(theme, '均延迟', '${state.averageLatency} ms'),
-              ],
+      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
+      // 不包这层列表最后几行会被系统栏压住。
+      // top: false —— 顶部已由 AppBar 处理。
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+              child: Row(
+                children: [
+                  _stat(theme, '可用', '${state.usableCount}'),
+                  const SizedBox(width: 10),
+                  _stat(theme, '最快', '${state.fastestSpeed.toStringAsFixed(2)} MiB/s'),
+                  const SizedBox(width: 10),
+                  _stat(theme, '均延迟', '${state.averageLatency} ms'),
+                ],
+              ),
             ),
-          ),
-          Expanded(
-            child: ListView.separated(
-              itemCount: state.rows.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (_, i) {
-                final r = state.rows[i];
-                final ok = (r['Reason'] ?? '').isEmpty;
-                final speed = double.tryParse(r['Speed (MiB/s)'] ?? '') ?? 0;
-                return ListTile(
-                  dense: true,
-                  leading: SizedBox(
-                    width: 28,
-                    child: Text('${i + 1}',
-                        style: theme.textTheme.labelSmall?.copyWith(color: theme.hintColor)),
-                  ),
-                  title: Text('${r['IP']}:${r['Port']}',
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
-                  subtitle: ok
-                      ? Text('${r['Latency (ms)']} ms',
-                          style: TextStyle(fontSize: 11, color: theme.hintColor))
-                      : Text(r['Reason'] ?? '',
-                          style: TextStyle(fontSize: 11, color: theme.hintColor)),
-                  trailing: ok
-                      ? Text(
-                          speed > 0 ? '${speed.toStringAsFixed(2)} MiB/s' : '—',
-                          style: TextStyle(color: theme.colorScheme.primary, fontSize: 12),
-                        )
-                      : const SizedBox.shrink(),
-                );
-              },
+            Expanded(
+              child: ListView.separated(
+                // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
+                padding: const EdgeInsets.only(bottom: 24),
+                itemCount: state.rows.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (_, i) {
+                  final r = state.rows[i];
+                  final ok = (r['Reason'] ?? '').isEmpty;
+                  final speed = double.tryParse(r['Speed (MiB/s)'] ?? '') ?? 0;
+                  return ListTile(
+                    dense: true,
+                    leading: SizedBox(
+                      width: 28,
+                      child: Text('${i + 1}',
+                          style: theme.textTheme.labelSmall?.copyWith(color: theme.hintColor)),
+                    ),
+                    // 长地址 / 长 Reason 会顶破 ListTile，单行省略。
+                    title: Text(
+                      '${r['IP']}:${r['Port']}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                    ),
+                    subtitle: ok
+                        ? Text('${r['Latency (ms)']} ms',
+                            style: TextStyle(fontSize: 11, color: theme.hintColor))
+                        : Text(
+                            r['Reason'] ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: theme.hintColor),
+                          ),
+                    trailing: ok
+                        ? Text(
+                            speed > 0 ? '${speed.toStringAsFixed(2)} MiB/s' : '—',
+                            style: TextStyle(color: theme.colorScheme.primary, fontSize: 12),
+                          )
+                        : const SizedBox.shrink(),
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

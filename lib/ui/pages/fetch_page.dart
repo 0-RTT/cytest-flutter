@@ -30,13 +30,27 @@ class _FetchPageState extends State<FetchPage> {
   /// 预览面板高度上限。必须是真实可见区域，PlatformView 才会被创建。
   static const _kPreviewMaxHeight = 180.0;
 
-  /// 预览面板高度下限：键盘弹出时压到这个高度。
+  /// 预览面板「折叠档」的高度下限，同时是键盘弹出时的面板高度。
   /// 绝对不能压到 0 或移出屏外——那会让 PlatformView 被销毁、`_web` 置空、
   /// 正在跑的 loadUrl 丢失，正好又踩回「onWebViewCreated 不触发」的老坑。
+  /// 键盘态只占 60 也不会出现「一条缝」：那时标题行整行不渲染（见 _previewPanel），
+  /// 面板固定开销只剩 margin 6 + 描边 2，网页仍有 52 高。
   static const _kPreviewMinHeight = 60.0;
 
   /// 预览面板占屏高的比例，用于横屏/小屏时收窄。
   static const _kPreviewScreenRatio = 0.28;
+
+  /// 用户点「放大」后预览区占屏高的比例。
+  /// 180 高只露出网页一小条，看不清验证码/挑战页，所以给一个接近半屏的档位。
+  static const _kPreviewLargeRatio = 0.55;
+
+  /// 放大后仍要留给上方表单的最小高度。
+  /// 否则大屏上预览会把查询输入框整个挤出去，用户没法边改语句边看预览。
+  static const _kPreviewMinFormSpace = 200.0;
+
+  /// 高度切换动画时长。只改父级容器的高度，WebView 元素不搬家；
+  /// 200ms 以内，避免拖慢首帧。
+  static const _kPreviewAnimDuration = Duration(milliseconds: 180);
 
   late final TextEditingController _cql =
       TextEditingController(text: Defaults.buildQuery(Defaults.fingerprint));
@@ -46,6 +60,10 @@ class _FetchPageState extends State<FetchPage> {
   Completer<void>? _loadWaiter;
 
   bool _fetching = false;
+
+  /// 预览区是否处于「放大」档位。只影响父级高度，不影响 WebView 位置。
+  bool _previewExpanded = false;
+
   String _diag = 'WebView 初始化中…';
   int? _usedProxyPort;
   String? _error;
@@ -275,18 +293,26 @@ class _FetchPageState extends State<FetchPage> {
     final hasLine = context.watch<AppState>().settings.vlessLinks.isNotEmpty;
 
     // 预览区高度：
-    // - 键盘弹出时压到 60（仍可见，PlatformView 不会被销毁；键盘也不会把预览挤成 0 高度）；
-    // - 平时取 min(180, 屏高 * 28%)，横屏/小屏不至于挤掉一半内容，且不低于 60。
+    // - 键盘弹出时压到 60（标题行整行隐藏，网页实际可见 52；PlatformView 不会被销毁）；
+    // - 平时取 min(180, 屏高 * 28%)，横屏/小屏不至于挤掉一半内容，且不低于 60；
+    // - 「放大」档取 屏高 * 55%，但必须给上方表单留出至少 200 的空间。
     // 注意：这里必须用 build 的 context（在 Scaffold 之上）读 viewInsets——
     // Scaffold 在 resizeToAvoidBottomInset: true 时会把 body 的 viewInsets 底部抹成 0，
     // 一旦把这段判断挪进 body 内部就会永远读到 0。
     final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
     final screenHeight = MediaQuery.sizeOf(context).height;
+    final collapsedHeight = (screenHeight * _kPreviewScreenRatio)
+        .clamp(_kPreviewMinHeight, _kPreviewMaxHeight)
+        .toDouble();
+    // 这里用 if 而不是 clamp：极小屏（如横屏 250 高）时下界可能大于上界，
+    // clamp 会直接抛断言，宁可退化成 collapsedHeight。
+    var largeHeight = screenHeight * _kPreviewLargeRatio;
+    final largeUpperBound = screenHeight - _kPreviewMinFormSpace;
+    if (largeHeight > largeUpperBound) largeHeight = largeUpperBound;
+    if (largeHeight < collapsedHeight) largeHeight = collapsedHeight;
     final previewHeight = keyboardUp
         ? _kPreviewMinHeight
-        : (screenHeight * _kPreviewScreenRatio)
-            .clamp(_kPreviewMinHeight, _kPreviewMaxHeight)
-            .toDouble();
+        : (_previewExpanded ? largeHeight : collapsedHeight);
 
     return Scaffold(
       appBar: AppBar(
@@ -306,111 +332,28 @@ class _FetchPageState extends State<FetchPage> {
       // 保持可 resize：编辑查询语句时键盘不能盖住输入框。
       // 键盘占掉的高度由预览区（压到 60）和可滚动的 ListView 吸收。
       resizeToAvoidBottomInset: true,
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(14),
-              children: [
-                Row(
-                  children: [
-                    _stat(theme, '命中总数', _hits > 0 ? '$_hits' : '—'),
-                    const SizedBox(width: 10),
-                    _stat(theme, '响应大小', _bytes > 0 ? '${(_bytes / 1024).toStringAsFixed(0)} KB' : '—'),
-                    const SizedBox(width: 10),
-                    _stat(theme, '耗时', _costMs > 0 ? '$_costMs ms' : '—'),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Card(
-                  margin: EdgeInsets.zero,
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Censys 查询', style: theme.textTheme.titleSmall),
-                        const SizedBox(height: 8),
-                        TextField(
-                          controller: _cql,
-                          maxLines: 5,
-                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5),
-                          decoration: const InputDecoration(
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            TextButton(
-                              onPressed: () => setState(() {
-                                _cql.text = Defaults.buildQuery(Defaults.fingerprint);
-                              }),
-                              child: const Text('恢复默认'),
-                            ),
-                            const Spacer(),
-                            FilledButton.tonal(
-                              onPressed: _payload == null ? null : _import,
-                              child: const Text('导入到本地测试'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
+      // 不包这层，底部预览区会被系统栏压住（用户实测「底部显示不完整」）。
+      // top: false —— 顶部已由 AppBar 处理，否则会多出一截空白。
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+                children: [
+                  Row(
+                    children: [
+                      _stat(theme, '命中总数', _hits > 0 ? '$_hits' : '—'),
+                      const SizedBox(width: 10),
+                      _stat(theme, '响应大小', _bytes > 0 ? '${(_bytes / 1024).toStringAsFixed(0)} KB' : '—'),
+                      const SizedBox(width: 10),
+                      _stat(theme, '耗时', _costMs > 0 ? '$_costMs ms' : '—'),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  margin: EdgeInsets.zero,
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('状态', style: theme.textTheme.titleSmall),
-                        const SizedBox(height: 8),
-                        if (_error != null) ...[
-                          Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              TextButton(
-                                onPressed: _openInBrowser,
-                                child: const Text('浏览器打开'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.of(context).push(
-                                  MaterialPageRoute(builder: (_) => const TestPage()),
-                                ),
-                                child: const Text('手动粘贴 JSON'),
-                              ),
-                            ],
-                          ),
-                          Text(
-                            '在浏览器里完成验证后，把搜索结果 JSON 复制到「本地测试」页即可。',
-                            style: theme.textTheme.labelSmall,
-                          ),
-                        ] else if (_web == null)
-                          Text(_diag, style: TextStyle(color: theme.colorScheme.onSurfaceVariant))
-                        else if (_payload != null)
-                          Text('获取成功，命中 $_hits 条，响应 $_bytes 字节。点「导入到本地测试」开始跑三阶段。')
-                        else
-                          Text(
-                            '$_diag · 出站 ${_usedProxyPort != null ? "Xray 127.0.0.1:$_usedProxyPort" : "直连"}'
-                            '${hasLine ? "" : "\n未配置线路，国内网络直连 Censys 通常不可达，建议先去「线路与代理」填 VLESS"}',
-                            style: TextStyle(
-                              color: hasLine
-                                  ? theme.colorScheme.onSurfaceVariant
-                                  : theme.colorScheme.error,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (_payload != null)
+                  const SizedBox(height: 14),
                   Card(
                     margin: EdgeInsets.zero,
                     child: Padding(
@@ -418,33 +361,132 @@ class _FetchPageState extends State<FetchPage> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('预览', style: theme.textTheme.titleSmall),
-                          const SizedBox(height: 6),
-                          Text(
-                            _payload!.length > 500 ? '${_payload!.substring(0, 500)}…' : _payload!,
-                            style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                          Text('Censys 查询', style: theme.textTheme.titleSmall),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _cql,
+                            maxLines: 5,
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5),
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              TextButton(
+                                onPressed: () => setState(() {
+                                  _cql.text = Defaults.buildQuery(Defaults.fingerprint);
+                                }),
+                                child: const Text('恢复默认'),
+                              ),
+                              const Spacer(),
+                              FilledButton.tonal(
+                                onPressed: _payload == null ? null : _import,
+                                child: const Text('导入到本地测试'),
+                              ),
+                            ],
                           ),
                         ],
                       ),
                     ),
                   ),
-              ],
+                  const SizedBox(height: 12),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('状态', style: theme.textTheme.titleSmall),
+                          const SizedBox(height: 8),
+                          if (_error != null) ...[
+                            Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                TextButton(
+                                  onPressed: _openInBrowser,
+                                  child: const Text('浏览器打开'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.of(context).push(
+                                    MaterialPageRoute(builder: (_) => const TestPage()),
+                                  ),
+                                  child: const Text('手动粘贴 JSON'),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              '在浏览器里完成验证后，把搜索结果 JSON 复制到「本地测试」页即可。',
+                              style: theme.textTheme.labelSmall,
+                            ),
+                          ] else if (_web == null)
+                            Text(_diag, style: TextStyle(color: theme.colorScheme.onSurfaceVariant))
+                          else if (_payload != null)
+                            Text('获取成功，命中 $_hits 条，响应 $_bytes 字节。点「导入到本地测试」开始跑三阶段。')
+                          else
+                            Text(
+                              '$_diag · 出站 ${_usedProxyPort != null ? "Xray 127.0.0.1:$_usedProxyPort" : "直连"}'
+                              '${hasLine ? "" : "\n未配置线路，国内网络直连 Censys 通常不可达，建议先去「线路与代理」填 VLESS"}',
+                              style: TextStyle(
+                                color: hasLine
+                                    ? theme.colorScheme.onSurfaceVariant
+                                    : theme.colorScheme.error,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (_payload != null)
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('预览', style: theme.textTheme.titleSmall),
+                            const SizedBox(height: 6),
+                            Text(
+                              _payload!.length > 500 ? '${_payload!.substring(0, 500)}…' : _payload!,
+                              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
-          // 预览面板必须放在真实可见的位置，Flutter 才会真正创建 PlatformView。
-          // 之前用过 SizedBox(height:1) / Positioned(left:-3000) / Opacity(0.01)，
-          // 三种写法都会导致 onWebViewCreated 不触发，于是「WebView 初始化失败」。
-          SizedBox(
-            height: previewHeight,
-            child: _previewPanel(theme),
-          ),
-        ],
+            // 预览面板必须放在真实可见的位置，Flutter 才会真正创建 PlatformView。
+            // 之前用过 SizedBox(height:1) / Positioned(left:-3000) / Opacity(0.01)，
+            // 三种写法都会导致 onWebViewCreated 不触发，于是「WebView 初始化失败」。
+            // 放大/收起只改这里的高度，`_previewPanel` 在树里的位置完全不变——
+            // 元素类型与层级一致，Flutter 会复用同一个 Element，PlatformView 不会被重建。
+            AnimatedContainer(
+              duration: _kPreviewAnimDuration,
+              curve: Curves.easeOut,
+              height: previewHeight,
+              child: _previewPanel(theme, keyboardUp),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   /// 底部 WebView 预览区：可见即可创建，同时让用户直接看到挑战页进度。
-  Widget _previewPanel(ThemeData theme) {
+  ///
+  /// [keyboardUp] 为真时**只**跳过标题行（文案 + 放大按钮），WebView 本身照旧常驻：
+  /// 面板只有 60 高，标题行要占 38，不隐藏的话网页只剩 14 高、看着像坏了。
+  /// 注意条件只能包标题行，绝不能包到 Expanded/WebView 外面——那样改的是 WebView
+  /// 的父链结构，PlatformView 会被重建，直接复发「WebView 初始化失败」。
+  Widget _previewPanel(ThemeData theme, bool keyboardUp) {
     final ready = _web != null;
     return Container(
       decoration: BoxDecoration(
@@ -456,61 +498,93 @@ class _FetchPageState extends State<FetchPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 4),
-            child: Row(
-              children: [
-                Flexible(
-                  child: Text(
-                    '页面预览（过验证用）',
-                    style: theme.textTheme.labelMedium,
-                    overflow: TextOverflow.ellipsis,
+          if (!keyboardUp)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 6, 2),
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      // 说清这块是干什么的：用户之前不知道预览窗口的用途
+                      '页面预览（过验证用，可放大）',
+                      style: theme.textTheme.labelMedium,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  ready ? '已就绪' : '未就绪',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: ready
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.error,
+                  const SizedBox(width: 6),
+                  Text(
+                    ready ? '已就绪' : '未就绪',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: ready
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.error,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: InAppWebView(
-              initialSettings: InAppWebViewSettings(
-                javaScriptEnabled: true,
-                thirdPartyCookiesEnabled: true,
-                sharedCookiesEnabled: true,
-                transparentBackground: true,
-                isInspectable: false,
+                  const SizedBox(width: 2),
+                  // 只在两个高度档位之间切换；WebView 本身不动，避免 PlatformView 重建。
+                  // 尺寸必须走 style：M3 主题下 IconButton 的 iconSize / padding /
+                  // visualDensity / constraints 四个构造参数会被 _IconButtonM3 丢掉，
+                  // 默认 tapTargetSize: padded 还会把按钮撑到 40，标题行跟着涨到 46，
+                  // 直接从网页可见高度里抢走 ~14px（实测 40→32、标题行 46→38）。
+                  IconButton(
+                    onPressed: () =>
+                        setState(() => _previewExpanded = !_previewExpanded),
+                    style: IconButton.styleFrom(
+                      iconSize: 18,
+                      padding: EdgeInsets.zero,
+                      minimumSize: const Size(32, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    tooltip: _previewExpanded ? '收起预览' : '放大预览',
+                    icon: Icon(
+                      _previewExpanded ? Icons.unfold_less : Icons.unfold_more,
+                    ),
+                  ),
+                ],
               ),
-              onWebViewCreated: (c) {
-                _web = c;
-                if (mounted) setState(() => _diag = 'WebView 已创建');
-              },
-              onLoadStart: (c, url) {
-                if (mounted) setState(() => _diag = '加载 ${url?.host ?? ''}…');
-              },
-              onLoadStop: (c, url) {
-                if (mounted) setState(() => _diag = '页面加载完成');
-                final w = _loadWaiter;
-                if (w != null && !w.isCompleted) w.complete();
-              },
-              onReceivedError: (c, req, err) {
-                // 主文档的错误最有诊断价值，子资源错误不覆盖它
-                if (req.isForMainFrame == false && _lastError != null) return;
-                final text = '${err.description}（${req.url}）';
-                if (mounted) {
-                  setState(() {
-                    _lastError = text;
-                    _diag = '加载错误：$text';
-                  });
-                }
-              },
+            ),
+          Expanded(
+            // 套一层描边容器：180 高的预览里网页和页面底色容易糊成一片，
+            // 有边界用户才知道这块是嵌进来的网页。
+            child: Container(
+              margin: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: theme.colorScheme.outlineVariant),
+              ),
+              child: InAppWebView(
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  thirdPartyCookiesEnabled: true,
+                  sharedCookiesEnabled: true,
+                  transparentBackground: true,
+                  isInspectable: false,
+                ),
+                onWebViewCreated: (c) {
+                  _web = c;
+                  if (mounted) setState(() => _diag = 'WebView 已创建');
+                },
+                onLoadStart: (c, url) {
+                  if (mounted) setState(() => _diag = '加载 ${url?.host ?? ''}…');
+                },
+                onLoadStop: (c, url) {
+                  if (mounted) setState(() => _diag = '页面加载完成');
+                  final w = _loadWaiter;
+                  if (w != null && !w.isCompleted) w.complete();
+                },
+                onReceivedError: (c, req, err) {
+                  // 主文档的错误最有诊断价值，子资源错误不覆盖它
+                  if (req.isForMainFrame == false && _lastError != null) return;
+                  final text = '${err.description}（${req.url}）';
+                  if (mounted) {
+                    setState(() {
+                      _lastError = text;
+                      _diag = '加载错误：$text';
+                    });
+                  }
+                },
+              ),
             ),
           ),
         ],

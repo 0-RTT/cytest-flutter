@@ -126,111 +126,117 @@ class _LinesPageState extends State<LinesPage> {
           const SizedBox(width: 6),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(14),
-        children: [
-          Row(
-            children: [
-              _stat(theme, '状态', state.xray.running ? '已连接' : state.xray.note),
-              const SizedBox(width: 10),
-              _stat(theme, '端口', state.xray.running ? '${state.xray.port}' : '—'),
-              const SizedBox(width: 10),
-              _stat(theme, 'proxyip', state.xray.proxyIp.isEmpty ? '链接原样' : state.xray.proxyIp),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Card(
-            margin: EdgeInsets.zero,
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('VLESS 链接', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 6),
-                  Text('每行一条，取第一条可解析的',
-                      style: theme.textTheme.labelSmall),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _links,
-                    maxLines: 4,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                      hintText: 'vless://uuid@host:443?type=xhttp&security=tls&...',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('proxyip 列表', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 6),
-                  Text('每行 ip:port，用于替换 ws 路径里的回源地址',
-                      style: theme.textTheme.labelSmall),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _proxies,
-                    maxLines: 4,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                      hintText: '104.16.0.1:443',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      FilledButton(
-                        onPressed: _busy ? null : _start,
-                        child: Text(_busy ? '处理中…' : '启动线路'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed: _busy ? null : _probe,
-                        child: const Text('测试全部线路'),
-                      ),
-                      const Spacer(),
-                      TextButton(onPressed: _save, child: const Text('保存')),
-                    ],
-                  ),
-                ],
-              ),
+      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航。
+      // top: false —— 顶部已由 AppBar 处理。
+      body: SafeArea(
+        top: false,
+        child: ListView(
+          // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+          children: [
+            Row(
+              children: [
+                _stat(theme, '状态', state.xray.running ? '已连接' : state.xray.note),
+                const SizedBox(width: 10),
+                _stat(theme, '端口', state.xray.running ? '${state.xray.port}' : '—'),
+                const SizedBox(width: 10),
+                _stat(theme, 'proxyip', state.xray.proxyIp.isEmpty ? '链接原样' : state.xray.proxyIp),
+              ],
             ),
-          ),
-          if (_probeRows.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             Card(
               margin: EdgeInsets.zero,
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-                    child: Row(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('VLESS 链接', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 6),
+                    Text('每行一条，取第一条可解析的',
+                        style: theme.textTheme.labelSmall),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _links,
+                      maxLines: 4,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        hintText: 'vless://uuid@host:443?type=xhttp&security=tls&...',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text('proxyip 列表', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 6),
+                    Text('每行 ip:port，用于替换 ws 路径里的回源地址',
+                        style: theme.textTheme.labelSmall),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _proxies,
+                      maxLines: 4,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        hintText: '104.16.0.1:443',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
                       children: [
-                        Text('线路测速', style: theme.textTheme.titleSmall),
+                        FilledButton(
+                          onPressed: _busy ? null : _start,
+                          child: Text(_busy ? '处理中…' : '启动线路'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: _busy ? null : _probe,
+                          child: const Text('测试全部线路'),
+                        ),
                         const Spacer(),
-                        Text('${_probeRows.length} 条', style: theme.textTheme.labelSmall),
+                        TextButton(onPressed: _save, child: const Text('保存')),
                       ],
                     ),
-                  ),
-                  for (final (key, value) in _probeRows)
-                    ListTile(
-                      dense: true,
-                      title: Text(key,
-                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-                      trailing: Text(value,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: value.contains('失败')
-                                ? theme.colorScheme.error
-                                : theme.colorScheme.primary,
-                          )),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
+            if (_probeRows.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Card(
+                margin: EdgeInsets.zero,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+                      child: Row(
+                        children: [
+                          Text('线路测速', style: theme.textTheme.titleSmall),
+                          const Spacer(),
+                          Text('${_probeRows.length} 条', style: theme.textTheme.labelSmall),
+                        ],
+                      ),
+                    ),
+                    for (final (key, value) in _probeRows)
+                      ListTile(
+                        dense: true,
+                        title: Text(key,
+                            style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                        trailing: Text(value,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: value.contains('失败')
+                                  ? theme.colorScheme.error
+                                  : theme.colorScheme.primary,
+                            )),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
