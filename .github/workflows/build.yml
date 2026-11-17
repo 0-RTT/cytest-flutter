@@ -88,3 +88,25 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v8
+        with:
+          name: cytest-flutter-apk
+          path: dist
+
+      - name: Rename
+        run: mv dist/app-release.apk dist/cytest-flutter.apk
+
+      - name: Publish
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/cytest-flutter.apk
+          generate_release_notes: true
+          fail_on_unmatched_files: true
