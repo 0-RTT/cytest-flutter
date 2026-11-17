@@ -47,6 +47,8 @@ APK 37.5MB，包名 `com.cytest.cytest`，minSdk 29 / targetSdk 36，与 Kotlin 
 
 发版：`git tag -a v1.x.x -m "..." && git push origin v1.x.x` → release job 下载 artifact、
 重命名为 cytest-flutter.apk 后发正式版。日常 push main 只上传 artifact（不发 release）。
+**必须在 workflow 顶层声明 `permissions: contents: write`**，否则 softprops 发 release 报 403
+（generate_release_notes 也依赖这个权限）。
 
 注意：CI 里 `Download pipeline binaries` 步骤实际是用 engine/pipeline.go 现场编译（Go 1.27.1），
 不是从 cytest-app 的 release 拉——engine/pipeline.go 必须与 tools/pipeline/pipeline.go 保持同步。
