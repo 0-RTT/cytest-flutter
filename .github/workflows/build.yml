@@ -41,12 +41,15 @@ jobs:
       - name: Fetch native binaries
         run: |
           set -euo pipefail
-          mkdir -p assets
+          JNI=android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p assets "$JNI"
           echo "== xray (android arm64) =="
           curl -fsSL -o /tmp/xray.zip \
             "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-android-arm64-v8a.zip"
-          unzip -j -o -q /tmp/xray.zip xray -d assets/
-          ls -lh assets/xray
+          unzip -j -o -q /tmp/xray.zip xray -d /tmp
+          # 必须以 lib*.so 进 jniLibs，系统才会解压到 nativeLibraryDir 并给执行权限
+          mv -f /tmp/xray "$JNI/libxray.so"
+          ls -lh "$JNI/libxray.so"
 
       - name: Download pipeline binaries from cytest-app release
         env:
