@@ -63,3 +63,11 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // 直接用 androidx.webkit 的 ProxyController / WebViewFeature 给 WebView 内核设代理
+    // （Censys 抓取必须让 WebView 走 Xray 的本地端口）。
+    // 插件的 build.gradle 里有这个依赖，但那是它自己的 compileClasspath，
+    // 不会暴露给 app 模块 —— 所以这里必须显式声明。
+    implementation("androidx.webkit:webkit:1.12.0")
+}

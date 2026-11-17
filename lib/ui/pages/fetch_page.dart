@@ -7,24 +7,23 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/settings.dart';
-import '../../data/censys_http.dart';
+import '../../data/censys_native.dart';
 import '../../data/vless.dart';
 import '../../state/app_state.dart';
-import 'censys_verify_page.dart';
 import 'test_page.dart';
 
-/// 获取数据：**纯 HTTP 优先，必要时才开一次全屏验证页**。
+/// 获取数据：调用**原生 WebView** 抓 Censys 搜索结果（全自动，无需用户操作）。
 ///
-/// 实测结论（决定了整个设计）：
-/// - Censys 对未认证请求返回 **HTTP 200 + ~3KB 挑战页 HTML**（带严格 CSP
-///   `default-src 'self'`），既不是 403 也不是 JSON；
-/// - 该 CSP 会挡掉注入的 `fetch`，所以在 headless WebView 里执行
-///   `fetch('/api/search')` 必然得到 `TypeError: Failed to fetch`；
-/// - 因此 **WebView 只能用来过一次人机验证换 Cookie**，数据请求走 `HttpClient`
-///   （`lib/data/censys_http.dart`，带 Cookie + 完整浏览器头）。
+/// 为什么必须是原生 WebView（而不是纯 HTTP / 插件 WebView）：
+/// - 站点是 **Fastly 分级放行**：干净出口 IP 直接给数据，可疑的才要求过验证；
+/// - 纯 HTTP 会被 TLS 指纹拦掉 —— 实测带齐 27 个浏览器头仍返回约 3KB 挑战页
+///   （`/_fs-ch-*`、`fst-post-back`、`_fs_ch_st` cookie）；
+/// - 插件的 `HeadlessInAppWebView` 有指纹缺陷（零视口 / 无渲染），过不了挑战；
+/// - **原生 `WebView` 不 attach 到任何视图也能过挑战**（Kotlin 版
+///   `CensysWebFetcher` 就是这样，且它在用户手机上一直可用）。
 ///
-/// 本页自身**没有任何 WebView**：验证页是独立的按需全屏路由
-/// （`lib/ui/pages/censys_verify_page.dart`）。
+/// 所以本页**没有任何 WebView**：抓取与挑战处理全在原生侧完成（`cytest/censys`
+/// channel，见 `MainActivity.kt`），Dart 只拿到最终 JSON。
 class FetchPage extends StatefulWidget {
   const FetchPage({super.key});
 
@@ -103,10 +102,10 @@ class _FetchPageState extends State<FetchPage> {
     final state = context.read<AppState>();
     final started = DateTime.now();
 
-    // ① 纯 HTTP：带上次验证得到的 Cookie，走 Xray 本地端口。
-    //    实测 Censys 对未认证请求返回「HTTP 200 + 挑战页 HTML」，且该页 CSP
-    //    (`default-src 'self'`) 会挡掉注入的 fetch —— 所以 WebView 只用来换 Cookie，
-    //    真正的数据请求交给 HttpClient（见 data/censys_http.dart 的注释）。
+    // 按 ordered 顺序轮换 proxyip，**每次都用原生 WebView 抓**。
+    // 为什么是原生 WebView：站点是 Fastly 分级放行，纯 HTTP 在 TLS 层就被拒
+    // （实测带齐 27 个浏览器头仍返回挑战页）；插件的 headless 实现有指纹缺陷。
+    // 原生 WebView 不 attach 也能过挑战 —— 与 Kotlin 版 `CensysWebFetcher` 同款。
     final hasLine = state.settings.vlessLinks.isNotEmpty;
     final candidates = hasLine ? state.orderedProxyPool : const <ProxyIp>[];
     final attempts = candidates.isEmpty
@@ -115,79 +114,34 @@ class _FetchPageState extends State<FetchPage> {
 
     String? body;
     String? lastError;
-    var viaVerify = false;
-    var usedCookie = state.settings.censysCookie.isNotEmpty;
-
     for (final proxy in attempts) {
       final port = await _startProxy(state, proxy, hasLine);
       if (hasLine && port == null) {
         await state.recordProxyResult(proxy, false);
         continue;
       }
-      final result = await fetchCensysJson(
-        query: query,
-        cookie: state.settings.censysCookie,
-        proxyPort: port,
-      );
-      await _clearProxy();
-      if (result.ok) {
-        body = result.json;
+      if (mounted) {
+        setState(() {
+          _diag = '原生 WebView 抓取中…'
+              '${proxy == null ? '' : '（proxyip ${proxy.key}）'}';
+        });
+      }
+      try {
+        body = await fetchCensysSearch(query: query, proxyPort: port);
         _usedProxy = proxy?.key;
         await state.recordProxyResult(proxy, true);
         break;
+      } on CensysNativeException catch (e) {
+        lastError = e.message;
+        final detail = e.details.isEmpty ? '' : '｜$e';
+        state.pushLog(
+          '原生抓取失败（proxyip=${proxy?.key ?? "原样"}）：${e.message}$detail',
+        );
+        await state.recordProxyResult(proxy, false);
+      } finally {
+        await _clearProxy();
       }
-      lastError = result.error;
-      state.pushLog(
-        '纯 HTTP 未拿到 JSON（proxyip=${proxy?.key ?? "原样"}）：${result.error}'
-        '｜Content-Type ${result.contentType}｜开头：${result.head}',
-      );
-      await state.recordProxyResult(proxy, false);
       if (!mounted) break;
-    }
-
-    // ② 仍然没有数据 → 打开**全屏**验证页过一次人机验证，换 Cookie 后再试一次 HTTP。
-    //    验证页只在需要时出现，主页仍然没有任何 WebView。
-    if (body == null && mounted) {
-      final verifyProxy = candidates.isEmpty ? null : candidates.first;
-      final port = await _startProxy(state, verifyProxy, hasLine);
-      final verified = await Navigator.of(context).push<CensysVerifyResult>(
-        MaterialPageRoute(
-          builder: (_) => CensysVerifyPage(apiUrl: _apiUrl),
-        ),
-      );
-      await _clearProxy();
-
-      if (verified == null) {
-        lastError ??= '已取消人机验证';
-        state.pushLog('用户取消了人机验证');
-      } else {
-        if (verified.cookie.isNotEmpty) {
-          state.settings.censysCookie = verified.cookie;
-          usedCookie = true;
-          await state.saveSettings();
-          state.pushLog('已保存 Censys Cookie（${verified.cookie.length} 字节）');
-        }
-        body = verified.json;
-        viaVerify = body != null;
-        if (body == null && verified.cookie.isNotEmpty) {
-          // 验证页通常只拿到 Cookie（页面本身是搜索页/挑战页），用它再试一次纯 HTTP
-          final retry = await fetchCensysJson(
-            query: query,
-            cookie: verified.cookie,
-            proxyPort: port,
-          );
-          body = retry.json;
-          viaVerify = body != null;
-          lastError = retry.error ?? lastError;
-          if (body == null) {
-            state.pushLog('用验证后的 Cookie 重试仍失败：${retry.error}');
-          }
-        }
-        if (body != null && verifyProxy != null) {
-          _usedProxy = verifyProxy.key;
-          await state.recordProxyResult(verifyProxy, true);
-        }
-      }
     }
 
     if (!mounted) return;
@@ -221,9 +175,7 @@ class _FetchPageState extends State<FetchPage> {
       _costMs = DateTime.now().difference(started).inMilliseconds;
       _previewTargets = targets;
       _previewRaw = rawHead;
-      final via = viaVerify ? '经验证页完成' : '直连 API';
-      final cookieNote = usedCookie ? ' · 已复用验证' : '';
-      _diag = '$via$cookieNote'
+      _diag = '原生 WebView 完成'
           '${_usedProxy == null ? '' : ' · proxyip $_usedProxy'}';
     });
     _toast('获取成功：$hits 条');
