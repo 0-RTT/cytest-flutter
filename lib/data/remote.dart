@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:ssh2/ssh2.dart';
+import 'package:dartssh2/dartssh2.dart';
 
 import '../core/settings.dart';
 import 'pipeline.dart';
@@ -39,7 +39,7 @@ class RemoteRunner {
           ? () => settings.remotePassword
           : null,
       identities: settings.remoteKeyPath.isNotEmpty
-          ? [_readIdentity(settings.remoteKeyPath)]
+          ? SSHKeyPair.fromPem(_readIdentity(settings.remoteKeyPath))
           : null,
     );
 
@@ -101,7 +101,7 @@ class RemoteRunner {
         'maxLatency': s.maxLatency,
       });
 
-  static Future<void> _upload(SFTPClient sftp, String remotePath, List<int> bytes) async {
+  static Future<void> _upload(SftpClient sftp, String remotePath, List<int> bytes) async {
     final file = await sftp.open(
       remotePath,
       mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
@@ -113,6 +113,7 @@ class RemoteRunner {
   static Future<void> _run(
       SSHClient client, String cmd, void Function(String)? onLine) async {
     final session = await client.execute(cmd);
+    if (session == null) return;
     await for (final chunk in session.stdout) {
       onLine?.call(utf8.decode(chunk, allowMalformed: true).trimRight());
     }
@@ -124,6 +125,7 @@ class RemoteRunner {
 
   static Future<String> _runCapture(SSHClient client, String cmd) async {
     final session = await client.execute(cmd);
+    if (session == null) return '';
     final buf = StringBuffer();
     await for (final chunk in session.stdout) {
       buf.write(utf8.decode(chunk, allowMalformed: true));

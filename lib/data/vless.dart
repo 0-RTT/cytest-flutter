@@ -44,6 +44,8 @@ class Vless {
     final q = uri.queryParameters;
     final network = (q['type'] ?? 'tcp').toLowerCase();
     final security = (q['security'] ?? 'none').toLowerCase();
+    final rawPath = q['path'] ?? '';
+    final rawMode = q['mode'] ?? '';
 
     return Vless(
       uuid: uuid,
@@ -53,10 +55,10 @@ class Vless {
       security: security,
       sni: q['sni'] ?? '',
       wsHost: q['host'] ?? '',
-      wsPath: (q['path'] ?? '/').isEmpty ? '/' : q['path']!,
+      wsPath: rawPath.isEmpty ? '/' : rawPath,
       alpn: q['alpn'] ?? '',
       fingerprint: q['fp'] ?? '',
-      mode: (q['mode'] ?? '').isEmpty ? 'auto' : q['mode']!,
+      mode: rawMode.isEmpty ? 'auto' : rawMode,
       name: _decodeFragment(uri.fragment),
     );
   }

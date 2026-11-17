@@ -178,7 +178,7 @@ class _FetchPageState extends State<FetchPage> {
       _fetching = false;
       _payload = body;
       _hits = hits;
-      _bytes = body.length;
+      _bytes = body!.length;
       _costMs = DateTime.now().difference(started).inMilliseconds;
     });
     _toast('获取成功：$hits 条');
@@ -187,9 +187,9 @@ class _FetchPageState extends State<FetchPage> {
   Future<void> _setProxy(int port) async {
     try {
       await ProxyController.instance().setProxyOverride(
-        ProxySettings(proxyRules: [ProxyRule(url: 'http://127.0.0.1:$port')]),
-        () {},
-        () {},
+        settings: ProxySettings(
+          proxyRules: [ProxyRule(url: 'http://127.0.0.1:$port')],
+        ),
       );
     } catch (_) {
       // 部分机型不支持全局覆盖，忽略
@@ -198,7 +198,7 @@ class _FetchPageState extends State<FetchPage> {
 
   Future<void> _clearProxy() async {
     try {
-      await ProxyController.instance().clearProxyOverride(() {}, () {});
+      await ProxyController.instance().clearProxyOverride();
     } catch (_) {}
   }
 
