@@ -36,11 +36,20 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            // 固定签名：本地与 CI 必须一致，否则覆盖安装会报「与已安装应用签名不同」
+            // 个人项目，keystore 随仓库分发；若将来公开分发请改用 secrets 注入
+            storeFile = file("cytest-release.jks")
+            storePassword = "cytest123"
+            keyAlias = "cytest"
+            keyPassword = "cytest123"
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
