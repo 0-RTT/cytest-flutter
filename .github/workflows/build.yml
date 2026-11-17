@@ -55,6 +55,7 @@ jobs:
           set -euo pipefail
           # pipeline 二进制由 cytest-app 仓库的 CI 产出，这里直接取 latest release 的同名产物不可行，
           # 改为在本地用 Go 编译（同一份 pipeline.go 已复制到 engine/）
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a assets
           if [ -f engine/pipeline.go ]; then
             echo "使用内置 engine/pipeline.go 编译"
             curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go1.27.1.linux-amd64.tar.gz
