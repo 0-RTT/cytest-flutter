@@ -93,7 +93,31 @@ AGP 会 strip `jniLibs` 里的 ELF，但只影响节头表区，不影响执行�
 注意：CI 里 xray 必须 `unzip -d /tmp` 后 `mv` 到 jniLibs，落到 `assets/` 不会进包（会被静默忽略，
 APK 小 12MB 且运行时报找不到 libxray.so）。
 
+## UI 布局铁律（v1.0.6 定稿）
+**`Scaffold` 的 body 不会自动避让系统手势条/三键导航**，必须在 body 包
+`SafeArea(top: false, child: ...)`；`top: false` 是因为顶部已由 AppBar 处理。
+全项目 8 个页面（home/fetch/test/lines/remote/settings/history/result）统一如此。
+例外：带 `bottomNavigationBar` 的 Scaffold 会把 body 的 bottom padding 清零
+（`scaffold.dart` 的 `removeBottomPadding`），那里 SafeArea 取 0，重复应用无害。
+
+**M3 坑**：`IconButton` 的 `iconSize` / `padding` / `visualDensity` / `constraints`
+四个构造参数在 M3 下会被 `_IconButtonM3` 丢弃，且 `tapTargetSize: padded` 会把按钮
+撑到 40px。要压尺寸必须走 `style: ButtonStyle(...)`。
+
+## 与 Kotlin 版的功能差距（2026-11-17 逐条对照）
+Kotlin 版 111 个 .kt / 17,108 行；Flutter 版 21 个 .dart / 4,236 行。
+69 个用户可见功能点：已对齐 8 / 缺失 37 / 退化 24，加权完成度约 **30%**。
+- P0 核心流程 64%：抓取→三阶段→结果→推 GitHub 这条主干靠复用 Go pipeline 保住了
+- **P1 日常效率仅 16%**：原版价值密度最高的那层几乎全空
+- 三个「行为错」比「缺功能」更危险：
+  1. 链路测速记的是 Xray **启动耗时**，不是 TTFB/吞吐（`lines_page.dart` 的 probe）
+  2. 「取消测试」用 `pkill -f cytest/pipeline`，但进程名是 `libpipeline.so`，**杀不掉**
+  3. 链路测速逐条 `xray.start()` 重启，40 条要串行重启 40 次（批量配置已写好未接线）
+- 缺失大头：结果页排序/筛选/导出文件、历史合并、mihomo 的 rule-providers/dns/tun、
+  备份 UI（`history.dart` 的 exportBackup/importBackup 已实现但零调用）、last run 恢复
+
 ## 版本号
+
 `pubspec.yaml` 的 version 是占位，实际由 `--build-name` / `--build-number` 覆盖。
 CI 在 tag 时注入 `BUILD_NAME=${GITHUB_REF#refs/tags/v}`，所以 v1.0.2 的包 versionName 就是 1.0.2。
 本地构建记得手动传这两个参数，否则显示 1.0.0。
