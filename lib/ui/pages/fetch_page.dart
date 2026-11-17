@@ -7,6 +7,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/settings.dart';
+import '../../data/vless.dart';
 import '../../state/app_state.dart';
 import 'test_page.dart';
 
@@ -51,6 +52,9 @@ class _FetchPageState extends State<FetchPage> {
   /// 最近一次走的是「直连 API」（true）还是「过验证页面」（false）。
   bool _viaApi = false;
   int? _usedProxyPort;
+
+  /// 本次成功时用的 proxyip（null = 链接原样），只用于状态串展示。
+  String? _usedProxy;
   String? _error;
 
   String? _payload;
@@ -105,41 +109,54 @@ class _FetchPageState extends State<FetchPage> {
     final state = context.read<AppState>();
     final started = DateTime.now();
 
-    // 有线路就先起 Xray，抓取走它的本地端口（headless WebView 同样受全局代理影响）
-    int? proxyPort;
-    try {
-      if (state.settings.vlessLinks.isNotEmpty) {
-        if (!state.xray.running) {
-          await state.startLine();
-        }
-        if (state.xray.running) proxyPort = state.xray.port;
-      }
-    } catch (e) {
-      state.pushLog('线路未启动：$e');
-    }
-
-    _usedProxyPort = proxyPort;
-    if (proxyPort != null) {
-      await _setProxy(proxyPort);
-    } else {
-      await _clearProxy();
-    }
+    // 起 Xray 并**按 ordered 顺序轮换 proxyip**：失败就记一次 failure 换下一条。
+    // 原版就是这套语义（ordered/recordSuccess/recordFailure），
+    // 之前这里只取 pool.first，20 条里第一条挂了就全挂。
+    final hasLine = state.settings.vlessLinks.isNotEmpty;
+    final candidates = hasLine ? state.orderedProxyPool : const <ProxyIp>[];
+    final attempts = candidates.isEmpty
+        ? const <ProxyIp?>[null] // 没有 proxyip：链接原样，只试一次
+        : candidates.map<ProxyIp?>((item) => item).toList(growable: false);
 
     String? body;
-    try {
-      body = await _fetchBody(state, query);
-    } catch (e) {
-      state.pushLog('抓取异常：$e');
-      await _clearProxy();
-      if (!mounted) return;
-      setState(() {
-        _fetching = false;
-        _error = '抓取异常：$e';
-      });
-      return;
-    }
+    ProxyIp? usedProxy;
+    for (final proxy in attempts) {
+      int? proxyPort;
+      try {
+        if (hasLine) {
+          await state.startLineWith(proxy);
+          if (state.xray.running) proxyPort = state.xray.port;
+        }
+      } catch (e) {
+        state.pushLog('线路启动失败（proxyip=${proxy?.key ?? "原样"}）：$e');
+        await state.recordProxyResult(proxy, false);
+        continue;
+      }
 
-    await _clearProxy();
+      _usedProxyPort = proxyPort;
+      if (proxyPort != null) {
+        await _setProxy(proxyPort);
+      } else {
+        await _clearProxy();
+      }
+
+      try {
+        body = await _fetchBody(state, query);
+      } catch (e) {
+        state.pushLog('抓取异常（proxyip=${proxy?.key ?? "原样"}）：$e');
+        body = null;
+      }
+      await _clearProxy();
+
+      if (body != null) {
+        usedProxy = proxy;
+        await state.recordProxyResult(proxy, true);
+        break;
+      }
+      await state.recordProxyResult(proxy, false);
+      if (!mounted) break;
+    }
+    if (usedProxy != null) _usedProxy = usedProxy.key;
 
     if (!mounted) return;
     if (body == null) {
@@ -172,7 +189,8 @@ class _FetchPageState extends State<FetchPage> {
       _costMs = DateTime.now().difference(started).inMilliseconds;
       _previewTargets = targets;
       _previewRaw = rawHead;
-      _diag = _viaApi ? '直连 API 完成' : '经页面过验证完成';
+      final via = _viaApi ? '直连 API 完成' : '经页面过验证完成';
+      _diag = _usedProxy == null ? via : '$via · proxyip $_usedProxy';
     });
     _toast('获取成功：$hits 条');
   }

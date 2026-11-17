@@ -126,12 +126,57 @@ class AppState extends ChangeNotifier {
     return File('${dir.path}/proxyip.csv');
   }
 
+  /// proxyip 使用状态文件的路径（对应原版 `proxyip-state.json`）。
+  Future<File> _proxyIpStateFile() async {
+    final dir = await Paths.xray();
+    return File('${dir.path}/proxyip-state.json');
+  }
+
+  /// 每个 proxyip 的成功/失败统计 + 上次成功的那个。
+  ///
+  /// 只用于排序（哪条先试），不做排行榜 UI。
+  ProxyIpState proxyIpState = const ProxyIpState();
+
+  /// 按「失败少 → 最近成功 → 上次成功的优先」排好序的 proxyip 列表。
+  List<ProxyIp> get orderedProxyPool => orderProxyIps(proxyPool, proxyIpState);
+
+  /// 记一次 proxyip 的使用结果并落盘。
+  ///
+  /// [item] 为 null 表示这次没用 proxyip（链接原样），不记账。
+  Future<void> recordProxyResult(ProxyIp? item, bool ok) async {
+    if (item == null) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    proxyIpState = ok
+        ? proxyIpState.recordSuccess(item.key, nowMs: now)
+        : proxyIpState.recordFailure(item.key, nowMs: now);
+    notifyListeners();
+    try {
+      final file = await _proxyIpStateFile();
+      await file.writeAsString(proxyIpState.encode(), flush: true);
+    } catch (e) {
+      pushLog('保存 proxyip 状态失败：$e');
+    }
+  }
+
+  /// 用指定的 proxyip 启动单线路代理（null = 链接原样，不做路径替换）。
+  Future<void> startLineWith(ProxyIp? proxy) async {
+    final v = primaryLine;
+    if (v == null) throw Exception('先在「线路与代理」填一条 vless 链接');
+    await xray.start(v, proxy: proxy);
+    notifyListeners();
+  }
+
   /// 启动时载入 proxyip.csv。
   ///
   /// **只在用户还没在设置里手输过时载入**：设置里的列表是显式编辑的，
   /// 被文件悄悄覆盖会让人以为「我改的怎么没了」。
   Future<void> _loadProxyIps() async {
     try {
+      // 使用状态独立于列表：它决定「哪条先试」，没有列表也不影响
+      final stateFile = await _proxyIpStateFile();
+      if (await stateFile.exists()) {
+        proxyIpState = ProxyIpState.decode(await stateFile.readAsString());
+      }
       if (settings.proxyIps.isNotEmpty) return;
       final file = await _proxyIpFile();
       if (!await file.exists()) return;

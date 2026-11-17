@@ -1,129 +1,174 @@
-/// proxyip 列表的 CSV 读写。
+/// proxyip 列表的读写与「哪条先用」的排序。
 ///
-/// **格式与原版 Kotlin `ProxyIpRepository.toCsv` 逐字对齐**：
+/// **关键事实：proxyip 文件就是测速结果 CSV**。原版
+/// `ProxyIpRepository.parseCsv` 直接委托给 `SpeedResultCsv.parse(text)`，
+/// 所以用户可以把测速跑出来的 `result.csv` 直接当 proxyip 文件导入：
 /// ```
-/// IP,Port,Latency (ms),Speed (MiB/s)
-/// 104.16.0.1,443,0,0.00
+/// IP,Port,Latency (ms),Speed (MiB/s)[,Reason]
+/// 104.16.0.1,443,120,8.50
 /// ```
-/// 这样用户在两端之间来回导同一份文件不会变形（原版 `parseCsv` 依赖
-/// `SpeedResultCsv.parse`，要求每行 ≥4 列并识别 `IP`/`Port` 表头）。
-///
-/// 同时**宽容接受**用户自己维护的简写（原版不认，这里认，属于只增不减的兼容）：
-/// - 一行一个 `ip:port`；
-/// - 一行 `ip,port`（两列）；
-/// - `#` 开头的注释行；
-/// - UTF-8 BOM、CRLF / CR 换行、字段两侧空白、双引号包裹。
-///
-/// 任何解析不出的行**直接跳过**（不抛异常）：用户从别处粘来的列表常常混着
-/// 表头、空行和坏行，为一行坏数据整体失败是最差的体验。
+/// 因此这里**不自己写一套 CSV 规则**，而是复用 `pipeline.dart` 的
+/// `parseSpeedCsvRows` / `toSpeedCsvText`（那边已覆盖引号、BOM、CRLF、表头、
+/// 注释行、非法行跳过）。两套规则以后必然分叉，这是刻意避免的。
 library;
 
+import 'dart:convert';
+
+import 'pipeline.dart';
 import 'vless.dart';
 
-/// 解析 proxyip CSV/文本，返回去重后的列表（保持出现顺序）。
-///
-/// 去重键是 `ip:port`，与 `ProxyIp.key` 一致，避免同一地址测两遍。
+/// 解析 proxyip 文件（测速结果 CSV 格式），按 `ip:port` 去重并保留首次出现顺序。
 List<ProxyIp> parseProxyIpCsv(String text) {
-  final normalized = text
-      .replaceFirst('\uFEFF', '') // UTF-8 BOM（Excel 导出常见）
-      .replaceAll('\r\n', '\n')
-      .replaceAll('\r', '\n');
-
-  final out = <ProxyIp>[];
   final seen = <String>{};
-
-  for (final rawLine in normalized.split('\n')) {
-    final line = rawLine.trim();
-    if (line.isEmpty || line.startsWith('#')) continue;
-
-    final cells = _splitCsvLine(line);
-    if (cells.isEmpty) continue;
-    if (_isHeader(cells)) continue;
-
-    final ip = cells[0].trim();
-    var port = cells.length >= 2 ? int.tryParse(cells[1].trim()) : null;
-
-    // 单字段简写 `ip:port`
-    if (port == null && cells.length == 1) {
-      final idx = ip.lastIndexOf(':');
-      if (idx > 0 && idx < ip.length - 1) {
-        port = int.tryParse(ip.substring(idx + 1).trim());
-        final onlyIp = ip.substring(0, idx).trim();
-        if (_validIp(onlyIp) && _validPort(port)) {
-          if (seen.add('$onlyIp:$port')) out.add(ProxyIp(onlyIp, port!));
-        }
-        continue;
-      }
-    }
-
-    if (!_validIp(ip) || !_validPort(port)) continue;
-    if (seen.add('$ip:$port')) out.add(ProxyIp(ip, port!));
+  final out = <ProxyIp>[];
+  for (final row in parseSpeedCsvRows(text)) {
+    if (!seen.add(row.key)) continue;
+    out.add(ProxyIp(row.ip, row.port));
   }
   return out;
 }
 
-/// 序列化成与原版一致的 4 列 CSV（Latency/Speed 只在原版测速时有值，这里写 0）。
-String toProxyIpCsv(List<ProxyIp> list) {
-  final buffer = StringBuffer('IP,Port,Latency (ms),Speed (MiB/s)\n');
-  for (final item in list) {
-    buffer
-      ..write(item.ip)
-      ..write(',')
-      ..write(item.port)
-      ..write(',0,0.00\n');
-  }
-  return buffer.toString();
-}
-
-bool _isHeader(List<String> cells) {
-  if (cells.isEmpty) return false;
-  final first = cells[0].trim().toLowerCase();
-  if (first != 'ip') return false;
-  // 只认「IP」开头且第二列是 port 类表头，避免把真的有一个叫 ip 的字段当表头
-  return cells.length == 1 || cells[1].trim().toLowerCase().startsWith('port');
-}
-
-/// IP/主机名的基本合法性：非空、无空白、不含逗号/引号。
+/// 序列化成与原版 `ProxyIpRepository.toCsv` 一致的 4 列 CSV。
 ///
-/// 不强制 IPv4 点分四段：原版允许 proxyip 里写域名（`PATH_IP_RE` 就带 `A-Za-z`）。
-bool _validIp(String ip) {
-  if (ip.isEmpty || ip.length > 255) return false;
-  if (ip.contains(RegExp(r'[\s,"]'))) return false;
-  return true;
+/// Latency/Speed 固定写 `0` / `0.00`：proxyip 列表本身不带测速结果，
+/// 但格式必须和原版一致，否则把文件导回原版会被判为非法行。
+String toProxyIpCsv(List<ProxyIp> list) => toSpeedCsvText(<SpeedCsvRow>[
+      for (final item in list)
+        SpeedCsvRow(ip: item.ip, port: item.port, latencyMs: 0, speedMib: 0),
+    ]);
+
+// ---------------------------------------------------------------------------
+// 使用状态（对应原版 proxyip-state.json）
+// ---------------------------------------------------------------------------
+
+/// 单个 proxyip 的使用统计。字段与原版 `ProxyIpStat` 一一对应。
+class ProxyIpStat {
+  const ProxyIpStat({
+    this.ok = 0,
+    this.fail = 0,
+    this.lastOkAt = 0,
+    this.lastFailAt = 0,
+  });
+
+  final int ok;
+  final int fail;
+  final int lastOkAt;
+  final int lastFailAt;
+
+  ProxyIpStat copyWith({int? ok, int? fail, int? lastOkAt, int? lastFailAt}) =>
+      ProxyIpStat(
+        ok: ok ?? this.ok,
+        fail: fail ?? this.fail,
+        lastOkAt: lastOkAt ?? this.lastOkAt,
+        lastFailAt: lastFailAt ?? this.lastFailAt,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'ok': ok,
+        'fail': fail,
+        'lastOkAt': lastOkAt,
+        'lastFailAt': lastFailAt,
+      };
+
+  static ProxyIpStat fromJson(Map<String, dynamic> json) => ProxyIpStat(
+        ok: (json['ok'] as num?)?.toInt() ?? 0,
+        fail: (json['fail'] as num?)?.toInt() ?? 0,
+        lastOkAt: (json['lastOkAt'] as num?)?.toInt() ?? 0,
+        lastFailAt: (json['lastFailAt'] as num?)?.toInt() ?? 0,
+      );
 }
 
-bool _validPort(int? port) => port != null && port >= 1 && port <= 65535;
+/// 全部 proxyip 的使用状态 + 上次成功的那个（原版 `ProxyIpStateFile`）。
+class ProxyIpState {
+  const ProxyIpState({
+    this.stats = const <String, ProxyIpStat>{},
+    this.workingKey = '',
+  });
 
-/// 单行 CSV 拆分，支持双引号包裹与 `""` 转义。
-List<String> _splitCsvLine(String line) {
-  final cells = <String>[];
-  final field = StringBuffer();
-  var inQuotes = false;
+  final Map<String, ProxyIpStat> stats;
 
-  for (var i = 0; i < line.length; i++) {
-    final ch = line[i];
-    if (inQuotes) {
-      if (ch == '"') {
-        if (i + 1 < line.length && line[i + 1] == '"') {
-          field.write('"');
-          i++;
-        } else {
-          inQuotes = false;
+  /// 上次成功的 `ip:port`，下次优先试它。
+  final String workingKey;
+
+  ProxyIpStat statOf(String key) => stats[key] ?? const ProxyIpStat();
+
+  ProxyIpState recordSuccess(String key, {required int nowMs}) => ProxyIpState(
+        stats: <String, ProxyIpStat>{
+          ...stats,
+          key: statOf(key).copyWith(ok: statOf(key).ok + 1, lastOkAt: nowMs),
+        },
+        workingKey: key,
+      );
+
+  /// 失败只累加计数、**不改 workingKey**：一次失败不代表它彻底不能用，
+  /// 下一轮排序里它的 fail 升高就会自然排到后面。
+  ProxyIpState recordFailure(String key, {required int nowMs}) => ProxyIpState(
+        stats: <String, ProxyIpStat>{
+          ...stats,
+          key: statOf(key)
+              .copyWith(fail: statOf(key).fail + 1, lastFailAt: nowMs),
+        },
+        workingKey: workingKey,
+      );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'stats': stats.map((key, value) => MapEntry(key, value.toJson())),
+        'workingKey': workingKey,
+      };
+
+  static ProxyIpState fromJson(Map<String, dynamic> json) {
+    final stats = <String, ProxyIpStat>{};
+    final raw = json['stats'];
+    if (raw is Map) {
+      raw.forEach((key, value) {
+        if (key is String && value is Map<String, dynamic>) {
+          stats[key] = ProxyIpStat.fromJson(value);
         }
-      } else {
-        field.write(ch);
-      }
-      continue;
+      });
     }
-    if (ch == '"') {
-      inQuotes = true;
-    } else if (ch == ',' || ch == '\t' || ch == ';') {
-      cells.add(field.toString());
-      field.clear();
-    } else {
-      field.write(ch);
-    }
+    return ProxyIpState(
+      stats: stats,
+      workingKey: (json['workingKey'] as String?) ?? '',
+    );
   }
-  cells.add(field.toString());
-  return cells;
+
+  String encode() => jsonEncode(toJson());
+
+  /// 坏文件当作「没有状态」处理：抓取不该因为一个状态文件而失败。
+  static ProxyIpState decode(String text) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map<String, dynamic>) return fromJson(decoded);
+    } on Object {
+      // 忽略，返回空状态
+    }
+    return const ProxyIpState();
+  }
+}
+
+/// 决定「先用哪条」：**失败少的优先 → 最近成功的优先**，
+/// 并把上次成功的 [ProxyIpState.workingKey] 前移（仅当它没有失败记录）。
+///
+/// 排序主口径与原版 `ProxyIpRepository.ordered` 一致
+/// （`compareBy fail` → `thenByDescending lastOkAt`）；
+/// workingKey 前移是「用户上次能用的那条，这次先试它」的落地，
+/// 但**刚失败过的 workingKey 不再前移** —— 否则每次抓取都先撞同一堵墙。
+List<ProxyIp> orderProxyIps(List<ProxyIp> list, ProxyIpState state) {
+  final sorted = List<ProxyIp>.of(list)
+    ..sort((a, b) {
+      final sa = state.statOf(a.key);
+      final sb = state.statOf(b.key);
+      final byFail = sa.fail.compareTo(sb.fail);
+      if (byFail != 0) return byFail;
+      return sb.lastOkAt.compareTo(sa.lastOkAt);
+    });
+
+  final working = state.workingKey;
+  if (working.isEmpty) return sorted;
+  final index = sorted.indexWhere((item) => item.key == working);
+  if (index <= 0) return sorted;
+  if (state.statOf(working).fail > 0) return sorted;
+
+  final first = sorted.removeAt(index);
+  return <ProxyIp>[first, ...sorted];
 }

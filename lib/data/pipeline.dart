@@ -188,6 +188,100 @@ class Pipeline {
   }
 }
 
+/// 测速结果 CSV 的一行（原版 Kotlin `TestResult` 的最小字段集）。
+///
+/// 这个类型存在的意义：**proxyip 文件就是测速结果 CSV**（原版
+/// `ProxyIpRepository.parseCsv` 直接委托 `SpeedResultCsv.parse`），
+/// 所以两处必须共用同一套解析规则，不能各写一份。
+class SpeedCsvRow {
+  const SpeedCsvRow({
+    required this.ip,
+    required this.port,
+    this.latencyMs = -1,
+    this.speedMib = 0,
+    this.reason = '',
+  });
+
+  final String ip;
+  final int port;
+  final int latencyMs;
+  final double speedMib;
+  final String reason;
+
+  /// 与原版 `TestResult.key` 一致的唯一键。
+  String get key => '$ip:$port';
+}
+
+/// 解析测速结果 CSV（也用作 proxyip 文件格式）。
+///
+/// 规则与原版 `CsvRows.split` + `SpeedResultCsv.parse` 对齐：
+/// - UTF-8 BOM、CRLF/CR、双引号与 `""` 转义；
+/// - 表头可有可无（首行首列是 `IP` 就当表头跳过）；
+/// - `#` 开头的注释行、空行跳过；
+/// - 至少 2 列（IP, Port），端口必须在 1..65535；
+/// - 任何非法行**跳过而不是抛异常**（用户粘来的列表常混坏行）。
+List<SpeedCsvRow> parseSpeedCsvRows(String text) {
+  final rows = _splitCsv(text.replaceFirst('\uFEFF', ''));
+  if (rows.isEmpty) return const [];
+
+  var start = 0;
+  if (_looksLikeIpHeader(rows.first)) start = 1;
+
+  final out = <SpeedCsvRow>[];
+  for (var i = start; i < rows.length; i++) {
+    final cells = rows[i];
+    if (cells.isEmpty) continue;
+    if (cells.first.trim().startsWith('#')) continue;
+    if (cells.length < 2) continue;
+
+    final ip = cells[0].trim();
+    if (ip.isEmpty || ip.contains(RegExp(r'\s'))) continue;
+    final port = int.tryParse(cells[1].trim());
+    if (port == null || port < 1 || port > 65535) continue;
+
+    out.add(SpeedCsvRow(
+      ip: ip,
+      port: port,
+      latencyMs: cells.length > 2 ? (int.tryParse(cells[2].trim()) ?? -1) : -1,
+      speedMib: cells.length > 3 ? (double.tryParse(cells[3].trim()) ?? 0) : 0,
+      reason: cells.length > 4 ? cells[4].trim() : '',
+    ));
+  }
+  return out;
+}
+
+/// 把行写成测速结果 CSV（表头与列顺序对齐原版 `SpeedResultCsv` 的读取口径）。
+///
+/// [withReason] 为真时多写 Reason 列（三阶段结果用），proxyip 落盘用 4 列。
+String toSpeedCsvText(List<SpeedCsvRow> rows, {bool withReason = false}) {
+  final buffer = StringBuffer(
+    withReason
+        ? 'IP,Port,Latency (ms),Speed (MiB/s),Reason\n'
+        : 'IP,Port,Latency (ms),Speed (MiB/s)\n',
+  );
+  for (final row in rows) {
+    buffer
+      ..write(row.ip)
+      ..write(',')
+      ..write(row.port)
+      ..write(',')
+      ..write(row.latencyMs)
+      ..write(',')
+      ..write(row.speedMib.toStringAsFixed(2));
+    if (withReason)
+      buffer
+        ..write(',')
+        ..write(row.reason);
+    buffer.write('\n');
+  }
+  return buffer.toString();
+}
+
+bool _looksLikeIpHeader(List<String> row) {
+  final first = row.isEmpty ? '' : row.first.trim().toLowerCase();
+  return first == 'ip';
+}
+
 /// 解析 pipeline 产出的 CSV（表头：IP, Port, Latency (ms), Speed (MiB/s), Reason）。
 List<Map<String, String>> parseCsv(String text) {
   final rows = _splitCsv(text);
