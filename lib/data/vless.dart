@@ -57,7 +57,7 @@ class Vless {
       alpn: q['alpn'] ?? '',
       fingerprint: q['fp'] ?? '',
       mode: (q['mode'] ?? '').isEmpty ? 'auto' : q['mode']!,
-      name: uri.fragment,
+      name: _decodeFragment(uri.fragment),
     );
   }
 
@@ -75,6 +75,16 @@ class Vless {
         'mode': mode,
         'name': name,
       };
+}
+
+/// Dart 的 Uri.fragment 不会自动解码，这里显式解码以与 Kotlin 版行为一致。
+String _decodeFragment(String raw) {
+  if (raw.isEmpty) return '';
+  try {
+    return Uri.decodeComponent(raw);
+  } catch (_) {
+    return raw;
+  }
 }
 
 class ProxyIp {
