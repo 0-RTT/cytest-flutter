@@ -62,7 +62,7 @@ jobs:
             sudo tar -C /usr/local -xzf /tmp/go.tar.gz
             export PATH="/usr/local/go/bin:$PATH"
             CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-              go build -trimpath -ldflags="-s -w" -o assets/pipeline engine/pipeline.go
+              go build -trimpath -ldflags="-s -w" -o android/app/src/main/jniLibs/arm64-v8a/libpipeline.so engine/pipeline.go
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
               go build -trimpath -ldflags="-s -w" -o assets/pipeline-linux engine/pipeline.go
             ls -lh android/app/src/main/jniLibs/arm64-v8a/libpipeline.so assets/pipeline-linux
