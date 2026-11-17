@@ -30,6 +30,8 @@ class _FetchPageState extends State<FetchPage> {
   Completer<void>? _loadWaiter;
 
   bool _fetching = false;
+  String _diag = 'WebView 初始化中…';
+  int? _usedProxyPort;
   String? _error;
   String? _payload;
   int _hits = 0;
@@ -76,17 +78,22 @@ class _FetchPageState extends State<FetchPage> {
       state.pushLog('线路未启动：$e');
     }
 
+    _usedProxyPort = proxyPort;
     if (proxyPort != null) {
       await _setProxy(proxyPort);
     } else {
       await _clearProxy();
     }
 
+    // 首次进入页面时 WebView 可能还没 attach，等最多 3 秒
+    for (var i = 0; i < 30 && _web == null; i++) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
     final web = _web;
     if (web == null) {
       setState(() {
         _fetching = false;
-        _error = 'WebView 尚未就绪';
+        _error = 'WebView 初始化失败（可能缺少系统 WebView 组件）';
       });
       return;
     }
@@ -226,6 +233,7 @@ class _FetchPageState extends State<FetchPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hasLine = context.watch<AppState>().settings.vlessLinks.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
@@ -242,8 +250,10 @@ class _FetchPageState extends State<FetchPage> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
+          Column(
+            children: [
           Expanded(
             child: ListView(
               padding: const EdgeInsets.all(14),
@@ -308,12 +318,19 @@ class _FetchPageState extends State<FetchPage> {
                         const SizedBox(height: 8),
                         if (_error != null)
                           Text(_error!, style: TextStyle(color: theme.colorScheme.error))
+                        else if (_web == null)
+                          Text(_diag, style: TextStyle(color: theme.colorScheme.onSurfaceVariant))
                         else if (_payload != null)
                           Text('获取成功，命中 $_hits 条，响应 $_bytes 字节。点「导入到本地测试」开始跑三阶段。')
                         else
                           Text(
-                            '点右上「获取」从 Censys 拉取。有线路时会经 Xray 出站，否则直连。',
-                            style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                            '$_diag · 出站 ${_usedProxyPort != null ? "Xray 127.0.0.1:$_usedProxyPort" : "直连"}'
+                            '${hasLine ? "" : "\n未配置线路，国内网络直连 Censys 通常不可达，建议先去「线路与代理」填 VLESS"}',
+                            style: TextStyle(
+                              color: hasLine
+                                  ? theme.colorScheme.onSurfaceVariant
+                                  : theme.colorScheme.error,
+                            ),
                           ),
                       ],
                     ),
@@ -341,10 +358,17 @@ class _FetchPageState extends State<FetchPage> {
               ],
             ),
           ),
-          // 不可见的 WebView 承载挑战与请求
-          SizedBox(
-            height: 1,
-            child: InAppWebView(
+            ],
+          ),
+          // WebView 放在屏幕外：完整布局才能保证原生 View 被 attach，
+          // 之前用 SizedBox(height:1) 会导致 onWebViewCreated 不触发
+          Positioned(
+            left: -3000,
+            top: 0,
+            width: 1080,
+            height: 1600,
+            child: IgnorePointer(
+              child: InAppWebView(
               initialSettings: InAppWebViewSettings(
                 javaScriptEnabled: true,
                 thirdPartyCookiesEnabled: true,
@@ -352,16 +376,29 @@ class _FetchPageState extends State<FetchPage> {
                 transparentBackground: true,
                 isInspectable: false,
               ),
-              onWebViewCreated: (c) => _web = c,
               onLoadStop: (c, url) {
+                if (mounted) setState(() => _diag = '页面加载完成');
                 final w = _loadWaiter;
                 if (w != null && !w.isCompleted) w.complete();
               },
+              onWebViewCreated: (c) {
+                _web = c;
+                if (mounted) setState(() => _diag = 'WebView 已创建');
+              },
+              onLoadStart: (c, url) {
+                if (mounted) setState(() => _diag = '加载 ${url?.host ?? ''}…');
+              },
+              onReceivedError: (c, req, err) {
+                if (mounted) {
+                  setState(() => _diag = '加载错误：${err.description}');
+                }
+              },
+                ),
+              ),
             ),
-          ),
-        ],
-      ),
-    );
+          ],
+        ),
+      );
   }
 
   Widget _stat(ThemeData theme, String label, String value) => Expanded(
