@@ -7,12 +7,17 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/settings.dart';
-import '../../data/history.dart';
 import '../../state/app_state.dart';
 import 'test_page.dart';
 
-/// 获取数据：用系统 WebView 过 CDN 挑战，再在页面内 fetch /api/search。
-/// 与 Android 端 CensysFetcher / 桌面端爬取链路同构。
+/// 获取数据：用**后台（headless）WebView** 直接打开 Censys 搜索 API，读回 JSON。
+///
+/// 为什么用 `HeadlessInAppWebView` 而不是可见的 `InAppWebView`：
+/// - 它不走 PlatformView 机制（MethodChannel 通信、不进视图树），**不需要可见**，
+///   所以页面里可以完全没有任何 WebView 区域 —— 这正是用户要的「不要预览」；
+/// - 仍然复用系统 WebView 内核与 Cookie 池，能过 CDN 挑战、能带登录态请求。
+///
+/// 抓取顺序：**直连 API** → 判定 → 不是数据才走 **加载页面过验证 + 页面内 fetch**。
 class FetchPage extends StatefulWidget {
   const FetchPage({super.key});
 
@@ -24,64 +29,36 @@ class _FetchPageState extends State<FetchPage> {
   static const _origin = 'https://platform.censys.io';
   static const _searchPath = '/api/search';
 
-  /// WebView 首次创建的最长等待时间。
-  /// 低端机首次创建 PlatformView 经常超过 3 秒，3 秒就判失败是误杀。
-  static const _kWebInitTimeout = Duration(seconds: 15);
+  /// 桌面 Chrome UA：Censys 会对明显的 WebView UA 收紧风控。
+  static const _kUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
-  /// 预览面板高度上限。必须是真实可见区域，PlatformView 才会被创建。
-  ///
-  /// 60（原 120/180）：抓取已改为**直连 API**，页面预览只在「被 CDN 拦截、
-  /// 需要用户手动过验证」时才用得着，所以压到最小但仍可见（不能删、不能藏，
-  /// 否则 PlatformView 不 attach，`onWebViewCreated` 不触发 → `_web` 为 null）。
-  /// 真要看清验证码时点标题行的「放大」即可（屏高 55%）。
-  static const _kPreviewMaxHeight = 60.0;
+  /// headless 实例建好、拿到 controller 的最长等待时间。
+  static const _kHeadlessInitTimeout = Duration(seconds: 10);
 
-  /// 预览面板「折叠档」的高度下限，同时是键盘弹出时的面板高度。
-  /// 绝对不能压到 0 或移出屏外——那会让 PlatformView 被销毁、`_web` 置空、
-  /// 正在跑的 loadUrl 丢失，正好又踩回「onWebViewCreated 不触发」的老坑。
-  /// 键盘态只占 60 也不会出现「一条缝」：那时标题行整行不渲染（见 _previewPanel），
-  /// 面板固定开销只剩 margin 6 + 描边 2，网页仍有 52 高。
-  static const _kPreviewMinHeight = 60.0;
-
-  /// 预览面板占屏高的比例，用于横屏/小屏时收窄。
-  static const _kPreviewScreenRatio = 0.28;
-
-  /// 用户点「放大」后预览区占屏高的比例。
-  /// 窄条只露出网页一小片，看不清验证码/挑战页，所以给一个接近半屏的档位。
-  static const _kPreviewLargeRatio = 0.55;
-
-  /// 放大后仍要留给上方表单的最小高度。
-  /// 否则大屏上预览会把查询输入框整个挤出去，用户没法边改语句边看预览。
-  static const _kPreviewMinFormSpace = 200.0;
-
-  /// 高度切换动画时长。只改父级容器的高度，WebView 元素不搬家；
-  /// 200ms 以内，避免拖慢首帧。
-  static const _kPreviewAnimDuration = Duration(milliseconds: 180);
+  /// 单次页面加载（含 CDN 挑战）的最长等待时间。
+  static const _kLoadTimeout = Duration(seconds: 25);
 
   late final TextEditingController _cql =
       TextEditingController(text: Defaults.buildQuery(Defaults.fingerprint));
 
-  InAppWebViewController? _web;
-  Timer? _poll;
-  Completer<void>? _loadWaiter;
-
   bool _fetching = false;
 
-  /// 预览区是否处于「放大」档位。只影响父级高度，不影响 WebView 位置。
-  bool _previewExpanded = false;
+  /// 状态串：当前在做什么 / 走的是哪条路径。
+  /// 删掉预览之后，这是用户与排障者唯一的可观测信息。
+  String _diag = '待命';
 
-  String _diag = 'WebView 初始化中…';
+  /// 最近一次走的是「直连 API」（true）还是「过验证页面」（false）。
+  bool _viaApi = false;
   int? _usedProxyPort;
   String? _error;
 
-  /// 最近一次 onReceivedError 的描述（含失败 URL），失败时原样显示给用户。
-  String? _lastError;
   String? _payload;
   int _hits = 0;
   int _bytes = 0;
   int _costMs = 0;
 
-  /// 预览卡里展示的前几条 ip:port，在 _fetch 成功时解析一次并缓存。
+  /// 结果摘要卡里展示的前几条 ip:port，在 _fetch 成功时解析一次并缓存。
   /// 不能放在 build 里解析：响应有几百 KB，每次 setState 都 jsonDecode 会明显掉帧。
   List<String> _previewTargets = const [];
 
@@ -90,10 +67,13 @@ class _FetchPageState extends State<FetchPage> {
 
   @override
   void dispose() {
-    _poll?.cancel();
     _cql.dispose();
     super.dispose();
   }
+
+  /// 当前查询对应的 API 地址（用户要的「直接访问那个链接」）。
+  String get _apiUrl =>
+      '$_origin$_searchPath?q=${Uri.encodeQueryComponent(_cql.text.trim())}';
 
   Future<void> _fetch() async {
     final query = _cql.text.trim();
@@ -102,9 +82,8 @@ class _FetchPageState extends State<FetchPage> {
       return;
     }
 
-    // 测速期间必须拒绝：下面「线路没跑就先 startLine()」会走 XrayProc.start()，
-    // 而 start() 首行是 stop() —— 会把正在跑的批量测速进程直接杀掉，
-    // 用户完全看不出发生了什么。这里只拦这一个条件，其余抓取链路不动。
+    // 测速期间必须拒绝：下面会 startLine() → XrayProc.start() → stop()，
+    // 会把正在跑的批量测速进程直接杀掉，用户完全看不出发生了什么。
     final appState = context.read<AppState>();
     if (appState.linkTestRunning) {
       _toast('测速进行中，请先停止测速');
@@ -120,12 +99,13 @@ class _FetchPageState extends State<FetchPage> {
       _costMs = 0;
       _previewTargets = const [];
       _previewRaw = '';
+      _diag = '准备中…';
     });
 
     final state = context.read<AppState>();
     final started = DateTime.now();
 
-    // 有线路就先起 Xray，抓取走它的本地端口（与 App 的 fetchViaProxy 等价）
+    // 有线路就先起 Xray，抓取走它的本地端口（headless WebView 同样受全局代理影响）
     int? proxyPort;
     try {
       if (state.settings.vlessLinks.isNotEmpty) {
@@ -135,7 +115,6 @@ class _FetchPageState extends State<FetchPage> {
         if (state.xray.running) proxyPort = state.xray.port;
       }
     } catch (e) {
-      // 线路起不来不阻塞直连尝试
       state.pushLog('线路未启动：$e');
     }
 
@@ -146,55 +125,28 @@ class _FetchPageState extends State<FetchPage> {
       await _clearProxy();
     }
 
-    // 首次进入页面时 WebView 可能还没 attach。低端机创建 PlatformView 常超过
-    // 3 秒，这里等最多 15 秒，并把已等秒数显示出来，避免用户误以为卡死。
-    final webStart = DateTime.now();
-    while (_web == null &&
-        DateTime.now().difference(webStart) < _kWebInitTimeout) {
-      await Future.delayed(const Duration(milliseconds: 200));
+    String? body;
+    try {
+      body = await _fetchBody(state, query);
+    } catch (e) {
+      state.pushLog('抓取异常：$e');
+      await _clearProxy();
       if (!mounted) return;
-      if (_web == null) {
-        final waited = DateTime.now().difference(webStart).inSeconds;
-        setState(() => _diag = 'WebView 创建中…（已等 $waited 秒）');
-      }
-    }
-    final web = _web;
-    if (web == null) {
       setState(() {
         _fetching = false;
-        _error = _webInitFailure();
+        _error = '抓取异常：$e';
       });
       return;
     }
 
-    // ── 路径一：直连 API ──────────────────────────────────────────────
-    // 用户要求「直接访问我的连接」：不再先加载 /search 页面，直接把
-    // `https://platform.censys.io/api/search?q=...` 交给 WebView 加载，
-    // 返回的 body 就是 JSON。省掉一次页面加载 + 一次脚本注入。
-    final apiUrl = '$_origin$_searchPath?q=${Uri.encodeQueryComponent(query)}';
-    String? body;
-    var viaApi = false;
-
-    setState(() => _diag = '直连 API…');
-    body = await _fetchDirect(web, apiUrl);
-    viaApi = body != null;
-
-    if (body == null) {
-      // ── 路径二（fallback）：被 CDN 挑战拦截 ──────────────────────────
-      // 直连拿到的是 HTML 挑战页时，只能先加载页面把 Cookie 过出来，
-      // 再在页面内 fetch（带 credentials: include）。
-      setState(() => _diag = '直连被拦截，加载页面过验证…');
-      body = await _fetchViaPage(web, query);
-    }
-
     await _clearProxy();
 
+    if (!mounted) return;
     if (body == null) {
       setState(() {
         _fetching = false;
-        // 若 fallback 已写入更具体的原因（如「浏览器内请求失败」），不要覆盖
-        _error ??= '直连 API 与「经页面过验证」都没拿到数据。'
-            '可点「浏览器打开」手动过一次验证后再试';
+        // 若抓取过程已写入更具体的原因（如「浏览器内请求失败」），不要覆盖
+        _error ??= '直连 API 与「过验证页面后重试」都没有拿到数据，见日志。';
       });
       return;
     }
@@ -206,13 +158,12 @@ class _FetchPageState extends State<FetchPage> {
       hits = (results?['total_hits'] as num?)?.toInt() ?? 0;
     } catch (_) {}
 
-    // 预览卡要给人看「拉到了什么」，而不是几百 KB 裸 JSON。
-    // 解析一次即缓存，容错到任何字段缺失都不抛异常。
     final targets = _parseHits(body);
     final rawHead = _head(body, 200);
 
     await state.saveArchive(body);
 
+    if (!mounted) return;
     setState(() {
       _fetching = false;
       _payload = body;
@@ -221,63 +172,141 @@ class _FetchPageState extends State<FetchPage> {
       _costMs = DateTime.now().difference(started).inMilliseconds;
       _previewTargets = targets;
       _previewRaw = rawHead;
-      // 状态串里写清楚走的是哪条路，便于以后排障（用户也能据此判断要不要手动过验证）
-      _diag = viaApi ? '直连 API 完成' : '经页面过验证完成';
+      _diag = _viaApi ? '直连 API 完成' : '经页面过验证完成';
     });
     _toast('获取成功：$hits 条');
   }
 
-  /// 路径一：直接加载 API URL，body 即 JSON。
+  /// 建一个后台 WebView，按「直连 → 过验证」两条路径抓数据；返回 null 表示都失败。
   ///
-  /// 返回 null = 没拿到数据（CDN 挑战页 / HTML / 非 JSON），由调用方走 fallback。
-  /// 与旧实现的差别：不再先加载 `/search` 页面、也不再注入脚本。
-  Future<String?> _fetchDirect(
-      InAppWebViewController web, String apiUrl) async {
-    final waiter = Completer<void>();
-    _loadWaiter = waiter;
-    try {
-      await web.loadUrl(urlRequest: URLRequest(url: WebUri(apiUrl)));
-      await waiter.future.timeout(const Duration(seconds: 25));
-    } on Object {
-      // 超时/加载中断：仍尝试读一次 body —— 挑战页也可能已渲染完，能读到就说明被拦
-    }
-    return _asCensysJson(await _readBody(web));
-  }
+  /// 每次 `_fetch` 一个实例 + `finally` 里 dispose：headless 实例各自持有一个原生
+  /// WebView，不复用、不释放会稳定泄漏（每个都有独立渲染进程/连接）。
+  Future<String?> _fetchBody(AppState state, String query) async {
+    final controllerReady = Completer<InAppWebViewController>();
 
-  /// 读 `document.body.innerText`；WebView 渲染 JSON 时这里就是原始 JSON 文本。
-  Future<String> _readBody(InAppWebViewController web) async {
+    /// 当前这次页面加载的完成信号（每次 loadUrl 前重建）。
+    Completer<void>? pendingLoad;
+
+    final headless = HeadlessInAppWebView(
+      initialSettings: InAppWebViewSettings(
+        javaScriptEnabled: true,
+        // 复用系统 WebView 的 Cookie 池：用户之前登录过就直接带登录态，
+        // 省掉一次 CDN 挑战。
+        sharedCookiesEnabled: true,
+        thirdPartyCookiesEnabled: true,
+        userAgent: _kUserAgent,
+        transparentBackground: true,
+        isInspectable: false,
+      ),
+      onWebViewCreated: (controller) {
+        if (!controllerReady.isCompleted) controllerReady.complete(controller);
+      },
+      onLoadStop: (controller, url) {
+        final waiter = pendingLoad;
+        if (waiter != null && !waiter.isCompleted) waiter.complete();
+      },
+      onReceivedError: (controller, request, error) {
+        // 删掉预览后，「加载失败」只能靠日志留痕 —— 否则失败是纯黑盒
+        state.pushLog('加载失败：${error.description} · ${request.url}');
+      },
+      onReceivedHttpError: (controller, request, response) {
+        // 401/403/429 这类只能从 HTTP 状态码看出来，onReceivedError 收不到
+        state.pushLog('HTTP ${response.statusCode} · ${request.url}');
+      },
+    );
+
+    /// 加载指定 URL 并等 onLoadStop（超时也继续：挑战页可能已经渲染出内容）。
+    Future<void> loadAndWait(
+      InAppWebViewController controller,
+      String url,
+    ) async {
+      final waiter = Completer<void>();
+      pendingLoad = waiter;
+      await controller.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
+      try {
+        await waiter.future.timeout(_kLoadTimeout);
+      } on TimeoutException {
+        state.pushLog('加载超时（${_kLoadTimeout.inSeconds}s）：$url');
+      }
+    }
+
+    /// 读页面正文文本。直连 API 时这里就是原始 JSON。
+    Future<String> readBody(InAppWebViewController controller) async {
+      try {
+        final raw = await controller.evaluateJavascript(
+          source: 'document.body ? document.body.innerText : ""',
+        );
+        return (raw is String ? raw : '$raw').trim();
+      } on Object catch (e) {
+        state.pushLog('读取页面文本失败：$e');
+        return '';
+      }
+    }
+
     try {
-      final raw = await web.evaluateJavascript(
-        source: 'document.body ? document.body.innerText : ""',
+      // ① 启动：构造只登记参数，必须 run() 才会真正创建原生 WebView
+      await headless.run();
+      final controller =
+          await controllerReady.future.timeout(_kHeadlessInitTimeout);
+
+      // ② 路径一：直连 API
+      if (mounted) setState(() => _diag = '直连 API…');
+      state.pushLog('直连 API：$_apiUrl');
+      try {
+        await loadAndWait(controller, _apiUrl);
+      } on Object catch (e) {
+        state.pushLog('直连加载异常：$e');
+      }
+      final directText = await readBody(controller);
+      final direct = censysJsonOrNull(directText);
+      if (direct != null) {
+        _viaApi = true;
+        return direct;
+      }
+
+      // 不是 JSON：把「拿到了什么」写进日志，否则无从判断是被挑战还是结构变了
+      state.pushLog(
+        '直连未拿到 JSON（${directText.length} 字节），开头：${_head(directText, 120)}',
       );
-      return (raw?.toString() ?? '').trim();
-    } on Object {
-      return '';
+
+      // ③ 路径二：加载搜索页过 CDN 挑战，再在页面内 fetch（带 Cookie）
+      if (mounted) setState(() => _diag = '直连被拦截，加载页面过验证…');
+      final viaPage = await _fetchViaPage(
+        controller: controller,
+        state: state,
+        query: query,
+        loadAndWait: loadAndWait,
+        readBody: readBody,
+      );
+      if (viaPage == null) {
+        state.pushLog('过验证后仍未拿到数据');
+      } else {
+        _viaApi = false;
+      }
+      return viaPage;
+    } finally {
+      // 必须 dispose：否则每次抓取泄漏一个原生 WebView
+      try {
+        await headless.dispose();
+      } on Object catch (e) {
+        state.pushLog('释放 headless WebView 失败：$e');
+      }
     }
   }
-
-  /// 判定「这是不是 Censys 数据」——委托给顶层 [censysJsonOrNull]，
-  /// 便于在 `test/fetch_parse_test.dart` 里脱离 WebView 直接断言。
-  static String? _asCensysJson(String text) => censysJsonOrNull(text);
 
   /// 路径二（fallback）：先加载 `/search` 过 CDN 挑战，再在页面内 fetch API。
   ///
-  /// 必须保留这段：直连在某些网络/风控下只会拿到挑战 HTML；
-  /// 页面内 fetch 带着已通过的 Cookie（`credentials: include`），是唯一绕法。
-  Future<String?> _fetchViaPage(
-    InAppWebViewController web,
-    String query,
-  ) async {
-    final waiter = Completer<void>();
-    _loadWaiter = waiter;
-    await web.loadUrl(urlRequest: URLRequest(url: WebUri('$_origin/search')));
-    try {
-      await waiter.future.timeout(const Duration(seconds: 25));
-    } catch (_) {
-      // 超时继续：挑战可能仍在进行
-    }
+  /// 为什么保留：直连在某些网络/风控下只会拿到挑战 HTML。页面内 fetch 带着
+  /// 已通过的 Cookie（`credentials: include`），是绕过挑战的唯一方式。
+  Future<String?> _fetchViaPage({
+    required InAppWebViewController controller,
+    required AppState state,
+    required String query,
+    required Future<void> Function(InAppWebViewController, String) loadAndWait,
+    required Future<String> Function(InAppWebViewController) readBody,
+  }) async {
+    await loadAndWait(controller, '$_origin/search');
 
-    // 注入轮询脚本，与桌面端一致：页面内发起 fetch，结果写全局变量
     final quoted = jsonEncode(query);
     final kick = '''
 (function(){
@@ -305,71 +334,62 @@ class _FetchPageState extends State<FetchPage> {
 ''';
 
     for (var i = 0; i < 20; i++) {
-      await Future.delayed(const Duration(milliseconds: 900));
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      if (!mounted) return null;
       try {
-        await web.evaluateJavascript(source: kick);
-        final raw = await web.evaluateJavascript(source: probe);
-        final text = raw?.toString() ?? '';
+        await controller.evaluateJavascript(source: kick);
+        final raw = await controller.evaluateJavascript(source: probe);
+        final text = raw is String ? raw : '$raw';
         if (text.startsWith('ok:')) {
-          final got =
-              await web.evaluateJavascript(source: 'window.__cytestResult');
-          final str = got?.toString() ?? '';
-          if (str.startsWith('{') && str.endsWith('}')) {
-            return str;
-          }
+          final got = await controller.evaluateJavascript(
+              source: 'window.__cytestResult');
+          final parsed = censysJsonOrNull(got is String ? got : '$got');
+          if (parsed != null) return parsed;
         } else if (text.startsWith('err:')) {
-          setState(() => _error = '浏览器内请求失败：${text.substring(4)}');
+          final reason = text.substring(4);
+          state.pushLog('页面内 fetch 失败：$reason');
+          if (mounted) setState(() => _error = '浏览器内请求失败：$reason');
           return null;
         }
-      } catch (_) {
+        // 挑战通过后页面可能自己跳到了 API：每隔几轮直接读一次正文兜底
+        if (i % 5 == 4) {
+          final body = censysJsonOrNull(await readBody(controller));
+          if (body != null) return body;
+        }
+      } on Object catch (e) {
         // 页面可能正在 reload（挑战），继续重试
+        state.pushLog('注入脚本异常（重试中）：$e');
       }
     }
     return null;
   }
 
-  Future<void> _setProxy(int port) async {
-    try {
-      await ProxyController.instance().setProxyOverride(
-        settings: ProxySettings(
-          proxyRules: [ProxyRule(url: 'http://127.0.0.1:$port')],
-        ),
-      );
-    } catch (_) {
-      // 部分机型不支持全局覆盖，忽略
-    }
-  }
-
-  Future<void> _clearProxy() async {
-    try {
-      await ProxyController.instance().clearProxyOverride();
-    } catch (_) {}
-  }
-
-  /// WebView 创建失败的具体原因：优先给出最近一次真实的加载错误。
-  String _webInitFailure() {
-    final last = _lastError;
-    if (last != null && last.isNotEmpty) {
-      return 'WebView 创建失败：${_kWebInitTimeout.inSeconds} 秒内没有完成初始化。\n'
-          '最近一次加载错误：$last';
-    }
-    return 'WebView 创建失败：${_kWebInitTimeout.inSeconds} 秒内没有收到 onWebViewCreated。\n'
-        '排查建议：设置 → 应用 → Android System WebView（或 Chrome）→ 启用并更新；'
-        '若已被禁用或卸载，页面无法加载任何内容。';
-  }
-
-  Future<void> _openInBrowser() async {
-    final web = _web;
-    if (web == null) return;
-    // 让用户看到真实页面并手动过验证；成功后关闭返回
-    await web.loadUrl(urlRequest: URLRequest(url: WebUri('$_origin/search')));
-    _toast('如出现验证，请完成后再点「获取」');
-  }
-
-  /// 从 Censys 响应里抠出前 [limit] 条 `ip:port`，用于预览卡摘要。
+  /// 复制 API 链接到剪贴板。
   ///
-  /// 全程容错：`results` / `hits` 任意一层缺失或类型不对都只返回空列表，
-  /// 绝不抛异常（接口出错时拿到的可能是错误页 HTML 或半截 JSON）。
+  /// 原来这里是「浏览器打开」（靠可见 WebView 的 loadUrl）；换成 headless 后没有
+  /// 界面可展示，而引入 `url_launcher` 需要新增依赖（已报 team-lead 决定），
+  /// 先用复制链接兜住：用户粘到系统浏览器里过验证，再回来点「获取」。
+  Future<void> _copyApiUrl() async {
+    final url = _apiUrl;
+    await Clipboard.setData(ClipboardData(text: url));
+    _toast('已复制 API 链接，可在浏览器打开过验证');
+  }
+
+  /// 把当前拉到的 JSON 直接带进「本地测试」页。
+  ///
+  /// 旧实现是 `Navigator.pop(body)` 把 JSON 当返回值弹回去，但调用方从不 await，
+  /// 返回值直接丢弃 —— 用户看到的就是「点一下就回首页、数据没了」。
+  void _import() {
+    final body = _payload;
+    if (body == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => TestPage(initialInput: body)),
+    );
+  }
+
+  /// 从 Censys 响应里抠出前 [limit] 条 `ip:port`，用于结果摘要卡。
+  ///
+  /// 全程容错：`results` / `hits` 任意一层缺失或类型不对都只返回空列表，绝不抛异常。
   List<String> _parseHits(String json, {int limit = 5}) {
     final out = <String>[];
     try {
@@ -390,14 +410,12 @@ class _FetchPageState extends State<FetchPage> {
         out.add('$ip:$port');
       }
     } catch (_) {
-      // 不是合法 JSON（错误页、被截断的响应）：交给调用方退回原文展示
       return out;
     }
     return out;
   }
 
-  /// 取 [s] 的前 [limit] 个 UTF-16 码元，且不把代理对（emoji 等）从中间切断，
-  /// 否则尾部会出现半个字符（渲染成「�」）。
+  /// 取 [s] 的前 [limit] 个 UTF-16 码元，不切断代理对（避免尾部半个字符）。
   String _head(String s, int limit) {
     if (s.length <= limit) return s;
     var end = limit;
@@ -406,8 +424,7 @@ class _FetchPageState extends State<FetchPage> {
     return '${s.substring(0, end)}…';
   }
 
-  /// 整段原始 JSON 复制到剪贴板。之前预览只是一段不可选的 Text，用户想复制
-  /// 去别处分析/求助时无从下手，所以给一个显式按钮。
+  /// 整段原始 JSON 复制到剪贴板。
   Future<void> _copyPayload() async {
     final body = _payload;
     if (body == null) return;
@@ -415,20 +432,22 @@ class _FetchPageState extends State<FetchPage> {
     _toast('已复制原始 JSON（${(body.length / 1024).toStringAsFixed(0)} KB）');
   }
 
-  /// 把当前拉到的 JSON 直接带进「本地测试」页。
-  ///
-  /// 旧实现是 `Navigator.pop(body)` 把 JSON 当返回值弹回去，但调用方
-  /// （home.dart 的 `_push(context, const FetchPage())`）从来不 await，
-  /// 返回值直接丢弃 —— 用户看到的就是「点一下就回首页、数据没了」。
-  /// 改成主动 push：不依赖返回值，push 返回后本页状态（含 _payload 与预览）
-  /// 完整保留，用户从测试页返回还能接着看。
-  /// 传的是完整 JSON：三阶段漏斗需要原始 Censys 结构，只给 ip:port 列表会丢信息。
-  void _import() {
-    final body = _payload;
-    if (body == null) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => TestPage(initialInput: body)),
-    );
+  Future<void> _setProxy(int port) async {
+    try {
+      await ProxyController.instance().setProxyOverride(
+        settings: ProxySettings(
+          proxyRules: [ProxyRule(url: 'http://127.0.0.1:$port')],
+        ),
+      );
+    } catch (_) {
+      // 部分机型不支持全局覆盖，忽略
+    }
+  }
+
+  Future<void> _clearProxy() async {
+    try {
+      await ProxyController.instance().clearProxyOverride();
+    } catch (_) {}
   }
 
   void _toast(String msg) {
@@ -443,35 +462,14 @@ class _FetchPageState extends State<FetchPage> {
     final theme = Theme.of(context);
     final hasLine = context.watch<AppState>().settings.vlessLinks.isNotEmpty;
 
-    // 预览区高度：
-    // - 键盘弹出时压到 60（标题行整行隐藏，网页实际可见 52；PlatformView 不会被销毁）；
-    // - 平时取 min(120, 屏高 * 28%)，横屏/小屏不至于挤掉一半内容，且不低于 60；
-    // - 「放大」档取 屏高 * 55%，但必须给上方表单留出至少 200 的空间。
-    // 注意：这里必须用 build 的 context（在 Scaffold 之上）读 viewInsets——
-    // Scaffold 在 resizeToAvoidBottomInset: true 时会把 body 的 viewInsets 底部抹成 0，
-    // 一旦把这段判断挪进 body 内部就会永远读到 0。
-    final keyboardUp = MediaQuery.viewInsetsOf(context).bottom > 0;
-    final screenHeight = MediaQuery.sizeOf(context).height;
-    final collapsedHeight = (screenHeight * _kPreviewScreenRatio)
-        .clamp(_kPreviewMinHeight, _kPreviewMaxHeight)
-        .toDouble();
-    // 这里用 if 而不是 clamp：极小屏（如横屏 250 高）时下界可能大于上界，
-    // clamp 会直接抛断言，宁可退化成 collapsedHeight。
-    var largeHeight = screenHeight * _kPreviewLargeRatio;
-    final largeUpperBound = screenHeight - _kPreviewMinFormSpace;
-    if (largeHeight > largeUpperBound) largeHeight = largeUpperBound;
-    if (largeHeight < collapsedHeight) largeHeight = collapsedHeight;
-    final previewHeight = keyboardUp
-        ? _kPreviewMinHeight
-        : (_previewExpanded ? largeHeight : collapsedHeight);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('获取数据'),
         actions: [
           TextButton(
-              onPressed: _fetching ? null : _openInBrowser,
-              child: const Text('浏览器打开')),
+            onPressed: _fetching ? null : _copyApiUrl,
+            child: const Text('复制 API 链接'),
+          ),
           const SizedBox(width: 4),
           Padding(
             padding: const EdgeInsets.only(right: 10),
@@ -483,287 +481,134 @@ class _FetchPageState extends State<FetchPage> {
         ],
       ),
       // 保持可 resize：编辑查询语句时键盘不能盖住输入框。
-      // 键盘占掉的高度由预览区（压到 60）和可滚动的 ListView 吸收。
       resizeToAvoidBottomInset: true,
-      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
-      // 不包这层，底部预览区会被系统栏压住（用户实测「底部显示不完整」）。
-      // top: false —— 顶部已由 AppBar 处理，否则会多出一截空白。
+      // 底部 SafeArea：body 不会自动避让系统手势条 / 三键导航。
       body: SafeArea(
         top: false,
-        child: Column(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
           children: [
-            Expanded(
-              child: ListView(
-                // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
-                children: [
-                  Row(
-                    children: [
-                      _stat(theme, '命中总数', _hits > 0 ? '$_hits' : '—'),
-                      const SizedBox(width: 10),
-                      _stat(
-                          theme,
-                          '响应大小',
-                          _bytes > 0
-                              ? '${(_bytes / 1024).toStringAsFixed(0)} KB'
-                              : '—'),
-                      const SizedBox(width: 10),
-                      _stat(theme, '耗时', _costMs > 0 ? '$_costMs ms' : '—'),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Censys 查询', style: theme.textTheme.titleSmall),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _cql,
-                            maxLines: 5,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              // monospace 在 Android 上没有中文字形，缺 fallback 中文变方块
-                              fontFamilyFallback: ['sans-serif'],
-                              fontSize: 12.5,
-                            ),
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              TextButton(
-                                onPressed: () => setState(() {
-                                  _cql.text =
-                                      Defaults.buildQuery(Defaults.fingerprint);
-                                }),
-                                child: const Text('恢复默认'),
-                              ),
-                              const Spacer(),
-                              FilledButton.tonal(
-                                onPressed: _payload == null ? null : _import,
-                                child: const Text('导入到本地测试'),
-                              ),
-                            ],
-                          ),
-                        ],
+            Row(
+              children: [
+                _stat(theme, '命中总数', _hits > 0 ? '$_hits' : '—'),
+                const SizedBox(width: 10),
+                _stat(
+                  theme,
+                  '响应大小',
+                  _bytes > 0 ? '${(_bytes / 1024).toStringAsFixed(0)} KB' : '—',
+                ),
+                const SizedBox(width: 10),
+                _stat(theme, '耗时', _costMs > 0 ? '$_costMs ms' : '—'),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Censys 查询', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _cql,
+                      maxLines: 5,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        // monospace 在 Android 上没有中文字形，缺 fallback 中文变方块
+                        fontFamilyFallback: <String>['sans-serif'],
+                        fontSize: 12.5,
+                      ),
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        isDense: true,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('状态', style: theme.textTheme.titleSmall),
-                          const SizedBox(height: 8),
-                          if (_error != null) ...[
-                            Text(_error!,
-                                style:
-                                    TextStyle(color: theme.colorScheme.error)),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                TextButton(
-                                  onPressed: _openInBrowser,
-                                  child: const Text('浏览器打开'),
-                                ),
-                                TextButton(
-                                  onPressed: () => Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                        builder: (_) => const TestPage()),
-                                  ),
-                                  child: const Text('手动粘贴 JSON'),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              '在浏览器里完成验证后，把搜索结果 JSON 复制到「本地测试」页即可。',
-                              style: theme.textTheme.labelSmall,
-                            ),
-                          ] else if (_web == null)
-                            Text(_diag,
-                                style: TextStyle(
-                                    color: theme.colorScheme.onSurfaceVariant))
-                          else if (_payload != null)
-                            Text(
-                                '获取成功，命中 $_hits 条，响应 $_bytes 字节。点「导入到本地测试」开始跑三阶段。')
-                          else
-                            Text(
-                              '$_diag · 出站 ${_usedProxyPort != null ? "Xray 127.0.0.1:$_usedProxyPort" : "直连"}'
-                              '${hasLine ? "" : "\n未配置线路，国内网络直连 Censys 通常不可达，建议先去「线路与代理」填 VLESS"}',
-                              style: TextStyle(
-                                color: hasLine
-                                    ? theme.colorScheme.onSurfaceVariant
-                                    : theme.colorScheme.error,
-                              ),
-                            ),
-                        ],
-                      ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _cql.text =
+                                Defaults.buildQuery(Defaults.fingerprint);
+                          }),
+                          child: const Text('恢复默认'),
+                        ),
+                        const Spacer(),
+                        FilledButton.tonal(
+                          onPressed: _payload == null ? null : _import,
+                          child: const Text('导入到本地测试'),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (_payload != null) _payloadCard(theme),
-                ],
+                  ],
+                ),
               ),
             ),
-            // 预览面板必须放在真实可见的位置，Flutter 才会真正创建 PlatformView。
-            // 之前用过 SizedBox(height:1) / Positioned(left:-3000) / Opacity(0.01)，
-            // 三种写法都会导致 onWebViewCreated 不触发，于是「WebView 初始化失败」。
-            // 放大/收起只改这里的高度，`_previewPanel` 在树里的位置完全不变——
-            // 元素类型与层级一致，Flutter 会复用同一个 Element，PlatformView 不会被重建。
-            AnimatedContainer(
-              duration: _kPreviewAnimDuration,
-              curve: Curves.easeOut,
-              height: previewHeight,
-              child: _previewPanel(theme, keyboardUp),
+            const SizedBox(height: 12),
+            Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('状态', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 8),
+                    if (_error != null) ...[
+                      Text(
+                        _error!,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: _copyApiUrl,
+                            child: const Text('复制 API 链接'),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const TestPage(),
+                              ),
+                            ),
+                            child: const Text('手动粘贴 JSON'),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        '可把复制的链接粘到系统浏览器里过验证，再回来点「获取」。',
+                        style: theme.textTheme.labelSmall,
+                      ),
+                    ] else if (_payload != null)
+                      Text('获取成功（$_diag），命中 $_hits 条，响应 $_bytes 字节。'
+                          '点「导入到本地测试」开始跑三阶段。')
+                    else
+                      Text(
+                        '$_diag'
+                        '${_usedProxyPort != null ? " · 出站 Xray 127.0.0.1:$_usedProxyPort" : " · 直连"}'
+                        '${hasLine ? "" : "\n未配置线路，国内网络直连 Censys 通常不可达，建议先去「线路与代理」填 VLESS"}',
+                        style: TextStyle(
+                          color: hasLine
+                              ? theme.colorScheme.onSurfaceVariant
+                              : theme.colorScheme.error,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
+            const SizedBox(height: 12),
+            if (_payload != null) _payloadCard(theme),
           ],
         ),
       ),
     );
   }
 
-  /// 底部 WebView 预览区：可见即可创建，同时让用户直接看到挑战页进度。
-  ///
-  /// [keyboardUp] 为真时**只**跳过标题行（文案 + 放大按钮），WebView 本身照旧常驻：
-  /// 面板只有 60 高，标题行要占 38，不隐藏的话网页只剩 14 高、看着像坏了。
-  /// 注意条件只能包标题行，绝不能包到 Expanded/WebView 外面——那样改的是 WebView
-  /// 的父链结构，PlatformView 会被重建，直接复发「WebView 初始化失败」。
-  Widget _previewPanel(ThemeData theme, bool keyboardUp) {
-    final ready = _web != null;
-    return Container(
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          top: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (!keyboardUp)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 4, 6, 2),
-              child: Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      // 抓取已改直连 API；这块只在需要手动过验证时才用得上
-                      '页面预览（仅在需要过验证时使用）',
-                      style: theme.textTheme.labelMedium,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    ready ? '已就绪' : '未就绪',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: ready
-                          ? theme.colorScheme.primary
-                          : theme.colorScheme.error,
-                    ),
-                  ),
-                  const SizedBox(width: 2),
-                  // 只在两个高度档位之间切换；WebView 本身不动，避免 PlatformView 重建。
-                  // 尺寸必须走 style：M3 主题下 IconButton 的 iconSize / padding /
-                  // visualDensity / constraints 四个构造参数会被 _IconButtonM3 丢掉，
-                  // 默认 tapTargetSize: padded 还会把按钮撑到 40，标题行跟着涨到 46，
-                  // 直接从网页可见高度里抢走 ~14px（实测 40→32、标题行 46→38）。
-                  IconButton(
-                    onPressed: () =>
-                        setState(() => _previewExpanded = !_previewExpanded),
-                    style: IconButton.styleFrom(
-                      iconSize: 18,
-                      padding: EdgeInsets.zero,
-                      minimumSize: const Size(32, 32),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    tooltip: _previewExpanded ? '收起预览' : '放大预览',
-                    icon: Icon(
-                      _previewExpanded ? Icons.unfold_less : Icons.unfold_more,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          Expanded(
-            // 套一层描边容器：预览区不高，网页和页面底色容易糊成一片，
-            // 有边界用户才知道这块是嵌进来的网页。
-            child: Container(
-              margin: const EdgeInsets.fromLTRB(10, 0, 10, 6),
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: theme.colorScheme.outlineVariant),
-              ),
-              child: InAppWebView(
-                // 这五项是「像浏览器那样整页显示」的关键，缺一个就会退化成 1:1
-                // 原尺寸渲染：桌面版 Censys 页面按 1024/1280 布局，塞进 120px 高的
-                // 窄条里只能看到左上角一小块，文字巨大且溢出——用户口中的「乱码」
-                // 就是这种放大看局部的效果，并不是编码问题。
-                // - useWideViewPort + loadWithOverviewMode：按页面 viewport 宽度
-                //   等比缩放到容器内，看到的是整页缩略全景；
-                // - supportZoom + builtInZoomControls：保留双指缩放，方便看清验证码；
-                // - displayZoomControls: false：隐藏老式的 +/- 悬浮按钮（丑且挡内容）。
-                initialSettings: InAppWebViewSettings(
-                  javaScriptEnabled: true,
-                  thirdPartyCookiesEnabled: true,
-                  sharedCookiesEnabled: true,
-                  transparentBackground: true,
-                  isInspectable: false,
-                  useWideViewPort: true,
-                  loadWithOverviewMode: true,
-                  supportZoom: true,
-                  builtInZoomControls: true,
-                  displayZoomControls: false,
-                ),
-                onWebViewCreated: (c) {
-                  _web = c;
-                  if (mounted) setState(() => _diag = 'WebView 已创建');
-                },
-                onLoadStart: (c, url) {
-                  if (mounted) setState(() => _diag = '加载 ${url?.host ?? ''}…');
-                },
-                onLoadStop: (c, url) {
-                  if (mounted) setState(() => _diag = '页面加载完成');
-                  final w = _loadWaiter;
-                  if (w != null && !w.isCompleted) w.complete();
-                },
-                onReceivedError: (c, req, err) {
-                  // 主文档的错误最有诊断价值，子资源错误不覆盖它
-                  if (req.isForMainFrame == false && _lastError != null) return;
-                  final text = '${err.description}（${req.url}）';
-                  if (mounted) {
-                    setState(() {
-                      _lastError = text;
-                      _diag = '加载错误：$text';
-                    });
-                  }
-                },
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 预览卡：一屏讲清「这次拉到了什么」。
-  ///
-  /// 旧版直接把 `_payload` 前 500 字符当 Text 甩出来：几百 KB 的 JSON 被硬切成
-  /// 半截、不可选不可复制，用户看到的就是一堆乱码般的括号引号。
-  /// 现在改成「一行摘要 + 前 5 条 ip:port + 复制原始 JSON」——
-  /// 摘要回答体量与耗时，ip:port 回答内容，复制按钮保留原始数据的可用性。
+  /// 结果摘要卡：一屏讲清「这次拉到了什么」。
   Widget _payloadCard(ThemeData theme) {
     final kb = (_bytes / 1024).toStringAsFixed(0);
     final sec = (_costMs / 1000).toStringAsFixed(1);
@@ -793,14 +638,11 @@ class _FetchPageState extends State<FetchPage> {
             ),
             const SizedBox(height: 8),
             if (_previewTargets.isEmpty)
-              // 解析不出 hits（错误页 / 结构变动）：退回展示原始文本开头，
-              // 让用户仍能判断拿到的是不是想要的东西。
               Text(
                 _previewRaw.isEmpty ? '（没有可展示的内容）' : _previewRaw,
                 style: const TextStyle(
                   fontFamily: 'monospace',
-                  // Android 的 monospace 族不含完整中文字形，缺 fallback 中文会显示成方块
-                  fontFamilyFallback: ['sans-serif'],
+                  fontFamilyFallback: <String>['sans-serif'],
                   fontSize: 11,
                 ),
               )
@@ -812,7 +654,7 @@ class _FetchPageState extends State<FetchPage> {
                         '${e.key + 1}. ${e.value}',
                         style: const TextStyle(
                           fontFamily: 'monospace',
-                          fontFamilyFallback: ['sans-serif'],
+                          fontFamilyFallback: <String>['sans-serif'],
                           fontSize: 12,
                         ),
                       ),
@@ -865,9 +707,8 @@ class _FetchPageState extends State<FetchPage> {
 /// 2. 被 CDN 挑战拦截：HTML 页面、空内容，或 JSON 但不是搜索结果（错误响应）。
 ///    这几种一律返回 null，交给调用方走「加载页面过验证」的 fallback。
 ///
-/// 为什么单独抽成顶层函数：这是「直连 vs fallback」的唯一判据，
-/// 也是最容易写错的地方（例如把 HTML 当数据、或忘了校验 `results`），
-/// 抽出来才能脱离 WebView 用纯 Dart 单测钉住。
+/// 为什么单独抽成顶层函数：这是「直连 vs fallback」的唯一判据，也是最容易写错的
+/// 地方（例如把 HTML 当数据、或忘了校验 `results`），抽出来才能脱离 WebView 单测。
 String? censysJsonOrNull(String text) {
   final trimmed = text.trim();
   if (trimmed.isEmpty || !trimmed.startsWith('{')) return null;
