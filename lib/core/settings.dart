@@ -43,8 +43,12 @@ class AppSettings {
   String remotePassword;
   String remoteKeyPath;
 
-  /// Censys 人机验证过一次后拿到的 `Cookie:` 头值（空 = 还没验证过）。
-  /// 有了它，抓取走纯 HTTP 不再触发挑战。
+  /// Censys 抓取成功后从 WebView 内核取回的 `Cookie:` 头值（空 = 还没有）。
+  ///
+  /// 它只用于「纯 HTTP 快路径」的**尝试资格**，不保证一定命中：站点是 Fastly
+  /// 分级放行，同一份 Cookie 在干净出口 IP 上可能直接拿到 JSON，在可疑 IP 上
+  /// 仍会被要求过验证（详见 `lib/data/censys_fetch.dart`）。命中与否都不影响
+  /// 主链路 —— 没命中就回退原生 WebView。
   String censysCookie;
 
   AppSettings({

@@ -112,7 +112,8 @@ class RemoteRunner {
   static Future<void> _run(
       SSHClient client, String cmd, void Function(String)? onLine) async {
     final session = await client.execute(cmd);
-    if (session == null) return;
+    // execute() 的返回类型非空（dartssh2 在连接失败时抛异常而不是返回 null），
+    // 原先的 `if (session == null) return;` 是永远不会命中的死分支。
     await for (final chunk in session.stdout) {
       onLine?.call(utf8.decode(chunk, allowMalformed: true).trimRight());
     }
@@ -124,7 +125,6 @@ class RemoteRunner {
 
   static Future<String> _runCapture(SSHClient client, String cmd) async {
     final session = await client.execute(cmd);
-    if (session == null) return '';
     final buf = StringBuffer();
     await for (final chunk in session.stdout) {
       buf.write(utf8.decode(chunk, allowMalformed: true));

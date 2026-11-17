@@ -80,6 +80,15 @@ class MainActivity : FlutterActivity() {
                         startCensysFetch(result, query, proxyPort, timeoutMs)
                     }
 
+                    // 抓取成功后把 WebView 内核里的 Cookie 读回去，Dart 侧存进设置，
+                    // 下次走「纯 HTTP 快速路径」时带上（干净出口 IP 可能直接命中）。
+                    "readCookie" -> {
+                        val url = call.argument<String>("url")
+                            ?: "https://platform.censys.io"
+                        val cookie = CookieManager.getInstance().getCookie(url).orEmpty()
+                        result.success(cookie)
+                    }
+
                     else -> result.notImplemented()
                 }
             }
