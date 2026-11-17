@@ -59,3 +59,20 @@ APK 37.5MB，包名 `com.cytest.cytest`，minSdk 29 / targetSdk 36，与 Kotlin 
 正确做法：`Stack` + `Positioned(left: -3000, width: 1080, height: 1600)` + `IgnorePointer`。
 另外点击抓取前要等最多 3 秒让 controller 就绪；状态卡实时显示 WebView 阶段
 （创建中/加载中/完成/错误）与出站方式（Xray 端口 or 直连），便于远程排障。
+
+## 二进制执行权限：必须走 jniLibs（v1.0.2 起）
+把 xray/pipeline 解压到 `filesDir` 再 `chmod 755` **在 Android 上行不通**——SELinux 拒绝
+`app_data_file` 执行，报 `ProcessException: Permission denied`（而 `Process.run('chmod')` 的失败
+被 catch 吞掉，表面看是 chmod 成功）。
+正确做法：二进制以 `libpipeline.so` / `libxray.so` 放进 `android/app/src/main/jniLibs/arm64-v8a/`，
+配 `packaging.jniLibs.useLegacyPackaging = true` 让系统解压到 nativeLibraryDir（自带 x 权限）。
+运行时路径通过 MethodChannel `cytest/native` 的 `nativeLibraryDir` 拿（见 MainActivity.kt）。
+附带收益：APK 从 37.6MB 降到 27.3MB（.so 压缩存储）。
+
+注意：CI 里 xray 必须 `unzip -d /tmp` 后 `mv` 到 jniLibs，落到 `assets/` 不会进包（会被静默忽略，
+APK 小 12MB 且运行时报找不到 libxray.so）。
+
+## 版本号
+`pubspec.yaml` 的 version 是占位，实际由 `--build-name` / `--build-number` 覆盖。
+CI 在 tag 时注入 `BUILD_NAME=${GITHUB_REF#refs/tags/v}`，所以 v1.0.2 的包 versionName 就是 1.0.2。
+本地构建记得手动传这两个参数，否则显示 1.0.0。

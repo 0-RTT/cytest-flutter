@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../core/settings.dart';
 import '../../data/history.dart';
 import '../../state/app_state.dart';
+import 'test_page.dart';
 
 /// 获取数据：用系统 WebView 过 CDN 挑战，再在页面内 fetch /api/search。
 /// 与 Android 端 CensysFetcher / 桌面端爬取链路同构。
@@ -251,6 +252,7 @@ class _FetchPageState extends State<FetchPage> {
         ],
       ),
       body: Stack(
+        fit: StackFit.expand,
         children: [
           Column(
             children: [
@@ -316,9 +318,28 @@ class _FetchPageState extends State<FetchPage> {
                       children: [
                         Text('状态', style: theme.textTheme.titleSmall),
                         const SizedBox(height: 8),
-                        if (_error != null)
-                          Text(_error!, style: TextStyle(color: theme.colorScheme.error))
-                        else if (_web == null)
+                        if (_error != null) ...[
+                          Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              TextButton(
+                                onPressed: _openInBrowser,
+                                child: const Text('浏览器打开'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.of(context).push(
+                                  MaterialPageRoute(builder: (_) => const TestPage()),
+                                ),
+                                child: const Text('手动粘贴 JSON'),
+                              ),
+                            ],
+                          ),
+                          Text(
+                            '在浏览器里完成验证后，把搜索结果 JSON 复制到「本地测试」页即可。',
+                            style: theme.textTheme.labelSmall,
+                          ),
+                        ] else if (_web == null)
                           Text(_diag, style: TextStyle(color: theme.colorScheme.onSurfaceVariant))
                         else if (_payload != null)
                           Text('获取成功，命中 $_hits 条，响应 $_bytes 字节。点「导入到本地测试」开始跑三阶段。')
@@ -360,15 +381,15 @@ class _FetchPageState extends State<FetchPage> {
           ),
             ],
           ),
-          // WebView 放在屏幕外：完整布局才能保证原生 View 被 attach，
-          // 之前用 SizedBox(height:1) 会导致 onWebViewCreated 不触发
-          Positioned(
-            left: -3000,
-            top: 0,
-            width: 1080,
-            height: 1600,
+          // 必须留在可见区域内：Flutter 的 PlatformView 对完全不可见区域会跳过创建，
+          // 之前用 SizedBox(height:1) 或 Positioned(left:-3000) 都会导致 onWebViewCreated 不触发。
+          // 这里铺满但全透明 + 不接触摸。
+          Positioned.fill(
             child: IgnorePointer(
-              child: InAppWebView(
+              child: Opacity(
+                // 不能用 0：Flutter 会跳过渲染，PlatformView 可能仍不创建
+                opacity: 0.01,
+                child: InAppWebView(
               initialSettings: InAppWebViewSettings(
                 javaScriptEnabled: true,
                 thirdPartyCookiesEnabled: true,
@@ -396,6 +417,7 @@ class _FetchPageState extends State<FetchPage> {
                 ),
               ),
             ),
+          ),
           ],
         ),
       );
