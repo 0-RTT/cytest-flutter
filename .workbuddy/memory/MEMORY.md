@@ -53,12 +53,28 @@ APK 37.5MB，包名 `com.cytest.cytest`，minSdk 29 / targetSdk 36，与 Kotlin 
 注意：CI 里 `Download pipeline binaries` 步骤实际是用 engine/pipeline.go 现场编译（Go 1.27.1），
 不是从 cytest-app 的 release 拉——engine/pipeline.go 必须与 tools/pipeline/pipeline.go 保持同步。
 
-## WebView 必须放屏幕外，不能塞小容器
-`InAppWebView` 放在 `SizedBox(height: 1)` 里时，原生 View 不会 attach，
-`onWebViewCreated` 永远不触发，`_web` 保持 null → 点「获取」直接报「WebView 尚未就绪」。
-正确做法：`Stack` + `Positioned(left: -3000, width: 1080, height: 1600)` + `IgnorePointer`。
-另外点击抓取前要等最多 3 秒让 controller 就绪；状态卡实时显示 WebView 阶段
-（创建中/加载中/完成/错误）与出站方式（Xray 端口 or 直连），便于远程排障。
+## WebView 必须真实可见（v1.0.3 定稿）
+`InAppWebView` 放在 `SizedBox(height: 1)`、`Positioned(left: -3000)`、`Opacity(0.01)` 三种写法下
+原生 View 都不 attach，`onWebViewCreated` 永不触发，`_web` 保持 null → 报「WebView 初始化失败」。
+**正确做法（v1.0.3 起）**：`Column` + `Expanded(ListView)` + 底部固定高度预览区，
+高度 `min(180, 屏高×30%)` 且下限 60，键盘弹出（`viewInsets.bottom > 0`）时压到 60。
+**铁律：高度绝不能压到 0 或移出屏外**，那会销毁 PlatformView、`_web` 置空、正在跑的 loadUrl 丢失。
+注意 `viewInsets` 必须在 `build(context)` 这层读（Scaffold 之上），Scaffold 在
+`resizeToAvoidBottomInset: true` 时会把 body 内的底部 inset 抹成 0。
+抓取前等 controller 就绪的上限已放宽到 15 秒（低端机首次建 PlatformView 常超 3 秒），
+状态卡显示已等秒数与 WebView 阶段，便于远程排障。
+
+## release 包必须声明 INTERNET（v1.0.3 修）
+`INTERNET` 原本只写在 `android/app/src/debug|profile/AndroidManifest.xml`，**main 里没有**，
+release 只合并 main → 正式包彻底无网络能力。症状极具误导性：
+- xray 子进程无法创建 AF_INET socket → `freePort()` 全部抛异常被 catch 吞掉 → 回落 20000
+  → 仍绑不上 → `waitPort` 8 秒超时 → 报「xray 未能在 8 秒内监听」
+- WebView 加载任何网页都被系统拦截
+排查铁律：**怀疑权限/打包问题时，从 APK 本体取证据**，别只看源码或中间产物：
+`aapt2 dump permissions app-release.apk`，或解包读二进制 manifest。
+（`build/app/intermediates/packaged_manifests/.../AndroidManifest.xml` 是合并后明文，也可直接 grep。）
+AGP 会 strip `jniLibs` 里的 ELF，但只影响节头表区，不影响执行；APK 内与本地差 306 字节属正常。
+
 
 ## 二进制执行权限：必须走 jniLibs（v1.0.2 起）
 把 xray/pipeline 解压到 `filesDir` 再 `chmod 755` **在 Android 上行不通**——SELinux 拒绝
