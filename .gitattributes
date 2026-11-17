@@ -1,0 +1,10 @@
+# GitHub 语言统计口径修正
+#
+# packages/ 是 vendor 进来的第三方插件源码（flutter_inappwebview_android 的整个包），
+# 目的是兼容 AGP 9（原插件用 getDefaultProguardFile('proguard-android.txt')，
+# AGP 9 已移除该 API）。它不是本项目代码，却因为 853KB Java/Kotlin 把语言占比
+# 拉到了 64%，让仓库看起来"不是 Flutter 项目"。
+packages/** linguist-vendored
+
+# Gradle / Flutter 工具链生成的注册类，非手写代码
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java linguist-generated
