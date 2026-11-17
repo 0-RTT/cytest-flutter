@@ -122,7 +122,23 @@ Kotlin 版 111 个 .kt / 17,108 行；Flutter 版 21 个 .dart / 4,236 行。
 CI 在 tag 时注入 `BUILD_NAME=${GITHUB_REF#refs/tags/v}`，所以 v1.0.2 的包 versionName 就是 1.0.2。
 本地构建记得手动传这两个参数，否则显示 1.0.0。
 
+## CI 构建失败的两个坑（2026-11-17 实测）
+1. **Maven 429 限流（真实根因）**：`Could not GET 'https://repo.maven.apache.org/maven2/...'
+   Received status code 429 from server: Too Many Requests`，发生在 Gradle **配置阶段**
+   （编译都还没开始），表现为「40~50 秒无声失败、无 Java 报错」。已在 workflow 加
+   `actions/cache` 缓存 `~/.gradle/caches` + wrapper（commit `ab37f49`）。
+   注意 `subosito/flutter-action` 的 `cache: true` **只管 Flutter SDK，不管 Maven**。
+2. **Gradle 堆超过 runner 内存**：`gradle.properties` 原是 `-Xmx8G -XX:MaxMetaspaceSize=4G`
+   合计 12GB，而 GitHub ubuntu-latest runner 只有 7GB。已改 `-Xmx3G -XX:MaxMetaspaceSize=1G`，
+   本地 release 构建实测通过（27.4MB / 173s）。
+
+**教训**：commit `4f753a7` 的说明把根因写成 OOM，属推断未经验证，真实原因是 429。
+两者都该修，但**不要把推断写成结论**——同一现象有两个互斥解释时，先找能同时容纳两者的证据。
+另：本机 `sdk/ndk/28.2.13676358` 是个只有 `.installer` 的空目录（缺 source.properties），
+会让本地 Gradle 预先报错（CI 不阻塞）；已隔离到 `/tmp/ndk_quarantine/`。
+
 ## 验收准则：先有能跑的二进制，再谈断言（2026-11-17 立）
+
 1. **无命令 = 未验收**：每条「通过」必须附「可复现命令 + 关键输出 + 退出码」，缺一算未做。
 2. **断言机器可判**：用 expect / 退出码 / grep 命中数落断言，禁用「已实现 / 符合设计 / 应该没问题」。
 3. **成功与失败路径都留证**：死端口、空数据、截断输入必须证明「错误可读、不静默降级、退出码正确」，只测 happy path 不算数。

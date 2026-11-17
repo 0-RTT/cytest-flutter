@@ -32,3 +32,6 @@ assets/pipeline-linux
 
 # 原生二进制（CI/脚本生成，不入库）
 android/app/src/main/jniLibs/**/*.so
+android/.kotlin/
+_log.txt
+_*.json
