@@ -31,7 +31,7 @@ class _FetchPageState extends State<FetchPage> {
 
   /// 桌面 Chrome UA：Censys 会对明显的 WebView UA 收紧风控。
   static const _kUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
   /// headless 实例建好、拿到 controller 的最长等待时间。
   static const _kHeadlessInitTimeout = Duration(seconds: 10);
@@ -188,6 +188,10 @@ class _FetchPageState extends State<FetchPage> {
     Completer<void>? pendingLoad;
 
     final headless = HeadlessInAppWebView(
+      // 关键：默认 initialSize 是 Size.zero → window.innerWidth/Height 都是 0。
+      // Cloudflare 等 bot 检测会看视口尺寸/渲染能力，零尺寸等于自报「我是 headless」，
+      // 挑战永远过不去（表现为页面内 fetch 被拦）。这里给一个桌面视口。
+      initialSize: const Size(1280, 800),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
         // 复用系统 WebView 的 Cookie 池：用户之前登录过就直接带登录态，
@@ -216,17 +220,41 @@ class _FetchPageState extends State<FetchPage> {
     );
 
     /// 加载指定 URL 并等 onLoadStop（超时也继续：挑战页可能已经渲染出内容）。
+    ///
+    /// [headers] 只给**直连 API** 那次用（`Accept: application/json`）：
+    /// fallback 加载 `/search` 时不能带，否则服务器可能直接回 JSON，
+    /// 页面脚本环境就没了，反而把挑战流程弄坏。
     Future<void> loadAndWait(
       InAppWebViewController controller,
-      String url,
-    ) async {
+      String url, {
+      Map<String, String>? headers,
+    }) async {
       final waiter = Completer<void>();
       pendingLoad = waiter;
-      await controller.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
+      await controller.loadUrl(
+        urlRequest: URLRequest(url: WebUri(url), headers: headers),
+      );
       try {
         await waiter.future.timeout(_kLoadTimeout);
       } on TimeoutException {
         state.pushLog('加载超时（${_kLoadTimeout.inSeconds}s）：$url');
+      }
+    }
+
+    /// 读响应/页面元信息，用于「直连没拿到 JSON」时的排障：
+    /// contentType 区分 HTML/JSON，title 通常是挑战页标题（"Just a moment..."），
+    /// 视口尺寸能直接验证 `initialSize` 是否生效（0×0 就是没生效）。
+    Future<String> readDocMeta(InAppWebViewController controller) async {
+      try {
+        final raw = await controller.evaluateJavascript(
+          source: 'JSON.stringify({'
+              'contentType: document.contentType || "", '
+              'title: (document.title || "").slice(0, 60), '
+              'w: window.innerWidth, h: window.innerHeight})',
+        );
+        return raw is String ? raw : '$raw';
+      } on Object catch (e) {
+        return '（读取元信息失败：$e）';
       }
     }
 
@@ -253,7 +281,13 @@ class _FetchPageState extends State<FetchPage> {
       if (mounted) setState(() => _diag = '直连 API…');
       state.pushLog('直连 API：$_apiUrl');
       try {
-        await loadAndWait(controller, _apiUrl);
+        // 带 Accept: application/json —— 不带时 Censys 可能回 HTML 外壳，
+        // 页面内判定就会误判成「被挑战」。只加在这一次（见 loadAndWait 注释）。
+        await loadAndWait(
+          controller,
+          _apiUrl,
+          headers: const {'Accept': 'application/json, text/plain, */*'},
+        );
       } on Object catch (e) {
         state.pushLog('直连加载异常：$e');
       }
@@ -268,6 +302,7 @@ class _FetchPageState extends State<FetchPage> {
       state.pushLog(
         '直连未拿到 JSON（${directText.length} 字节），开头：${_head(directText, 120)}',
       );
+      state.pushLog('直连响应元信息：${await readDocMeta(controller)}');
 
       // ③ 路径二：加载搜索页过 CDN 挑战，再在页面内 fetch（带 Cookie）
       if (mounted) setState(() => _diag = '直连被拦截，加载页面过验证…');

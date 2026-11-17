@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/file_pick.dart';
 import '../../data/link_test.dart';
 import '../../data/xray.dart';
 import '../../state/app_state.dart';
@@ -112,6 +113,34 @@ class _LinesPageState extends State<LinesPage> {
     }
   }
 
+  /// 通过系统文件选择器导入 proxyip 文件（4 列 CSV 或每行 ip:port）。
+  ///
+  /// 取消不报错（静默 return）；读/解析失败给可读原因 —— 用户既然是从文件导入，
+  /// 就必须知道「是选错文件了、还是格式不对」。
+  Future<void> _importProxyIps() async {
+    final state = context.read<AppState>();
+    try {
+      final text = await pickTextFile();
+      if (text == null) return; // 用户取消
+      final count = await state.importProxyIps(text);
+      if (!mounted) return;
+      setState(() => _proxies.text = state.settings.proxyIps.join('\n'));
+      _toast('已导入 $count 条 proxyip');
+    } on FilePickException catch (e) {
+      _toast('导入失败：$e');
+    } on Object catch (e) {
+      _toast('导入失败：$e');
+    }
+  }
+
+  /// 清空 proxyip：删文件 + 清内存 + 清空输入框。
+  Future<void> _clearProxyIps() async {
+    await context.read<AppState>().clearProxyIps();
+    if (!mounted) return;
+    setState(() => _proxies.clear());
+    _toast('已清空 proxyip 列表');
+  }
+
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -207,6 +236,29 @@ class _LinesPageState extends State<LinesPage> {
                         isDense: true,
                         hintText: '104.16.0.1:443',
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    // proxyip 文件导入（与原版一致的 SAF 选文件）：
+                    // 文件落到 cytest/xray/proxyip.csv，格式是 4 列 CSV，
+                    // 与原版 Kotlin 的 ProxyIpRepository 可互换。
+                    Row(
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _importProxyIps,
+                          icon: const Icon(Icons.file_open_outlined, size: 18),
+                          label: const Text('导入文件'),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: _clearProxyIps,
+                          child: const Text('清空'),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '${_lines(_proxies.text).length} 条',
+                          style: theme.textTheme.labelSmall,
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 12),
                     Row(

@@ -10,6 +10,7 @@ import '../data/history.dart';
 import '../data/link_test.dart';
 import '../data/link_test_store.dart';
 import '../data/pipeline.dart';
+import '../data/proxy_ip_csv.dart';
 import '../data/vless.dart';
 import '../data/xray.dart';
 
@@ -113,6 +114,66 @@ class AppState extends ChangeNotifier {
     booting = false;
     notifyListeners();
     unawaited(_warmBinaries());
+    unawaited(_loadProxyIps());
+  }
+
+  // --- proxyip 文件（与原版一致：cytest/xray/proxyip.csv） -------------------
+
+  /// proxyip 列表文件的路径。与原版 Kotlin `ProxyIpRepository.csvFile`
+  /// （`filesDir/xray/proxyip.csv`）保持同一相对位置，两端可互换。
+  Future<File> _proxyIpFile() async {
+    final dir = await Paths.xray();
+    return File('${dir.path}/proxyip.csv');
+  }
+
+  /// 启动时载入 proxyip.csv。
+  ///
+  /// **只在用户还没在设置里手输过时载入**：设置里的列表是显式编辑的，
+  /// 被文件悄悄覆盖会让人以为「我改的怎么没了」。
+  Future<void> _loadProxyIps() async {
+    try {
+      if (settings.proxyIps.isNotEmpty) return;
+      final file = await _proxyIpFile();
+      if (!await file.exists()) return;
+      final parsed = parseProxyIpCsv(await file.readAsString());
+      if (parsed.isEmpty) return;
+      settings.proxyIps = parsed.map((item) => item.key).toList();
+      notifyListeners();
+      pushLog('已从 proxyip.csv 载入 ${parsed.length} 条');
+    } catch (e) {
+      pushLog('读取 proxyip.csv 失败：$e');
+    }
+  }
+
+  /// 导入 proxyip 文本（4 列 CSV 或每行 `ip:port`）。返回导入条数。
+  ///
+  /// 解析规则见 `lib/data/proxy_ip_csv.dart`：坏行跳过、按 `ip:port` 去重。
+  Future<int> importProxyIps(String text) async {
+    final parsed = parseProxyIpCsv(text);
+    if (parsed.isEmpty) {
+      throw Exception(
+        '没有解析出任何 proxyip（支持 CSV 的「IP,Port,...」或每行一个 ip:port）',
+      );
+    }
+    final file = await _proxyIpFile();
+    await file.writeAsString(toProxyIpCsv(parsed), flush: true);
+    settings.proxyIps = parsed.map((item) => item.key).toList();
+    await saveSettings();
+    pushLog('已导入 ${parsed.length} 条 proxyip');
+    return parsed.length;
+  }
+
+  /// 清空 proxyip：删文件 + 清内存 + 落设置（对应原版 `ProxyIpRepository.clear()`）。
+  Future<void> clearProxyIps() async {
+    try {
+      final file = await _proxyIpFile();
+      if (await file.exists()) await file.delete();
+    } catch (e) {
+      pushLog('删除 proxyip.csv 失败：$e');
+    }
+    settings.proxyIps = const [];
+    await saveSettings();
+    pushLog('已清空 proxyip 列表');
   }
 
   /// 预释放二进制，避免第一次测试时卡几秒。
