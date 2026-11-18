@@ -143,9 +143,12 @@ class Pipeline {
       // 仍尝试读结果：pipeline 可能在部分失败时也写了 csv
       final partial = await _readCsv(resultFile);
       if (partial.isEmpty) {
-        // 全失败时引擎 exit 1 且不落 CSV（见 engine/pipeline.go）。这不是程序
-        // 出错，而是「本轮没有任何节点可用」，文案要能被普通用户读懂；退出码
-        // 保留在括号里，排障时对得上 Go 侧日志。
+        // 走到这里 = 引擎在写盘前就退出了：三种模式「零可用结果」也会落 CSV
+        // （见 engine/pipeline.go 的 reportLatencyResults / reportSpeedResults，
+        // 以及 -targets 延迟阶段全挂时补写的 writeLatencyFailureCSV），所以全失败
+        // 不会走到本分支。常见成因：-data 模式阶段1 指纹筛选无命中（合法结局，
+        // exit 1，一个字节都不写）、参数或清单错误（exit 2）、配置读取/解析失败、
+        // panic、或被强杀。文案仍要说人话，退出码留在括号里便于对上 Go 侧日志。
         throw Exception('没有测出可用结果（引擎退出码 $code）');
       }
       return RunOutput(runDir, partial);
