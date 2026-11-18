@@ -767,10 +767,16 @@ func speedStats(results []*TestResult) (ok, zero, fail int) {
 
 // runLatencyStage 对 ipsToTest 做一轮 TCP 延迟测量。
 //
-// 原地写入每个目标的 Latency；连接失败/超阈值的条目同时写入 Reason（这样
-// 「只延迟」模式可以直接把它们写进 CSV）。返回值是**通过阈值**的子集，
-// 供速度阶段继续使用；没有目标通过时返回 nil。
-func runLatencyStage(ctx context.Context, ipsToTest []*TestResult) []*TestResult {
+// 原地写入每个目标的 Latency；连接失败的条目同时写入 Reason（这样
+// 「只延迟」模式可以直接把它们写进 CSV）。
+//
+// [applyThreshold] 决定是否把超过 cfg.MaxLatency 的条目判为失败：
+//   - 速度/一键模式传 true：阈值用于「筛掉高延迟候选」，让速度阶段少测几条；
+//   - 只延迟模式传 false：用户点「延迟测试」是想看每条候选的真实延迟，
+//     200ms 的默认阈值会把大量跨境候选直接标成失败，看起来像「全挂了」。
+func runLatencyStage(
+	ctx context.Context, ipsToTest []*TestResult, applyThreshold bool,
+) []*TestResult {
 	if len(ipsToTest) == 0 {
 		fmt.Fprintln(os.Stderr, "没有找到待测试的 IP")
 		return nil
@@ -811,7 +817,7 @@ func runLatencyStage(ctx context.Context, ipsToTest []*TestResult) []*TestResult
 				if !*quiet {
 					logf("   [延迟 %d/%d] %s:%s 连接失败", cur, totalIPs, result.IP, result.Port)
 				}
-			case cfg.MaxLatency > 0 && latency > cfg.MaxLatency:
+			case applyThreshold && cfg.MaxLatency > 0 && latency > cfg.MaxLatency:
 				result.Reason = fmt.Sprintf("延迟 %dms 超过阈值 %dms", latency, cfg.MaxLatency)
 				if !*quiet {
 					logf("   [延迟 %d/%d] %s:%s %dms (超过阈值)", cur, totalIPs, result.IP, result.Port, latency)
@@ -831,7 +837,10 @@ func runLatencyStage(ctx context.Context, ipsToTest []*TestResult) []*TestResult
 		fmt.Fprintln(os.Stderr, "没有 IP 通过延迟测试")
 		return nil
 	}
-	if cfg.MaxLatency > 0 {
+	if !applyThreshold {
+		logf("   延迟测试完成，%d/%d 个 IP 可连通（只延迟模式不按阈值筛选）",
+			len(passedList), len(ipsToTest))
+	} else if cfg.MaxLatency > 0 {
 		logf("   延迟测试完成，%d/%d 个 IP 通过（阈值 %dms）", len(passedList), len(ipsToTest), cfg.MaxLatency)
 	} else {
 		logf("   延迟测试完成，%d/%d 个 IP 通过（未设阈值，只保留能连通的）", len(passedList), len(ipsToTest))
@@ -852,7 +861,7 @@ func runSpeedTest(ctx context.Context, ipsToTest []*TestResult) []*TestResult {
 
 	logf("   共加载 %d 个 IP", len(ipsToTest))
 
-	passedList := runLatencyStage(ctx, ipsToTest)
+	passedList := runLatencyStage(ctx, ipsToTest, true)
 	if passedList == nil {
 		// 一条都没通过延迟测试：与「只延迟」模式对齐，把失败明细落盘，
 		// 让 Dart 侧在 code != 0 时仍能读到部分结果；返回值仍是 nil → 调用方 exit 1。
@@ -1196,7 +1205,7 @@ func runLatencyOnly(
 	logLatencyPlan(len(targets))
 
 	// 忽略返回值：失败项也要进 CSV，所以直接复用被原地写好的 targets。
-	_ = runLatencyStage(ctx, targets)
+	_ = runLatencyStage(ctx, targets, false)
 
 	sorted := make([]*TestResult, len(targets))
 	copy(sorted, targets)

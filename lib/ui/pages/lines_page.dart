@@ -2,15 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/file_pick.dart';
-import '../../data/link_test.dart';
-import '../../data/xray.dart';
 import '../../state/app_state.dart';
-import '../widgets/link_test_panel.dart';
 
-/// 线路与代理：VLESS 链接 + proxyip + 链路测速。
+/// 线路与代理：**只做配置**，不承载任何测试动作。
 ///
-/// 测速部分已从「逐条起 Xray 记进程启动耗时」换成真正的 TTFB + 吞吐测量
-/// （设计 §0：旧实现测的不是延迟，是「谁先起床」）。
+/// 这里只负责两件事：
+/// 1. VLESS 链接（每行一条，取第一条可解析的）；
+/// 2. proxyip 文件（导入/清空，不展示内容）。
+///
+/// 测速入口已全部移到「结果 → 测试」的 VLESS 测试页（那里能看每条链接的
+/// 延迟/速度并多选），本页再放一套只会让人分不清「在哪测」。
+/// 运行时自动替换 vless 路径里的回源 `ip:port` 由 XrayProc.start 完成，
+/// 本页只需展示当前生效值。
 class LinesPage extends StatefulWidget {
   const LinesPage({super.key});
 
@@ -20,65 +23,29 @@ class LinesPage extends StatefulWidget {
 
 class _LinesPageState extends State<LinesPage> {
   late final TextEditingController _links;
-  late final TextEditingController _proxies;
-
-  /// 测速模式，默认自动（先延迟后速度，最省时间的推荐路径）。
-  LinkTestMode _mode = LinkTestMode.auto;
 
   @override
   void initState() {
     super.initState();
-    final s = context.read<AppState>().settings;
-    _links = TextEditingController(text: s.vlessLinks.join('\n'));
-    _proxies = TextEditingController(text: s.proxyIps.join('\n'));
+    _links = TextEditingController(
+      text: context.read<AppState>().settings.vlessLinks.join('\n'),
+    );
   }
 
   @override
   void dispose() {
     _links.dispose();
-    _proxies.dispose();
     super.dispose();
-  }
-
-  Future<void> _save() async {
-    final state = context.read<AppState>();
-    state.settings.vlessLinks = _lines(_links.text);
-    state.settings.proxyIps = _lines(_proxies.text);
-    await state.saveSettings();
-    if (mounted) _toast('已保存');
   }
 
   List<String> _lines(String text) =>
       text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
 
-  /// 测速：交给 [AppState.runLinkTest]，UI 只负责收集链接与展示进度。
-  Future<void> _runLinkTest() async {
+  Future<void> _save() async {
     final state = context.read<AppState>();
-    final links = _lines(_links.text);
-    if (links.isEmpty) {
-      _toast('先填一条 VLESS 链接');
-      return;
-    }
-    await _save();
-    if (!mounted) return;
-
-    // K4 预告：开测会停掉当前单线路代理，用户必须提前知道
-    if (state.xray.mode == XrayMode.line) {
-      _toast('测速将停止当前代理线路');
-    }
-
-    final ok = await state.runLinkTest(links, mode: _mode);
-    if (!mounted) return;
-
-    // 一次性消费「代理已被测速停掉」的提示（读一次即清，不会反复弹）
-    final notice = state.takeProxyStopNotice();
-    if (notice != null) {
-      _toast(notice);
-    } else if (ok) {
-      _toast('测速完成 · ${state.linkOkCount} 条可用');
-    } else if (state.linkTestError != null) {
-      _toast(state.linkTestError!);
-    }
+    state.settings.vlessLinks = _lines(_links.text);
+    await state.saveSettings();
+    if (mounted) _toast('已保存');
   }
 
   /// 通过系统文件选择器导入 proxyip 文件（4 列 CSV 或每行 ip:port）。
@@ -92,7 +59,7 @@ class _LinesPageState extends State<LinesPage> {
       if (text == null) return; // 用户取消
       final count = await state.importProxyIps(text);
       if (!mounted) return;
-      setState(() => _proxies.text = state.settings.proxyIps.join('\n'));
+      setState(() {});
       _toast('已导入 $count 条 proxyip');
     } on FilePickException catch (e) {
       _toast('导入失败：$e');
@@ -101,11 +68,10 @@ class _LinesPageState extends State<LinesPage> {
     }
   }
 
-  /// 清空 proxyip：删文件 + 清内存 + 清空输入框。
   Future<void> _clearProxyIps() async {
     await context.read<AppState>().clearProxyIps();
     if (!mounted) return;
-    setState(() => _proxies.clear());
+    setState(() {});
     _toast('已清空 proxyip 列表');
   }
 
@@ -120,12 +86,9 @@ class _LinesPageState extends State<LinesPage> {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final theme = Theme.of(context);
-    final testing = state.linkTestRunning;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('线路与代理'),
-      ),
+      appBar: AppBar(title: const Text('线路与代理')),
       // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航。
       // top: false —— 顶部已由 AppBar 处理。
       body: SafeArea(
@@ -136,17 +99,13 @@ class _LinesPageState extends State<LinesPage> {
           children: [
             Row(
               children: [
-                _stat(
-                    theme,
-                    '状态',
-                    testing
-                        ? '测速中'
-                        : (state.xray.running ? '已连接' : state.xray.note)),
+                _stat(theme, '状态',
+                    state.xray.running ? '已连接' : state.xray.note),
                 const SizedBox(width: 10),
                 _stat(theme, '端口',
                     state.xray.running ? '${state.xray.port}' : '—'),
                 const SizedBox(width: 10),
-                _stat(theme, 'proxyip',
+                _stat(theme, '回源替换',
                     state.xray.proxyIp.isEmpty ? '链接原样' : state.xray.proxyIp),
               ],
             ),
@@ -160,7 +119,8 @@ class _LinesPageState extends State<LinesPage> {
                   children: [
                     Text('VLESS 链接', style: theme.textTheme.titleSmall),
                     const SizedBox(height: 6),
-                    Text('每行一条，取第一条可解析的', style: theme.textTheme.labelSmall),
+                    Text('每行一条，取第一条可解析的',
+                        style: theme.textTheme.labelSmall),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _links,
@@ -178,27 +138,33 @@ class _LinesPageState extends State<LinesPage> {
                             'vless://uuid@host:443?type=xhttp&security=tls&...',
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    Text('proxyip 列表', style: theme.textTheme.titleSmall),
-                    const SizedBox(height: 6),
-                    Text('每行 ip:port，用于替换 ws 路径里的回源地址',
-                        style: theme.textTheme.labelSmall),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _proxies,
-                      maxLines: 4,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontFamilyFallback: <String>['sans-serif'],
-                        fontSize: 11.5,
-                      ),
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                        hintText: '104.16.0.1:443',
-                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              margin: EdgeInsets.zero,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text('proxyip', style: theme.textTheme.titleSmall),
+                        const Spacer(),
+                        Text('已加载 ${state.settings.proxyIps.length} 条',
+                            style: theme.textTheme.labelSmall),
+                      ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
+                    Text(
+                      '从文件加载，不在此展示内容。测速/抓取时自动替换 VLESS 路径里的'
+                      '回源 ip:port，文件里的多条会按成功记录轮换。',
+                      style: theme.textTheme.labelSmall,
+                    ),
+                    const SizedBox(height: 10),
                     // proxyip 文件导入（与原版一致的 SAF 选文件）：
                     // 文件落到 cytest/xray/proxyip.csv，格式是 4 列 CSV，
                     // 与原版 Kotlin 的 ProxyIpRepository 可互换。
@@ -207,53 +173,14 @@ class _LinesPageState extends State<LinesPage> {
                         OutlinedButton.icon(
                           onPressed: _importProxyIps,
                           icon: const Icon(Icons.file_open_outlined, size: 18),
-                          label: const Text('导入文件'),
+                          label: const Text('加载文件'),
                         ),
                         const SizedBox(width: 8),
                         TextButton(
-                          onPressed: _clearProxyIps,
-                          child: const Text('清空'),
-                        ),
-                        const Spacer(),
-                        Text(
-                          '${_lines(_proxies.text).length} 条',
-                          style: theme.textTheme.labelSmall,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        OutlinedButton(
-                          onPressed: testing ? null : _runLinkTest,
-                          child: Text(testing ? '测速中…' : '测试全部线路'),
-                        ),
-                        const Spacer(),
-                        TextButton(onPressed: _save, child: const Text('保存')),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Text('测速模式', style: theme.textTheme.labelSmall),
-                        const SizedBox(width: 10),
-                        SegmentedButton<LinkTestMode>(
-                          segments: const [
-                            ButtonSegment(
-                                value: LinkTestMode.latency, label: Text('延迟')),
-                            ButtonSegment(
-                                value: LinkTestMode.speed, label: Text('速度')),
-                            ButtonSegment(
-                                value: LinkTestMode.auto, label: Text('自动')),
-                          ],
-                          selected: <LinkTestMode>{_mode},
-                          onSelectionChanged: testing
+                          onPressed: state.settings.proxyIps.isEmpty
                               ? null
-                              : (s) => setState(() => _mode = s.first),
-                          showSelectedIcon: false,
-                          style: const ButtonStyle(
-                            visualDensity: VisualDensity.compact,
-                          ),
+                              : _clearProxyIps,
+                          child: const Text('清空'),
                         ),
                       ],
                     ),
@@ -261,31 +188,11 @@ class _LinesPageState extends State<LinesPage> {
                 ),
               ),
             ),
-            if (state.linkTestError != null) ...[
-              const SizedBox(height: 12),
-              Card(
-                margin: EdgeInsets.zero,
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Text(
-                    state.linkTestError!,
-                    style: TextStyle(
-                      color: theme.colorScheme.error,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            if (state.linkTestRunning || state.linkResults.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              LinkTestPanel(
-                results: state.linkResults,
-                stage: state.linkStage,
-                running: state.linkTestRunning,
-                onCancel: state.cancelLinkTest,
-              ),
-            ],
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(onPressed: _save, child: const Text('保存')),
+            ),
           ],
         ),
       ),

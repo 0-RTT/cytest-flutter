@@ -154,6 +154,22 @@ void main() {
     expect(writeAt, lessThan(nilIdxs[1]),
         reason: 'writeLatencyFailureCSV 必须早于延迟全失败的 return nil（否则是死代码）');
   });
+
+  // 真实事故：maxLatency 默认 200ms，若「延迟测试」也按它筛，跨境候选
+  // （普遍 200-400ms）会被整批标成「超过阈值」，用户看到的就是「全部失败」。
+  // 延迟测试的语义是「测出每条的真实延迟」，不是「筛出达标的」。
+  test('延迟测试不按 maxLatency 筛选，一键测试保留筛选', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+
+    expect(go, contains('applyThreshold bool'),
+        reason: 'runLatencyStage 必须有阈值开关');
+    expect(go, contains('runLatencyStage(ctx, targets, false)'),
+        reason: '只延迟模式必须传 false（否则默认 200ms 阈值会误杀大批候选）');
+    expect(go, contains('runLatencyStage(ctx, ipsToTest, true)'),
+        reason: '速度/一键模式保留阈值筛选');
+    expect(go, contains('case applyThreshold && cfg.MaxLatency > 0'),
+        reason: '阈值判定必须受开关控制');
+  });
 }
 
 /// 取 `case 'x':` 到下一个 `case`/`default:` 之间的源码片段。
