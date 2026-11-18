@@ -22,10 +22,12 @@ void main() {
     await tester.pumpWidget(_host(const HomeShell()));
     await tester.pump();
 
-    // 主流程：序号 + 标题
+    // 内容不变：主流程三张步骤卡（带序号）+ 工具两项
     for (final step in ['1', '2', '3']) {
       expect(find.text(step), findsOneWidget, reason: '步骤 $step 序号');
     }
+    expect(find.text('主流程'), findsOneWidget);
+    expect(find.text('工具'), findsOneWidget);
     expect(find.text('获取数据'), findsOneWidget);
     expect(find.text('本地测试'), findsOneWidget);
     expect(find.text('结果'), findsOneWidget);
@@ -56,14 +58,20 @@ void main() {
     await tester.tap(find.text('设置'));
     await tester.pumpAndSettle();
 
+    // 根页面是分组列表：分组标题 + 入口行
     expect(find.text('线路与代理'), findsOneWidget);
     expect(find.text('VLESS 链接'), findsOneWidget);
-    expect(find.text('加载文件'), findsOneWidget);
-    // 只显示条目数（徽标形式），不给可编辑的 proxyip 文本框
+    // 只显示条目数，不给可编辑的 proxyip 文本框；内容也不展示
     expect(find.textContaining('proxyip'), findsOneWidget);
     expect(find.text('每行 ip:port，用于替换 ws 路径里的回源地址'), findsNothing);
     // 抓取代理已删除：抓取走什么代理由这里的 VLESS 线路决定
     expect(find.text('抓取代理'), findsNothing);
+
+    // 具体配置收进弹层：点「VLESS 链接」才看到输入框与「加载文件」
+    await tester.tap(find.text('VLESS 链接'));
+    await tester.pumpAndSettle();
+    expect(find.text('加载文件'), findsOneWidget);
+    expect(find.text('VLESS 链接'), findsWidgets);
 
     expect(tester.takeException(), isNull);
   });

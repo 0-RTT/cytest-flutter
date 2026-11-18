@@ -5,12 +5,13 @@ import '../../core/file_pick.dart';
 import '../../data/github.dart';
 import '../../state/app_state.dart';
 
-/// 设置页。
+/// 设置页：参考系统「更多」页的分组列表形态。
 ///
-/// 版式约定（Material 3 + Flutter 原生控件）：
-/// - 每个分区是一张无阴影卡片，标题行 = 图标方块 + 标题 + 一行说明；
-/// - 输入项统一用 `filled` 圆角输入框，单位用 `suffixText` 贴在框内；
-/// - 「保存」固定在底部操作条，拇指可达，滚动时不会滚走。
+/// 版式约定：
+/// - 页面底是浅灰；每个分组 = 一行灰色小标题 + 一张白色圆角卡片；
+/// - 卡片里每行 = 图标 + 标题 + 当前值（副标题）+ 右箭头，行间用内缩细分割线；
+/// - 点行进入底部弹层编辑该组字段，根页面只保留摘要，长表单不再把首页拉得很长；
+/// - 「保存」固定在底部操作条，一次提交全部改动。
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
 
@@ -38,6 +39,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _vless;
 
   bool _loaded = false;
+  ThemeData? _theme;
 
   @override
   void initState() {
@@ -117,6 +119,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _ghRepo.text = repoSlug;
     await state.saveSettings();
     if (mounted) {
+      setState(() {});
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('设置已保存')));
     }
@@ -126,7 +129,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     _theme = theme;
-    final lineProxyCount = context.watch<AppState>().settings.proxyIps.length;
+    final state = context.watch<AppState>();
+    final s = state.settings;
     if (!_loaded) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(_bind);
@@ -135,122 +139,234 @@ class _SettingsPageState extends State<SettingsPage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
-      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航。
-      // top: false —— 顶部已由 AppBar 处理。
       body: SafeArea(
         top: false,
-        child: Column(
-          children: [
-            Expanded(
-              child: Form(
-                key: _formKey,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 20),
-                  children: [
-                    _section(
-                      theme,
-                      icon: Icons.route_outlined,
-                      title: '线路与代理',
-                      hint: '抓取与测速的出入口',
-                      children: [
-                        _multiline('VLESS 链接', _vless,
-                            hint: 'vless://uuid@host:443?type=xhttp&security=tls&...'),
-                        _caption(theme, '每行一条，取第一条可解析的'),
-                        const SizedBox(height: 12),
-                        _proxyIpsRow(theme, lineProxyCount),
-                        const SizedBox(height: 6),
-                        _caption(theme,
-                            '从文件加载，不在此展示内容；使用时自动替换 VLESS 路径里的回源 ip:port。'),
-                      ],
-                    ),
-                    _section(
-                      theme,
-                      icon: Icons.speed_outlined,
-                      title: '并发',
-                      hint: '过高会互相抢带宽，单条读数偏低',
-                      children: [
-                        _num('指纹筛选并发', _sha1, hint: '默认 30'),
-                        _num('延迟测试并发', _latency, hint: '默认 100'),
-                        _num('速度测试并发', _speed, hint: '默认 3，建议 3-6'),
-                        // 阈值只用来省测速时间，不负责判定可用。
-                        // 这条 helper 是刻意的：用户看到「延迟 800ms」就以为节点废了，
-                        // 于是在设置里填 200，结果一键测试全被筛掉。
-                        _num(
-                          '延迟上限（ms）',
-                          _maxLatency,
-                          hint: '0 = 不限（推荐）',
-                          helper: '只用于「一键测试」时跳过太慢的候选以节省测速时间，'
-                              '不代表节点不可用；「延迟测试」不受此项影响。',
-                        ),
-                      ],
-                    ),
-                    _section(
-                      theme,
-                      icon: Icons.timer_outlined,
-                      title: '超时',
-                      hint: '网络抖动大时适当放宽',
-                      children: [
-                        _num('连接超时（秒）', _dial, hint: '默认 5'),
-                        _num('下载超时（秒）', _download, hint: '默认 10'),
-                      ],
-                    ),
-                    _section(
-                      theme,
-                      icon: Icons.download_outlined,
-                      title: '测速',
-                      hint: '窗口 3s / 上限 64MiB，首 256KiB 预热丢弃',
-                      children: [
-                        // 只有测速地址一项：抓取走什么代理由「线路与代理」的
-                        // VLESS 链接决定，不再单独配一个抓取代理（那是同一件事
-                        // 的第二份开关，两个值必然漂移）。
-                        _text('测速地址', _speedUrl),
-                      ],
-                    ),
-                    _section(
-                      theme,
-                      icon: Icons.cloud_upload_outlined,
-                      title: 'GitHub 推送',
-                      hint: '把订阅写到仓库文件',
-                      children: [
-                        _text('仓库地址', _ghRepo,
-                            hint: 'https://github.com/0-RTT/sub'),
-                        _text('Token', _ghToken,
-                            obscure: true, hint: '需要 repo contents 写权限'),
-                      ],
-                    ),
-                    _section(
-                      theme,
-                      icon: Icons.dns_outlined,
-                      title: '远程执行',
-                      hint: 'SSH 到服务器跑三阶段',
-                      children: [
-                        _text('主机', _remoteHost, hint: '1.2.3.4'),
-                        _num('端口', _remotePort, hint: '默认 22'),
-                        _text('用户', _remoteUser, hint: '默认 root'),
-                        _text('密码', _remotePassword, obscure: true),
-                        _text('私钥路径', _remoteKey, hint: '留空则用密码'),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: Text(
-                        '参数保存在本机（SharedPreferences），下次启动自动恢复',
-                        style: theme.textTheme.labelSmall,
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ],
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 20),
+            children: [
+              _sectionHeader(theme, '线路与代理'),
+              _card([
+                _row(
+                  theme,
+                  icon: Icons.route_outlined,
+                  title: 'VLESS 链接',
+                  value: s.vlessLinks.isEmpty
+                      ? '未配置'
+                      : '已配置 ${s.vlessLinks.length} 条 · 取第一条可解析',
+                  onTap: () => _openGroup(context, _Group.lines),
+                ),
+                _row(
+                  theme,
+                  icon: Icons.layers_outlined,
+                  title: 'proxyip',
+                  value: '${s.proxyIps.length} 条 · 替换回源 ip:port',
+                  onTap: () => _openGroup(context, _Group.lines),
+                  last: true,
+                ),
+              ]),
+              _sectionHeader(theme, '测速'),
+              _card([
+                _row(
+                  theme,
+                  icon: Icons.speed_outlined,
+                  title: '并发',
+                  value: '指纹 ${s.sha1Concurrency} · 延迟 ${s.latencyConcurrency}'
+                      ' · 速度 ${s.speedConcurrency}',
+                  onTap: () => _openGroup(context, _Group.concurrency),
+                ),
+                _row(
+                  theme,
+                  icon: Icons.timer_outlined,
+                  title: '超时',
+                  value: '连接 ${s.dialTimeout}s · 下载 ${s.downloadTimeout}s',
+                  onTap: () => _openGroup(context, _Group.timeouts),
+                ),
+                _row(
+                  theme,
+                  icon: Icons.download_outlined,
+                  title: '测速地址',
+                  value: s.speedUrl.isEmpty ? '未配置' : s.speedUrl,
+                  onTap: () => _openGroup(context, _Group.speedUrl),
+                  last: true,
+                ),
+              ]),
+              _sectionHeader(theme, '推送与远程'),
+              _card([
+                _row(
+                  theme,
+                  icon: Icons.cloud_upload_outlined,
+                  title: 'GitHub 推送',
+                  value: s.githubRepo.isEmpty ? '未配置仓库' : s.githubRepo,
+                  onTap: () => _openGroup(context, _Group.github),
+                ),
+                _row(
+                  theme,
+                  icon: Icons.dns_outlined,
+                  title: '远程执行',
+                  value: s.remoteHost.isEmpty
+                      ? '未配置服务器'
+                      : '${s.remoteUser}@${s.remoteHost}:${s.remotePort}',
+                  onTap: () => _openGroup(context, _Group.remote),
+                  last: true,
+                ),
+              ]),
+              const SizedBox(height: 10),
+              Center(
+                child: Text(
+                  '参数保存在本机，下次启动自动恢复',
+                  style: theme.textTheme.labelSmall,
+                  textAlign: TextAlign.center,
                 ),
               ),
-            ),
-            _saveBar(theme),
-          ],
+            ],
+          ),
         ),
+      ),
+      bottomNavigationBar: _saveBar(theme),
+    );
+  }
+
+  // ---------------------------------------------------------------- 分组弹层
+
+  Future<void> _openGroup(BuildContext context, _Group group) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (_) => _GroupSheet(
+        title: group.title,
+        subtitle: group.hint,
+        children: _fieldsFor(group),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  List<Widget> _fieldsFor(_Group g) {
+    switch (g) {
+      case _Group.lines:
+        return [
+          _multiline('VLESS 链接', _vless,
+              hint: 'vless://uuid@host:443?type=xhttp&security=tls&...'),
+          _caption('每行一条，取第一条可解析的'),
+          const SizedBox(height: 10),
+          _proxyIpsActions(),
+          _caption('从文件加载，不在此展示内容；使用时自动替换 VLESS 路径里的回源 ip:port。'),
+        ];
+      case _Group.concurrency:
+        return [
+          _num('指纹筛选并发', _sha1, hint: '默认 30'),
+          _num('延迟测试并发', _latency, hint: '默认 100'),
+          _num('速度测试并发', _speed, hint: '默认 3，建议 3-6'),
+          // 阈值只用来省测速时间，不负责判定可用。
+          _num(
+            '延迟上限（ms）',
+            _maxLatency,
+            hint: '0 = 不限（推荐）',
+            helper: '只用于「一键测试」时跳过太慢的候选以节省测速时间，'
+                '不代表节点不可用；「延迟测试」不受此项影响。',
+          ),
+        ];
+      case _Group.timeouts:
+        return [
+          _num('连接超时（秒）', _dial, hint: '默认 5'),
+          _num('下载超时（秒）', _download, hint: '默认 10'),
+        ];
+      case _Group.speedUrl:
+        return [
+          _text('测速地址', _speedUrl,
+              hint: 'https://е.eu.org/300.zip'),
+          _caption('窗口 3s / 上限 64MiB，首 256KiB 预热丢弃。'),
+        ];
+      case _Group.github:
+        return [
+          _text('仓库地址', _ghRepo, hint: 'https://github.com/0-RTT/sub'),
+          _text('Token', _ghToken, obscure: true, hint: '需要 repo contents 写权限'),
+        ];
+      case _Group.remote:
+        return [
+          _text('主机', _remoteHost, hint: '1.2.3.4'),
+          _num('端口', _remotePort, hint: '默认 22'),
+          _text('用户', _remoteUser, hint: '默认 root'),
+          _text('密码', _remotePassword, obscure: true),
+          _text('私钥路径', _remoteKey, hint: '留空则用密码'),
+        ];
+    }
+  }
+
+  // ------------------------------------------------------------------ 构件
+
+  Widget _sectionHeader(ThemeData theme, String text) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 14, 4, 8),
+        child: Text(
+          text,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+
+  /// 卡片统一走 Card（白底、18 圆角、无阴影），与首页同一套材质。
+  Widget _card(List<Widget> rows) => Card(
+        clipBehavior: Clip.antiAlias,
+        child: Column(children: rows),
+      );
+
+  Widget _row(
+    ThemeData theme, {
+    required IconData icon,
+    required String title,
+    required String value,
+    required VoidCallback onTap,
+    bool last = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 11, 10, 11),
+            child: Row(
+              children: [
+                Icon(icon, size: 21, color: theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: theme.textTheme.titleSmall),
+                      const SizedBox(height: 2),
+                      Text(
+                        value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right,
+                    size: 20, color: theme.colorScheme.outline),
+              ],
+            ),
+          ),
+          if (!last)
+            Divider(
+              height: 0.5,
+              thickness: 0.5,
+              indent: 47,
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+        ],
       ),
     );
   }
 
-  /// 底部固定操作条：保存按钮常驻，不随列表滚走。
   Widget _saveBar(ThemeData theme) => Container(
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
@@ -274,6 +390,49 @@ class _SettingsPageState extends State<SettingsPage> {
 
   List<String> _lines(String text) =>
       text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
+  Widget _proxyIpsActions() {
+    final count = context.watch<AppState>().settings.proxyIps.length;
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: (_theme ?? ThemeData.light()).colorScheme.secondaryContainer,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(
+            'proxyip $count 条',
+            style: (_theme ?? ThemeData.light()).textTheme.labelSmall?.copyWith(
+                  color: (_theme ?? ThemeData.light())
+                      .colorScheme
+                      .onSecondaryContainer,
+                ),
+          ),
+        ),
+        const Spacer(),
+        TextButton.icon(
+          onPressed: _importProxyIps,
+          icon: const Icon(Icons.file_open_outlined, size: 16),
+          label: const Text('加载文件'),
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+        ),
+        IconButton(
+          onPressed: count == 0 ? null : _clearProxyIps,
+          tooltip: '清空 proxyip',
+          icon: const Icon(Icons.delete_outline, size: 18),
+          visualDensity: VisualDensity.compact,
+          style: IconButton.styleFrom(
+            minimumSize: const Size(34, 34),
+            padding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+  }
 
   /// 导入 proxyip 文件（4 列 CSV 或每行 ip:port），只显示条目数、不展示内容。
   Future<void> _importProxyIps() async {
@@ -306,137 +465,25 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {});
   }
 
-  /// proxyip 一行：只读徽标 + 加载 + 清空。
-  ///
-  /// 360dp 窄屏实测：徽标 +「加载文件」+「清空」三个元素并排会溢出 3px，
-  /// 所以清空改成紧凑 IconButton，徽标用 Flexible 兜住极端字数。
-  Widget _proxyIpsRow(ThemeData theme, int count) => Row(
-        children: [
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.secondaryContainer,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'proxyip $count 条',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.labelSmall
-                    ?.copyWith(color: theme.colorScheme.onSecondaryContainer),
-              ),
-            ),
-          ),
-          const Spacer(),
-          TextButton.icon(
-            onPressed: _importProxyIps,
-            icon: const Icon(Icons.file_open_outlined, size: 16),
-            label: const Text('加载文件'),
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-            ),
-          ),
-          IconButton(
-            onPressed: count == 0 ? null : _clearProxyIps,
-            tooltip: '清空 proxyip',
-            icon: const Icon(Icons.delete_outline, size: 18),
-            visualDensity: VisualDensity.compact,
-            style: IconButton.styleFrom(
-              minimumSize: const Size(34, 34),
-              padding: EdgeInsets.zero,
-            ),
-          ),
-        ],
+  Widget _caption(String text) => Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Text(
+          text,
+          style: _theme?.textTheme.labelSmall
+              ?.copyWith(color: _theme!.colorScheme.onSurfaceVariant),
+        ),
       );
 
-  /// 一个分区卡片：图标方块 + 标题 + 说明 + 分隔线 + 内容。
-  Widget _section(
-    ThemeData theme, {
-    required IconData icon,
-    required String title,
-    required String hint,
-    required List<Widget> children,
-  }) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 0,
-      color: theme.colorScheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-          width: 0.5,
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(icon,
-                      size: 18, color: theme.colorScheme.onPrimaryContainer),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title, style: theme.textTheme.titleSmall),
-                      const SizedBox(height: 1),
-                      Text(
-                        hint,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            ...children,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _caption(ThemeData theme, String text) => Padding(
-        padding: const EdgeInsets.only(top: 2),
-        child: Text(text,
-            style: theme.textTheme.labelSmall
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-      );
-
-  /// filled 圆角输入框：M3 的默认气质，也比 Outline 更省视觉噪音。
   InputDecoration _decoration({
     required String label,
     String? hint,
     String? helper,
-    String? suffix,
-    Widget? prefixIcon,
-    bool obscure = false,
   }) =>
       InputDecoration(
         labelText: label,
         hintText: hint,
         helperText: helper,
         helperMaxLines: 2,
-        suffixText: suffix,
-        prefixIcon: prefixIcon,
         filled: true,
         isDense: true,
         border: OutlineInputBorder(
@@ -458,41 +505,36 @@ class _SettingsPageState extends State<SettingsPage> {
             const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       );
 
-  /// 最近一次 build 的 Theme：输入框装饰器在 build 之外组装，需要它取焦点色。
-  ThemeData? _theme;
-
   Widget _num(
     String label,
     TextEditingController c, {
     String? hint,
     String? helper,
-    String? suffix,
   }) =>
       Padding(
-        padding: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.only(top: 10),
         child: TextField(
           controller: c,
           keyboardType: TextInputType.number,
-          decoration:
-              _decoration(label: label, hint: hint, helper: helper, suffix: suffix),
+          decoration: _decoration(label: label, hint: hint, helper: helper),
         ),
       );
 
   Widget _text(String label, TextEditingController c,
           {String? hint, bool obscure = false}) =>
       Padding(
-        padding: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.only(top: 10),
         child: TextField(
           controller: c,
           obscureText: obscure,
           style: const TextStyle(fontSize: 13),
-          decoration: _decoration(label: label, hint: hint, obscure: obscure),
+          decoration: _decoration(label: label, hint: hint),
         ),
       );
 
   Widget _multiline(String label, TextEditingController c, {String? hint}) =>
       Padding(
-        padding: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.only(top: 10),
         child: TextField(
           controller: c,
           maxLines: 4,
@@ -504,4 +546,70 @@ class _SettingsPageState extends State<SettingsPage> {
           decoration: _decoration(label: label, hint: hint),
         ),
       );
+}
+
+/// 设置页的分组。每个分组对应一个底部弹层。
+enum _Group {
+  lines('线路与代理', '抓取与测速的出入口'),
+  concurrency('并发', '过高会互相抢带宽，单条读数偏低'),
+  timeouts('超时', '网络抖动大时适当放宽'),
+  speedUrl('测速地址', '窗口 3s / 上限 64MiB，首 256KiB 预热丢弃'),
+  github('GitHub 推送', '把订阅写到仓库文件'),
+  remote('远程执行', 'SSH 到服务器跑三阶段');
+
+  const _Group(this.title, this.hint);
+
+  final String title;
+  final String hint;
+}
+
+/// 分组编辑弹层：标题 + 说明 + 字段列表，字段直接绑定根页面的 controller，
+/// 关掉弹层后由根页面 setState 刷新摘要。
+class _GroupSheet extends StatelessWidget {
+  const _GroupSheet({
+    required this.title,
+    required this.subtitle,
+    required this.children,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title, style: theme.textTheme.titleMedium),
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 6),
+            ...children,
+            const SizedBox(height: 14),
+            SizedBox(
+              height: 44,
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('完成'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

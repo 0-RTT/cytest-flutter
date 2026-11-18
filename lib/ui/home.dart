@@ -11,9 +11,9 @@ import 'pages/test_page.dart';
 
 /// 底部两 Tab：首页 / 设置。
 ///
-/// 首页按「主流程 → 工具」两段组织：主流程是有先后顺序的三步（抓取 → 测试 →
-/// 结果），用带序号的步骤卡表达；工具是随时可进的辅助页。
-/// 线路 / proxyip / GitHub / 远程账号都只是配置，统一收进设置页，首页不再占卡位。
+/// 首页内容保持原样：主流程 3 步 + 工具 2 项。
+/// 只借用参考页的视觉语言——暖灰底、纯白圆角卡片、无描边无阴影、深青点缀——
+/// 并让两块内容按屏高弹性铺满，不再全挤在页面上半段。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -39,13 +39,13 @@ class _HomeShellState extends State<HomeShell> {
         onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard),
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
             label: '首页',
           ),
           NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
+            icon: Icon(Icons.tune_outlined),
+            selectedIcon: Icon(Icons.tune_rounded),
             label: '设置',
           ),
         ],
@@ -66,101 +66,91 @@ class _HomeTab extends StatelessWidget {
       appBar: AppBar(
         title: const Text('cytest'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Center(
-              child: Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: state.xray.running ? Colors.green : theme.hintColor,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    state.xray.running ? '线路已连接' : '线路未启动',
-                    style: theme.textTheme.labelSmall,
-                  ),
-                ],
-              ),
-            ),
+          _lineStatus(theme, state),
+          IconButton(
+            onPressed: () => context.read<AppState>().boot(),
+            tooltip: '刷新状态',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.refresh, size: 20),
           ),
+          const SizedBox(width: 6),
         ],
       ),
-      // 底部 SafeArea：外层 HomeShell 的 NavigationBar 已吃掉底部 inset，
-      // 这里加一层只为与其它页面保持一致（重复应用 inset 时 SafeArea 取 0，无害）。
-      // top: false —— 顶部已由 AppBar 处理。
       body: SafeArea(
         top: false,
-        child: RefreshIndicator(
-          onRefresh: () async => state.boot(),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
+        child: Padding(
+          // bottom 14 = 包底：卡片圆角与底部导航之间留出呼吸。
+          padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (state.rows.isNotEmpty) _SummaryBar(state: state),
               _label(theme, '主流程'),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _FlowStep(
-                      step: 1,
-                      icon: Icons.cloud_download_outlined,
-                      title: '获取数据',
-                      subtitle: 'Censys 拉候选',
-                      onTap: () => _push(context, const FetchPage()),
+              // 主流程与工具按屏高 5:3 分配，卡片高度跟屏幕走，不留半屏空白。
+              Expanded(
+                flex: 5,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _FlowStep(
+                        step: 1,
+                        icon: Icons.cloud_download_outlined,
+                        title: '获取数据',
+                        subtitle: 'Censys 拉候选',
+                        onTap: () => _push(context, const FetchPage()),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _FlowStep(
-                      step: 2,
-                      icon: Icons.science_outlined,
-                      title: '本地测试',
-                      subtitle: '延迟 / 速度',
-                      onTap: () => _push(context, const TestPage()),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _FlowStep(
+                        step: 2,
+                        icon: Icons.science_outlined,
+                        title: '本地测试',
+                        subtitle: '延迟 / 速度',
+                        onTap: () => _push(context, const TestPage()),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _FlowStep(
-                      step: 3,
-                      icon: Icons.bar_chart_outlined,
-                      title: '结果',
-                      subtitle: state.rows.isEmpty
-                          ? '暂无数据'
-                          : '${state.usableCount} 条可用',
-                      onTap: () => _push(context, const ResultPage()),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _FlowStep(
+                        step: 3,
+                        icon: Icons.bar_chart_outlined,
+                        title: '结果',
+                        subtitle: state.rows.isEmpty
+                            ? '暂无数据'
+                            : '${state.usableCount} 条可用',
+                        onTap: () => _push(context, const ResultPage()),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 16),
               _label(theme, '工具'),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _NavCard(
-                      icon: Icons.history,
-                      title: '记录',
-                      subtitle: '历史与存档',
-                      onTap: () => _push(context, const HistoryPage()),
+              Expanded(
+                flex: 3,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: _ToolRow(
+                        icon: Icons.history,
+                        title: '记录',
+                        subtitle: '历史与存档',
+                        onTap: () => _push(context, const HistoryPage()),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _NavCard(
-                      icon: Icons.dns_outlined,
-                      title: '远程执行',
-                      subtitle: '服务器跑三阶段',
-                      onTap: () => _push(context, const RemotePage()),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: _ToolRow(
+                        icon: Icons.dns_outlined,
+                        title: '远程执行',
+                        subtitle: '服务器跑三阶段',
+                        onTap: () => _push(context, const RemotePage()),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -169,8 +159,46 @@ class _HomeTab extends StatelessWidget {
     );
   }
 
+  Widget _lineStatus(ThemeData theme, AppState state) {
+    final running = state.xray.running;
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: running
+              ? theme.colorScheme.primaryContainer
+              : theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: running
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.outline,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              running ? '线路已连接' : '线路未启动',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: running
+                    ? theme.colorScheme.onPrimaryContainer
+                    : theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _label(ThemeData theme, String text) => Padding(
-        padding: const EdgeInsets.only(top: 8, left: 2),
+        padding: const EdgeInsets.only(top: 2, left: 2),
         child: Text(
           text,
           style: theme.textTheme.labelMedium?.copyWith(
@@ -182,41 +210,6 @@ class _HomeTab extends StatelessWidget {
 
   void _push(BuildContext context, Widget page) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
-  }
-}
-
-class _SummaryBar extends StatelessWidget {
-  const _SummaryBar({required this.state});
-
-  final AppState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    Widget cell(String label, String value) => Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: theme.textTheme.labelSmall),
-              const SizedBox(height: 2),
-              Text(value, style: theme.textTheme.titleMedium),
-            ],
-          ),
-        );
-
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            cell('可用', '${state.usableCount}'),
-            cell('最快', '${state.fastestSpeed.toStringAsFixed(2)} MiB/s'),
-            cell('均延迟', '${state.averageLatency} ms'),
-          ],
-        ),
-      ),
-    );
   }
 }
 
@@ -240,57 +233,55 @@ class _FlowStep extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
-      margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        child: SizedBox(
-          height: 108,
-          child: Padding(
-            padding: const EdgeInsets.all(11),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 18,
-                      height: 18,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: theme.colorScheme.primary,
-                      ),
-                      child: Text(
-                        '$step',
-                        style: TextStyle(
-                          fontSize: 11,
-                          height: 1,
-                          fontWeight: FontWeight.w600,
-                          color: theme.colorScheme.onPrimary,
-                        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 18,
+                    height: 18,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: theme.colorScheme.primary,
+                    ),
+                    child: Text(
+                      '$step',
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1,
+                        fontWeight: FontWeight.w500,
+                        color: theme.colorScheme.onPrimary,
                       ),
                     ),
-                    const Spacer(),
-                    Icon(icon, size: 20, color: theme.colorScheme.primary),
-                  ],
-                ),
-                const Spacer(),
-                Text(title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
+                  ),
+                  const Spacer(),
+                  Icon(icon, size: 20, color: theme.colorScheme.primary),
+                ],
+              ),
+              const Spacer(),
+              Text(title,
                   maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.titleSmall),
+              const SizedBox(height: 2),
+              Flexible(
+                child: Text(
+                  subtitle,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -298,8 +289,9 @@ class _FlowStep extends StatelessWidget {
   }
 }
 
-class _NavCard extends StatelessWidget {
-  const _NavCard({
+/// 工具行卡：图标方块 + 标题/副标题 + 箭头。
+class _ToolRow extends StatelessWidget {
+  const _ToolRow({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -315,21 +307,33 @@ class _NavCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Card(
-      margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           child: Row(
             children: [
-              Icon(icon, size: 24, color: theme.colorScheme.primary),
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(icon,
+                    size: 20, color: theme.colorScheme.onPrimaryContainer),
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: theme.textTheme.titleSmall),
+                    Text(title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall),
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
@@ -342,6 +346,8 @@ class _NavCard extends StatelessWidget {
                   ],
                 ),
               ),
+              Icon(Icons.chevron_right,
+                  size: 20, color: theme.colorScheme.outline),
             ],
           ),
         ),
