@@ -92,8 +92,8 @@ void main() {
 
   // 三模式共用同一个退出码契约：0 条可用结果 → exit 1，但**仍然写 result.csv**。
   // 后半句是 Dart 侧 `pipeline.dart:142-148` 的 partial-CSV 兜底赖以成立的前提 ——
-  // 只 exit 1 不写 CSV 的话，App 会抛「pipeline 退出码 N，且没有产出结果」，
-  // 用户在「全部节点都不通」这种常见场景下只看到一行开发者报错。
+  // 只 exit 1 不写 CSV 的话，App 会抛「没有测出可用结果（引擎退出码 N）」，
+  // 用户在「全部节点都不通」这种常见场景下一条明细行都看不到。
   // （该契约在 94dfe5f2 上已用真实二进制逐模式实测确认；此处只能做源码级钉住，
   //  因为本仓库没有 go.mod，跑不了 go test。）
   test('三种模式全失败时都必须在 exit 1 之前把失败明细写进 CSV', () {
@@ -113,7 +113,7 @@ void main() {
           reason: '$fn 必须以「可用结果数」判定成败，不能用「跑没跑过」');
       // 关键顺序：先写盘、再给「0 条可用」的失败判定。
       // 反过来就是「exit 1 了但 CSV 没落盘」，App 侧 partial-CSV 兜底会失效，
-      // 用户看到的是「pipeline 退出码 N，且没有产出结果」这种开发者报错。
+      // 用户看到的是「没有测出可用结果（引擎退出码 N）」而不是失败明细。
       expect(zeroAt, greaterThan(writeAt),
           reason: '$fn 里 writeResultCSV 必须早于 ok == 0 的失败返回');
     }
@@ -122,7 +122,7 @@ void main() {
   // `-targets`（一键测试 = 延迟 + 速度）走的是 runSpeedTest，它**不经过**
   // report*Results：延迟阶段一条都没过时，得先补写一份失败明细再 return nil，
   // 上层才会 exit 1 且产物仍在。少了这一步，App 在「全部节点不通」时会抛
-  // 「pipeline 退出码 N，且没有产出结果」，而不是展示失败明细列表。
+  // 「没有测出可用结果（引擎退出码 N）」，而不是展示失败明细列表。
   // 实测证据：BOTH_FAIL → exit 1 / CSV 5 行（表头 + 4 条「延迟测试失败」）。
   test('runSpeedTest 延迟全失败时必须先补写 CSV 再 return nil', () {
     final go = File('engine/pipeline.go').readAsStringSync();
