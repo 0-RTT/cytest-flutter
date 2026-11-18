@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../core/bin.dart';
+import '../core/idna.dart';
 import '../core/paths.dart';
 import '../core/settings.dart';
 import 'xray.dart' show terminateProcess;
@@ -181,18 +182,91 @@ class Pipeline {
         '${two(now.hour)}${two(now.minute)}${two(now.second)}';
   }
 
-  static String _configJson(AppSettings s) =>
+  /// 生成交给 Go 引擎的 config.json。
+  ///
+  /// **绝不写 `httpProxy`**：这里与 Kotlin 版严格对齐 ——
+  /// 原版 `LocalSpeedProtocol.configJson()` 的字段集只有
+  /// `speedTestURL / dialTimeout / downloadTimeout / maxSpeedConcurrency /
+  /// maxLatency / maxLatencyConcurrency / MaxSha1Concurrency`，
+  /// `LocalSpeedRunner` 的启动参数也只有 `-only-speed -targets -config -result`，
+  /// 全工程 grep `httpProxy` 零命中。也就是说**原版的优选 IP 测速永远是直连**。
+  ///
+  /// 曾经的 Flutter 版把设置页一个「测速代理」值塞进 httpProxy，
+  /// 结果用户填了一个非 HTTP 代理的地址（节点端口 / CDN 入口）后，
+  /// 553 条候选全部被 `dialTunnelViaProxy` 判成「代理隧道失败」——
+  /// 表面是「所有节点都挂了」，实际是测速流量被一条假隧道全吃掉了。
+  /// 引擎侧的 httpProxy 能力保留（远程执行 / CLI 仍可用），但 App 不传。
+  static String _configJson(AppSettings s) => buildEngineConfig(s);
+
+  /// 生成交给 Go 引擎的 config.json 文本（纯函数，可直接单测）。
+  ///
+  /// 与 [_configJson] 是同一份实现：`_configJson` 只保留旧名转调，避免
+  /// 已有回归测试（test/speed_direct_test.dart、test/pipeline_mode_test.dart）
+  /// 依赖的符号消失。公开还有一个原因 —— 让
+  /// test/speed_url_idn_test.dart 能断言**真实产出**，而不是「源码里含有某个
+  /// 字符串」这种抓不出真 Bug 的弱断言。
+  ///
+  /// **全 App 只有这一处组装 config.json**：远端执行 `RemoteRunner` 也转调它。
+  /// 曾经两处各抄一份、都直接写入 `s.speedUrl`，于是本地与远端两条路径
+  /// 一起被 IDN 主机名打成「全部失败」（见 [engineSpeedUrl]）。
+  static String buildEngineConfig(AppSettings s) =>
       const JsonEncoder.withIndent('  ').convert({
         'TargetSHA1Hash': s.fingerprint,
         'MaxSha1Concurrency': s.sha1Concurrency,
-        'speedTestURL': s.speedUrl,
+        'speedTestURL': engineSpeedUrl(s.speedUrl),
         'dialTimeout': s.dialTimeout,
         'downloadTimeout': s.downloadTimeout,
         'maxLatencyConcurrency': s.latencyConcurrency,
         'maxSpeedConcurrency': s.speedConcurrency,
         'maxLatency': s.maxLatency,
-        if (s.httpProxy.trim().isNotEmpty) 'httpProxy': s.httpProxy.trim(),
       });
+
+  /// 把设置里的测速地址归一成「主机名一定全 ASCII（punycode）」的形式。
+  ///
+  /// 凡是把测速地址交给引擎的地方都必须过它（本地三阶段 / 远端执行）。
+  ///
+  /// **为什么必须归一（本 Bug 的根因）**：Go 引擎的 `ClientPool.NewClient`
+  /// 构造 `tls.Config{}` 时**不设 ServerName**，`http.Transport` 于是拿 URL 里的
+  /// 原始主机名当 SNI 与 Host 头。默认测速地址 `https://е.eu.org/300.zip` 里的
+  /// `е` 是**西里尔字母 U+0435**（不是拉丁 e），SNI 就成了非 ASCII 的
+  /// `е.eu.org` —— Cloudflare 边缘不认识这种 SNI，直接回
+  /// `TLS alert 40 (handshake failure)`，连证书都读不回来。后果不是「速度测错」，
+  /// 而是**每一条候选都在握手阶段被否掉**，用户看到「本地测试全部失败」，
+  /// 从而误判「所有 CDN 都挂了」。
+  ///
+  /// 实测对照（同一个边缘 IP 104.21.17.194:443）：
+  /// - SNI=`xn--e1a.eu.org` → 握手成功（`subject=CN=xn--e1a.eu.org`），
+  ///   下载返回 HTTP 206 / 262144 字节；
+  /// - SNI=`е.eu.org` → `handshake failure (alert 40)`，只读回 7 字节。
+  /// 即：候选 IP 与测速文件本身都没问题，唯一的问题是 SNI 用了非 punycode 主机名。
+  ///
+  /// **为什么改在「交给引擎的边界」而不是改 `Defaults.speedUrl`**：
+  /// Kotlin 原版（`Defaults.kt:17`）保留的也是 Unicode 默认值，只在
+  /// `LocalSpeedProtocolTest.kt:168` 断言的 `describe()` 输出里归一成
+  /// `xn--e1a.eu.org:443/300.zip` —— 归一发生在**使用侧**。只把默认值改成
+  /// `xn--` 字面量只能救默认值，用户手填任何 IDN 域名仍然全挂。
+  ///
+  /// **失败语义**：`probeUri` 抛的异常一律转成**人话 [Exception]**，让
+  /// `AppState.runLocal` / `RemoteRunner` 的 catch 把它显示在日志里。
+  /// **绝不静默退回原串** —— 退回去就等于又变成「引擎退出码 N、所有候选都失败」
+  /// 这种用户完全看不懂的现象（host 名不对时改设置才是正解，不是重试）。
+  ///
+  /// 协议 / 端口 / path / query 全部保留：只替换 host（`Uri.replace` 语义）。
+  static String engineSpeedUrl(String raw) {
+    try {
+      return probeUri(raw).toString();
+    } on UnsupportedIdnException catch (e) {
+      throw Exception(
+        '测速地址的域名含不支持的字符（${e.message}），无法转成 punycode：$raw\n'
+        '请改成一个纯 ASCII 的直链，或把域名换成 xn-- 形式的 punycode 后重试',
+      );
+    } on FormatException catch (e) {
+      throw Exception(
+        '测速地址不可用：${e.message}\n'
+        '请在「线路与代理 → 测速地址」填一个 http(s) 直链',
+      );
+    }
+  }
 
   static Future<List<Map<String, String>>> _readCsv(File file) async {
     if (!await file.exists()) return const [];

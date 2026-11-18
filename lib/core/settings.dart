@@ -51,7 +51,15 @@ class AppSettings {
   /// 打完标记之后，用户再手填 200 就是他自己的选择，不能再被下次启动改掉。
   bool latencyThresholdMigrated;
 
+  /// 已停用：原版 Kotlin 没有「测速代理」这个概念，优选 IP 测速始终直连
+  /// （`LocalSpeedProtocol.configJson` 不含 httpProxy，`LocalSpeedRunner` 也不传 `-proxy`）。
+  ///
+  /// 字段保留只为兼容旧 `settings.json` / 备份文件的读写，**任何代码都不该再读它**；
+  /// `Pipeline._configJson` 已不再写入，UI 入口也已移除。
+  /// 历史事故：填一个非 HTTP 代理的地址（节点端口 / CDN 入口）会让全部候选报
+  /// 「代理隧道失败」，看起来像「所有节点都挂了」。
   String httpProxy;
+
   String fetchProxy;
   List<String> vlessLinks;
   List<String> proxyIps;

@@ -22,7 +22,6 @@ class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _dial;
   late TextEditingController _download;
   late TextEditingController _speedUrl;
-  late TextEditingController _httpProxy;
   late TextEditingController _fetchProxy;
   late TextEditingController _ghRepo;
   late TextEditingController _ghToken;
@@ -50,7 +49,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _dial = TextEditingController(text: '${s.dialTimeout}');
     _download = TextEditingController(text: '${s.downloadTimeout}');
     _speedUrl = TextEditingController(text: s.speedUrl);
-    _httpProxy = TextEditingController(text: s.httpProxy);
     _fetchProxy = TextEditingController(text: s.fetchProxy);
     _ghRepo = TextEditingController(text: s.githubRepo);
     _ghToken = TextEditingController(text: s.githubToken);
@@ -67,7 +65,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     for (final c in [
       _sha1, _latency, _speed, _maxLatency, _dial, _download,
-      _speedUrl, _httpProxy, _fetchProxy, _ghRepo, _ghToken,
+      _speedUrl, _fetchProxy, _ghRepo, _ghToken,
       _remoteHost, _remotePort, _remoteUser, _remotePassword, _remoteKey,
       _vless,
     ]) {
@@ -103,7 +101,6 @@ class _SettingsPageState extends State<SettingsPage> {
     s.dialTimeout = int.tryParse(_dial.text) ?? s.dialTimeout;
     s.downloadTimeout = int.tryParse(_download.text) ?? s.downloadTimeout;
     s.speedUrl = _speedUrl.text.trim();
-    s.httpProxy = _httpProxy.text.trim();
     s.fetchProxy = _fetchProxy.text.trim();
     s.githubRepo = repoSlug;
     s.githubToken = _ghToken.text.trim();
@@ -229,8 +226,11 @@ class _SettingsPageState extends State<SettingsPage> {
                 _num('下载超时（秒）', _download, hint: '默认 10'),
               ]),
               _section(theme, '测速', '窗口 3s / 上限 64MiB，首 256KiB 预热丢弃', [
+                // 「测速代理」已移除：原版 Kotlin 没有这个开关，优选 IP 测速
+                // 始终直连（LocalSpeedProtocol.configJson 不含 httpProxy）。
+                // 曾经在这里填「节点端口 / CDN 入口」会让全部候选报
+                // 「代理隧道失败」，等同于一键测试彻底失效。
                 _text('测速地址', _speedUrl),
-                _text('测速代理', _httpProxy, hint: '可选，留空直连'),
                 _text('抓取代理', _fetchProxy, hint: 'WebView 抓取用，留空走 Xray 或直连'),
               ]),
               _section(theme, 'GitHub 推送', '把订阅写到仓库文件', [
