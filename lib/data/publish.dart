@@ -1,3 +1,4 @@
+import 'mihomo.dart';
 import 'node_template.dart';
 import 'vless.dart';
 
@@ -17,6 +18,7 @@ class PublishBundle {
     required this.links,
     required this.subscription,
     required this.yaml,
+    this.yamlErrors = const [],
   });
 
   /// 替换 ip:port 后的 vless 链接（每行一条）。
@@ -27,6 +29,9 @@ class PublishBundle {
 
   /// mihomo YAML 配置。
   final String yaml;
+
+  /// 生成 YAML 时被跳过的链接（`第 N 条：原因`）。
+  final List<String> yamlErrors;
 }
 
 /// 把模板里的 `host:port` 槽位逐个替换成选中的 `ip:port`，
@@ -34,6 +39,7 @@ class PublishBundle {
 PublishBundle buildPublish({
   required String template,
   required List<String> targets,
+  MihomoOptions options = const MihomoOptions(),
 }) {
   final t = template.trim();
   if (t.isEmpty) throw const PublishException('先填入一条 vless 模板链接');
@@ -50,11 +56,14 @@ PublishBundle buildPublish({
   final links = expandTemplate(t, targets);
   if (links.isEmpty) throw const PublishException('没有生成任何链接');
 
+  // 与 Kotlin MihomoYaml.build 同构：逐条解析已展开的链接，
+  // 节点名取各自的 #备注，而不是用模板的序号拼 IP。
+  final mihomo = buildMihomoConfig(links, options: options);
+
   return PublishBundle(
     links: links,
     subscription: subscription(links),
-    // 与 Kotlin MihomoYaml.build 同构：逐条解析已展开的链接，
-    // 节点名取各自的 #备注，而不是用模板的序号拼 IP。
-    yaml: buildMihomoYaml(links),
+    yaml: mihomo.yaml,
+    yamlErrors: mihomo.errors,
   );
 }

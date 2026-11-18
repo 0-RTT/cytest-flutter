@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/github.dart';
+import '../../data/mihomo.dart';
 import '../../data/publish.dart';
 import '../../state/app_state.dart';
 import '../widgets/log_panel.dart';
@@ -42,6 +43,12 @@ class _PublishPageState extends State<PublishPage> {
   /// 打开后临时起一条 Xray，推完立即关闭 —— 与 Kotlin `github.viaProxy` 一致。
   bool _useProxy = false;
   bool _busy = false;
+
+  /// mihomo 高级选项（默认与 Kotlin MihomoOptions / 生成器一致，全开）。
+  MihomoOptions _options = const MihomoOptions();
+  bool _advanced = false;
+  late final TextEditingController _lanDns = TextEditingController();
+
   PublishBundle? _bundle;
   String? _error;
 
@@ -61,6 +68,7 @@ class _PublishPageState extends State<PublishPage> {
     _subPath.dispose();
     _yamlPath.dispose();
     _previewScroll.dispose();
+    _lanDns.dispose();
     super.dispose();
   }
 
@@ -70,6 +78,7 @@ class _PublishPageState extends State<PublishPage> {
       _bundle = buildPublish(
         template: _template.text,
         targets: widget.targets,
+        options: _options,
       );
       _error = _bundle!.yaml.isEmpty ? 'mihomo YAML 生成失败：候选地址无法解析' : null;
     } catch (e) {
@@ -151,6 +160,91 @@ class _PublishPageState extends State<PublishPage> {
 
   Future<void> _copyFromPanel() => _copy();
 
+  /// mihomo 高级选项：每项改动都立刻重算 YAML，预览随之更新。
+  Widget _advancedPanel(ThemeData theme) => Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Column(
+          children: [
+            _switchRow(
+              theme,
+              'TUN 模式',
+              '接管全部流量，需要内核支持',
+              _options.tun,
+              (v) => _setOptions(_options.copyWith(tun: v)),
+            ),
+            _switchRow(
+              theme,
+              '自动选择组',
+              '两个以上节点时生成 url-test',
+              _options.autoGroup,
+              (v) => _setOptions(_options.copyWith(autoGroup: v)),
+            ),
+            _switchRow(
+              theme,
+              '节点 UDP',
+              '关闭后 UDP 流量不走代理',
+              _options.udp,
+              (v) => _setOptions(_options.copyWith(udp: v)),
+            ),
+            _switchRow(
+              theme,
+              'IPv6',
+              '关闭可避免部分网络下的解析异常',
+              _options.ipv6,
+              (v) => _setOptions(_options.copyWith(ipv6: v)),
+            ),
+            _switchRow(
+              theme,
+              '拦截广告',
+              '引入 reject 规则集，体积较大',
+              _options.blockAds,
+              (v) => _setOptions(_options.copyWith(blockAds: v)),
+            ),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _lanDns,
+              onChanged: (v) =>
+                  _setOptions(_options.copyWith(lanDns: v.trim())),
+              maxLines: 1,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontFamilyFallback: ['sans-serif'],
+                fontSize: 12,
+              ),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
+                labelText: '内网 DNS（可选）',
+                hintText: '192.168.1.1',
+              ),
+            ),
+          ],
+        ),
+      );
+
+  void _setOptions(MihomoOptions next) {
+    _options = next;
+    _rebuild();
+    setState(() {});
+  }
+
+  Widget _switchRow(
+    ThemeData theme,
+    String title,
+    String subtitle,
+    bool value,
+    ValueChanged<bool> onChanged,
+  ) =>
+      SwitchListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        title: Text(title, style: theme.textTheme.bodyMedium),
+        subtitle: Text(subtitle, style: theme.textTheme.labelSmall),
+        value: value,
+        onChanged: _busy ? null : onChanged,
+      );
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -163,8 +257,10 @@ class _PublishPageState extends State<PublishPage> {
       appBar: AppBar(title: const Text('推送')),
       body: SafeArea(
         top: false,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        // 整页可滚：模板/产物/高级选项内容较多，键盘弹出时 Column 会把
+        // 预览区压到比标题栏还小，进而 RenderFlex 溢出。
+        child: ListView(
+          padding: EdgeInsets.zero,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
@@ -280,6 +376,34 @@ class _PublishPageState extends State<PublishPage> {
                               : 'mihomo 文件名（YAML）',
                         ),
                       ),
+                      // 高级选项只影响 YAML，base64 模式下不显示。
+                      if (_mode == 'yaml') ...[
+                        const SizedBox(height: 4),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () =>
+                                setState(() => _advanced = !_advanced),
+                            icon: Icon(
+                              _advanced
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              size: 18,
+                            ),
+                            label: const Text('高级选项'),
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                        ),
+                        if (_advanced)
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 200),
+                            child: SingleChildScrollView(
+                              child: _advancedPanel(theme),
+                            ),
+                          ),
+                      ],
                       const SizedBox(height: 10),
                       Row(
                         children: [
@@ -320,7 +444,8 @@ class _PublishPageState extends State<PublishPage> {
               ),
             ),
             const SizedBox(height: 10),
-            Expanded(
+            SizedBox(
+              height: 280,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                 child: LogPanel(

@@ -15,6 +15,12 @@ class Vless {
   final String mode;
   final String name;
 
+  /// 原始 query 参数（键小写，值已解码）。
+  ///
+  /// mihomo 配置需要 alpn/flow/pbk/sid/spx/servicename/maxearlydata/xhttp-* 等
+  /// 二十来个参数，逐个建字段太散，保留整张表更贴合 Kotlin `LinkCodec.query`。
+  final Map<String, String> query;
+
   const Vless({
     required this.uuid,
     required this.host,
@@ -28,6 +34,7 @@ class Vless {
     required this.fingerprint,
     required this.mode,
     required this.name,
+    this.query = const {},
   });
 
   static Vless? tryParse(String link) {
@@ -41,25 +48,28 @@ class Vless {
     final port = uri.hasPort ? uri.port : 0;
     if (uuid.isEmpty || host.isEmpty || port <= 0) return null;
 
-    final q = uri.queryParameters;
-    final network = (q['type'] ?? 'tcp').toLowerCase();
+    // 不用 `uri.queryParameters`：它按 form-urlencoded 语义把 `+` 解成空格，
+    // 而 vless 链接的 `+` 是字面量（Kotlin 的 LinkCodec.decode 也特意避开这点）。
+    final q = _parseQuery(uri.query);
+    final network = (q['type'] ?? q['network'] ?? 'tcp').toLowerCase();
     final security = (q['security'] ?? 'none').toLowerCase();
     final rawPath = q['path'] ?? '';
     final rawMode = q['mode'] ?? '';
 
     return Vless(
-      uuid: uuid,
+      uuid: _decodeComponent(uuid),
       host: host,
       port: port,
       network: network,
       security: security,
-      sni: q['sni'] ?? '',
+      sni: q['sni'] ?? q['peer'] ?? q['servername'] ?? '',
       wsHost: q['host'] ?? '',
       wsPath: rawPath.isEmpty ? '/' : rawPath,
       alpn: q['alpn'] ?? '',
-      fingerprint: q['fp'] ?? '',
+      fingerprint: q['fp'] ?? q['client-fingerprint'] ?? '',
       mode: rawMode.isEmpty ? 'auto' : rawMode,
       name: _decodeFragment(uri.fragment),
+      query: q,
     );
   }
 
@@ -81,6 +91,31 @@ class Vless {
 
 /// Dart 的 Uri.fragment 不会自动解码，这里显式解码以与 Kotlin 版行为一致。
 String _decodeFragment(String raw) {
+  if (raw.isEmpty) return '';
+  try {
+    return Uri.decodeComponent(raw);
+  } catch (_) {
+    return raw;
+  }
+}
+
+/// 解析 query：`a=1&b=2`，键小写，值做百分号解码（**不把 `+` 当空格**）。
+Map<String, String> _parseQuery(String raw) {
+  if (raw.isEmpty) return const {};
+  final out = <String, String>{};
+  for (final pair in raw.split('&')) {
+    if (pair.isEmpty) continue;
+    final cut = pair.indexOf('=');
+    final rawKey = cut < 0 ? pair : pair.substring(0, cut);
+    final rawValue = cut < 0 ? '' : pair.substring(cut + 1);
+    final key = _decodeComponent(rawKey).trim().toLowerCase();
+    if (key.isEmpty) continue;
+    out[key] = _decodeComponent(rawValue);
+  }
+  return out;
+}
+
+String _decodeComponent(String raw) {
   if (raw.isEmpty) return '';
   try {
     return Uri.decodeComponent(raw);

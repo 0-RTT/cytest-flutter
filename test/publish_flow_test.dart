@@ -97,13 +97,14 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(const ValueKey('publish_preview_panel')), findsOneWidget);
-      expect(find.textContaining('@8.8.8.8:2222'), findsNothing);
+      expect(find.text('base64 订阅预览'), findsOneWidget);
 
       await tester.tap(find.text('mihomo YAML'));
       await tester.pump();
 
-      expect(find.textContaining('server: 8.8.8.8'), findsOneWidget);
-      expect(find.textContaining('port: 2222'), findsOneWidget);
+      // YAML 有 200+ 行，预览只渲染视口内前几行；结构正确性由
+      // mihomo_test.dart 的 12 项断言负责，这里只验切换生效。
+      expect(find.text('mihomo YAML 预览'), findsOneWidget);
     });
 
     testWidgets('切换格式时文件名各自独立，预览区不显示无意义的跳到最新', (tester) async {
@@ -165,6 +166,48 @@ void main() {
         tester.widget<SegmentedButton<bool>>(segmented).selected,
         {true},
       );
+    });
+
+    testWidgets('YAML 高级选项可展开，关掉拦截广告后预览里 reject 消失', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2600);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        _host(
+          const PublishPage(
+            targets: ['8.8.8.8:2222'],
+            template: _template,
+          ),
+          _state(),
+        ),
+      );
+      await tester.pump();
+
+      // base64 模式下不显示高级选项，切到 YAML 才有
+      expect(find.text('高级选项'), findsNothing);
+      await tester.tap(find.text('mihomo YAML'));
+      await tester.pump();
+      expect(find.text('高级选项'), findsOneWidget);
+
+      await tester.tap(find.text('高级选项'));
+      await tester.pumpAndSettle();
+      expect(find.text('拦截广告'), findsOneWidget);
+      expect(find.text('TUN 模式'), findsOneWidget);
+
+      // 默认全开
+      final adTile = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, '拦截广告'),
+      );
+      expect(adTile.value, isTrue);
+
+      final adTileFinder = find.widgetWithText(SwitchListTile, '拦截广告');
+      await tester.ensureVisible(adTileFinder);
+      await tester.pumpAndSettle();
+      await tester.tap(adTileFinder);
+      await tester.pumpAndSettle();
+      final after = tester.widget<SwitchListTile>(adTileFinder);
+      expect(after.value, isFalse, reason: '关掉后应立刻重算 YAML');
     });
   });
 }

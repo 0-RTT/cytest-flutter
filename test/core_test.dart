@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:cytest/data/mihomo.dart';
 import 'package:cytest/data/node_template.dart';
 import 'package:cytest/data/pipeline.dart';
 import 'package:cytest/data/vless.dart';
@@ -144,8 +145,12 @@ bad-line
         '&path=/104.202.107.180:9443&security=tls&sni=x.example.com&fp=chrome&alpn=h2#节点A',
         ['1.2.3.4:8443', '5.6.7.8:2053'],
       );
-      final yaml = buildMihomoYaml(links);
+      final out = buildMihomoConfig(links);
+      final yaml = out.yaml;
 
+      expect(out.proxies, 2);
+      expect(out.groups, 3);
+      expect(out.errors, isEmpty);
       expect(yaml, contains('proxies:'));
       expect(yaml, contains('type: vless'));
       expect(yaml, contains('server: 1.2.3.4'));
@@ -169,16 +174,16 @@ bad-line
         'vless://u@1.1.1.1:443?type=tcp',
         ['1.2.3.4:8443', '5.6.7.8:2053'],
       );
-      final yaml = buildMihomoYaml(links);
+      final yaml = buildMihomoConfig(links).yaml;
       expect(yaml, contains('  - name: "节点-1"\n'));
       expect(yaml, contains('  - name: "节点-2"\n'));
     });
 
     test('备注含空格与中文时按 Kotlin SAFE_PLAIN 加引号', () {
-      final yaml = buildMihomoYaml(const [
+      final yaml = buildMihomoConfig(const [
         'vless://u@1.1.1.1:443?type=tcp#A',
         'vless://u@2.2.2.2:443?type=tcp#香港 01',
-      ]);
+      ]).yaml;
       // 纯 ASCII 安全字符裸写，中文/空格加引号
       expect(yaml, contains('  - name: A\n'));
       expect(yaml, contains('  - name: "香港 01"\n'));
