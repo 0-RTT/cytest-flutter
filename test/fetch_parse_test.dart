@@ -2,10 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:flutter_inappwebview/flutter_inappwebview.dart' show Cookie;
-
-import 'package:cytest/data/censys_http.dart'
-    show censysJsonOrNull, buildCookieHeader, normalizeDocumentCookie;
+import 'package:cytest/data/censys_json.dart' show censysJsonOrNull;
 
 /// 直连 `/api/search` 时，WebView `innerText` 的三种真实形态 + 判定。
 void main() {
@@ -70,57 +67,4 @@ void main() {
     });
   });
 
-  group('buildCookieHeader · Cookie 请求头构造（最容易漏的一步）', () {
-    test('空列表 → 空串（不能返回 "; "，否则服务端认为带了空 cookie）', () {
-      expect(buildCookieHeader(const <Cookie>[]), '');
-    });
-
-    test('多个 cookie 用 "; " 连接，顺序按传入顺序', () {
-      final header = buildCookieHeader(<Cookie>[
-        Cookie(name: 'cf_clearance', value: 'abc123'),
-        Cookie(name: 'PHPSESSID', value: 'xyz'),
-      ]);
-
-      expect(header, 'cf_clearance=abc123; PHPSESSID=xyz');
-    });
-
-    test('同名 cookie 后者覆盖前者（与浏览器行为一致）', () {
-      final header = buildCookieHeader(<Cookie>[
-        Cookie(name: 'a', value: '1'),
-        Cookie(name: 'a', value: '2'),
-      ]);
-
-      expect(header, 'a=2');
-    });
-
-    test('name 为空/空白的项被跳过', () {
-      final header = buildCookieHeader(<Cookie>[
-        Cookie(name: '  ', value: 'ignored'),
-        Cookie(name: 'a', value: '1'),
-      ]);
-
-      expect(header, 'a=1');
-    });
-
-    test('value 为 null 时保留 "name="（有些服务端要求该键出现）', () {
-      final header = buildCookieHeader(<Cookie>[Cookie(name: 'flag')]);
-
-      expect(header, 'flag=');
-    });
-  });
-
-  group('normalizeDocumentCookie · CookieManager 不可用时的兜底', () {
-    test('去掉空白与结尾分号，保留 key=value', () {
-      expect(normalizeDocumentCookie(' a=1;  b=2; '), 'a=1; b=2');
-    });
-
-    test('空串 / 只有分号 → 空串', () {
-      expect(normalizeDocumentCookie(''), '');
-      expect(normalizeDocumentCookie(' ; ; '), '');
-    });
-
-    test('没有 "=" 的片段被丢掉（不是合法 cookie）', () {
-      expect(normalizeDocumentCookie('a=1; garbage; b=2'), 'a=1; b=2');
-    });
-  });
 }

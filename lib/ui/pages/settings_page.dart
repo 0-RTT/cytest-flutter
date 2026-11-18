@@ -145,9 +145,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 _text('测速代理', _httpProxy, hint: '可选，留空直连'),
                 _text('抓取代理', _fetchProxy, hint: 'WebView 抓取用，留空走 Xray 或直连'),
               ]),
-              _section(theme, 'Censys 抓取', 'Cookie 决定下次能不能走纯 HTTP', [
-                _cookieTile(context, theme),
-              ]),
               _section(theme, 'GitHub 推送', '把订阅写到仓库文件', [
                 _text('仓库', _ghRepo, hint: 'owner/name'),
                 _text('文件路径', _ghPath, hint: '默认 cytest-sub.txt'),
@@ -171,41 +168,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  /// 「Censys Cookie」状态行：只读展示 + 清除。
-  ///
-  /// 为什么要给用户一个清除入口：Cookie 只在抓取成功时自动写入，用户看不到也删不掉。
-  /// 站点换了挑战策略后，这份陈旧 Cookie 会让每次抓取都先白试一次纯 HTTP；
-  /// 有了这个按钮，出问题时可以立刻把状态归零复现「首次抓取」。
-  Widget _cookieTile(BuildContext context, ThemeData theme) {
-    final state = context.watch<AppState>();
-    final cookie = state.settings.censysCookie;
-    final has = cookie.isNotEmpty;
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              has
-                  ? '已保存（${cookie.length} 字符）—— 抓取时会先试纯 HTTP，未命中自动回退 WebView'
-                  : '未保存 —— 首次抓取成功后自动写入，之后再试纯 HTTP 快路径',
-              style: theme.textTheme.bodySmall,
-            ),
-          ),
-          TextButton(
-            onPressed: has
-                ? () async {
-                    state.settings.censysCookie = '';
-                    await state.saveSettings();
-                  }
-                : null,
-            child: const Text('清除'),
-          ),
-        ],
       ),
     );
   }

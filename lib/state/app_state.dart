@@ -158,14 +158,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// 用指定的 proxyip 启动单线路代理（null = 链接原样，不做路径替换）。
-  Future<void> startLineWith(ProxyIp? proxy) async {
-    final v = primaryLine;
-    if (v == null) throw Exception('先在「线路与代理」填一条 vless 链接');
-    await xray.start(v, proxy: proxy);
-    notifyListeners();
-  }
-
   /// 启动时载入 proxyip.csv。
   ///
   /// **只在用户还没在设置里手输过时载入**：设置里的列表是显式编辑的，
@@ -260,15 +252,18 @@ class AppState extends ChangeNotifier {
 
   List<ProxyIp> get proxyPool => parseProxyCsv(settings.proxyIps.join('\n'));
 
-  Future<void> startLine() async {
+  /// 用指定 proxyip 启动一条临时代理（null = 链接原样，不换回源 path）。
+  ///
+  /// 供抓取 / 推送 GitHub 短时调用；与已删除的「线路页手动启停」不同，
+  /// 这个入口是工作流程内部使用的，调用方负责在用完后 [stopProxyLine]。
+  Future<void> startProxyLine(ProxyIp? proxy) async {
     final v = primaryLine;
     if (v == null) throw Exception('先在「线路与代理」填一条 vless 链接');
-    final pool = proxyPool;
-    await xray.start(v, proxy: pool.isEmpty ? null : pool.first);
+    await xray.start(v, proxy: proxy);
     notifyListeners();
   }
 
-  Future<void> stopLine() async {
+  Future<void> stopProxyLine() async {
     await xray.stop();
     notifyListeners();
   }

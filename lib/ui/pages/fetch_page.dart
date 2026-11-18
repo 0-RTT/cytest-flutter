@@ -7,7 +7,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/settings.dart';
-import '../../data/censys_fetch.dart';
+import '../../data/censys_diag.dart';
 import '../../data/censys_native.dart';
 import '../../data/vless.dart';
 import '../../state/app_state.dart';
@@ -25,10 +25,6 @@ import 'test_page.dart';
 ///
 /// 所以本页**没有任何 WebView**：抓取与挑战处理全在原生侧完成（`cytest/censys`
 /// channel，见 `MainActivity.kt`），Dart 只拿到最终 JSON。
-///
-/// 唯一的例外是「纯 HTTP 快路径」：上次 WebView 抓成功后会把内核 Cookie 读到设置里，
-/// 下次抓取先用它直连 API，命中就完全跳过一次 WebView。判定与回退见
-/// `lib/data/censys_fetch.dart`（`shouldTryHttp` / `judgeHttpFailure`）。
 class FetchPage extends StatefulWidget {
   const FetchPage({super.key});
 
@@ -45,6 +41,12 @@ class _FetchPageState extends State<FetchPage> {
 
   bool _fetching = false;
 
+  /// 抓取走本机 VLESS 代理还是直连。默认走代理（Kotlin 的 `useProxy=true`）。
+  ///
+  /// 直连时完全不启动 Xray、也不设 WebView 代理覆盖；适合出口 IP 本来就干净、
+  /// 或只是想验证「是不是代理把 Censys 带偏了」的场景。
+  bool _useProxy = true;
+
   /// 状态串：当前在做什么 / 走的是哪条路径。
   /// 删掉预览之后，这是用户与排障者唯一的可观测信息。
   String _diag = '待命';
@@ -53,17 +55,6 @@ class _FetchPageState extends State<FetchPage> {
 
   /// 本次成功时用的 proxyip（null = 链接原样），只用于状态串展示。
   String? _usedProxy;
-
-  /// 本次是否命中「纯 HTTP 快路径」（省掉了一次 WebView）。
-  bool _viaHttp = false;
-
-  /// 走 WebView 时纯 HTTP 未命中的原因（没试快路径为 null）。
-  String? _httpNote;
-
-  /// 本会话内是否已判定「纯 HTTP 用不上」。
-  ///
-  /// 页面级持有：同一站点在本次进程里连着失败两次就没必要每次再等一遍。
-  bool _httpDisabled = false;
 
   String? _error;
 
@@ -96,7 +87,7 @@ class _FetchPageState extends State<FetchPage> {
       return;
     }
 
-    // 测速期间必须拒绝：下面会 startLine() → XrayProc.start() → stop()，
+    // 测速期间必须拒绝：下面会起 Xray 单线路代理，
     // 会把正在跑的批量测速进程直接杀掉，用户完全看不出发生了什么。
     final appState = context.read<AppState>();
     if (appState.linkTestRunning) {
@@ -114,20 +105,18 @@ class _FetchPageState extends State<FetchPage> {
       _previewTargets = const [];
       _previewRaw = '';
       _usedProxy = null;
-      _viaHttp = false;
-      _httpNote = null;
       _diag = '准备中…';
     });
 
     final state = context.read<AppState>();
     final started = DateTime.now();
 
-    // 按 ordered 顺序轮换 proxyip。每条 proxyip 内部先试纯 HTTP（有 Cookie 时），
-    // 没命中再回退原生 WebView —— 后者是唯一可靠通道：站点是 Fastly 分级放行，
-    // 纯 HTTP 在 TLS 层就可能被拒（实测带齐 27 个浏览器头仍返回挑战页），
-    // 插件的 headless 实现有指纹缺陷；原生 WebView 不 attach 也能过挑战，
-    // 与 Kotlin 版 `CensysWebFetcher` 同款。
-    final hasLine = state.settings.vlessLinks.isNotEmpty;
+    // 按 ordered 顺序轮换 proxyip；每条出口重启一次 Xray，把 proxyip
+    // 替换进 vless 的回源 path，再让原生 WebView 走本地 Xray 端口。
+    // 与 Kotlin CensysFetcher.fetch(query, useProxy) 同构：
+    // - 走代理 + 有线路：逐条出口轮换；
+    // - 直连（或没配线路）：只试一次，完全不碰 Xray。
+    final hasLine = _useProxy && state.settings.vlessLinks.isNotEmpty;
     final candidates = hasLine ? state.orderedProxyPool : const <ProxyIp>[];
     final attempts = candidates.isEmpty
         ? const <ProxyIp?>[null] // 没有 proxyip：链接原样，只试一次
@@ -135,13 +124,6 @@ class _FetchPageState extends State<FetchPage> {
 
     String? body;
     String? lastError;
-
-    // 抓取编排的状态载体：Cookie 与「本会话是否已放弃纯 HTTP」。
-    // 每次都从设置里取 Cookie —— 上次 WebView 抓成功后回写的那份就在里面。
-    final plan = CensysFetchPlan(
-      cookie: state.settings.censysCookie,
-      httpDisabled: _httpDisabled,
-    );
 
     for (final proxy in attempts) {
       final port = await _startProxy(state, proxy, hasLine);
@@ -152,46 +134,29 @@ class _FetchPageState extends State<FetchPage> {
       if (mounted) {
         setState(() {
           _diag = '抓取中…'
-              '${proxy == null ? '' : '（proxyip ${proxy.key}）'}'
-              '${shouldTryHttp(cookie: plan.cookie, httpDisabled: plan.httpDisabled) ? ' · 先试纯 HTTP' : ''}';
+              '${proxy == null ? '' : '（proxyip ${proxy.key}）'}';
         });
       }
       try {
-        // 有 Cookie 先试纯 HTTP（几百毫秒），没命中再回退原生 WebView。
-        // 判定与回退全在 censys_fetch.dart，本页只负责起代理与展示。
-        final out = await fetchCensysOnce(
-          plan: plan,
-          query: query,
-          proxyPort: port,
-        );
-        body = out.json;
-        _viaHttp = out.viaHttp;
-        _httpNote = out.httpNote;
+        body = await fetchCensysSearch(query: query, proxyPort: port);
         _usedProxy = proxy?.key;
         await state.recordProxyResult(proxy, true);
         break;
       } on CensysNativeException catch (e) {
         lastError = e.message;
         final detail = e.details.isEmpty ? '' : '｜$e';
+        // 出口诊断：失败时把「这次到底用哪条线路、回源 path 换成什么」打出来，
+        // 与 Kotlin CensysFetcher 的失败日志对齐 —— 否则只能看到「挑战未过」，
+        // 无从判断是出口 IP 脏、path 没换成功、还是 Host/SNI 配错。
         state.pushLog(
           '原生抓取失败（proxyip=${proxy?.key ?? "原样"}）：${e.message}$detail',
         );
+        state.pushLog(censysRouteDiagnosis(state.primaryLine, proxy));
         await state.recordProxyResult(proxy, false);
       } finally {
         await _clearProxy();
       }
       if (!mounted) break;
-    }
-
-    // Cookie 落盘：无论这轮成功还是失败，plan 里的变更都是有效信息
-    // （过期 Cookie 被清掉也值得记，否则下次还会拿它白试一次）。
-    _httpDisabled = plan.httpDisabled;
-    if (plan.cookieDirty) {
-      final cleared = plan.cookie.isEmpty;
-      state.settings.censysCookie = plan.cookie;
-      plan.clearDirty();
-      await state.saveSettings();
-      state.pushLog(cleared ? 'Censys Cookie 已失效并清空' : '已保存 Censys Cookie（下次先试纯 HTTP）');
     }
 
     if (!mounted) return;
@@ -227,7 +192,7 @@ class _FetchPageState extends State<FetchPage> {
       _previewRaw = rawHead;
       // 不能写成 `(cond ? 'a' : 'b') '${...}'`：括号表达式之后不能接相邻字符串，
       // 那会被解析成两个并列的表达式（analyze 报 expected_token）。
-      _diag = _viaHttp ? '纯 HTTP 快路径命中' : '原生 WebView 完成';
+      _diag = '原生 WebView 完成 · ${_useProxy ? '走代理' : '直连'}';
       if (_usedProxy != null) _diag = '$_diag · proxyip $_usedProxy';
     });
     _toast('获取成功：$hits 条');
@@ -312,7 +277,7 @@ class _FetchPageState extends State<FetchPage> {
       return null;
     }
     try {
-      await state.startLineWith(proxy);
+      await state.startProxyLine(proxy);
       final port = state.xray.running ? state.xray.port : null;
       _usedProxyPort = port;
       if (port != null) {
@@ -423,6 +388,29 @@ class _FetchPageState extends State<FetchPage> {
                     const SizedBox(height: 10),
                     Row(
                       children: [
+                        Text('访问方式',
+                            style: theme.textTheme.labelLarge),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(value: true, label: Text('走代理')),
+                              ButtonSegment(value: false, label: Text('直连')),
+                            ],
+                            selected: {_useProxy},
+                            onSelectionChanged: _fetching
+                                ? null
+                                : (s) => setState(() => _useProxy = s.first),
+                            showSelectedIcon: false,
+                            style: const ButtonStyle(
+                                visualDensity: VisualDensity.compact),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
                         TextButton(
                           onPressed: () => setState(() {
                             _cql.text =
@@ -491,15 +479,6 @@ class _FetchPageState extends State<FetchPage> {
                               : theme.colorScheme.error,
                         ),
                       ),
-                    // 走 WebView 且试过快路径时，把「为什么没用上 HTTP」摆出来：
-                    // 这是判断 Cookie 是否还有效、要不要清的唯一线索。
-                    if (_httpNote != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        '纯 HTTP 未命中：$_httpNote',
-                        style: theme.textTheme.labelSmall,
-                      ),
-                    ],
                   ],
                 ),
               ),

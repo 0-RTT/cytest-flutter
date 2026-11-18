@@ -53,6 +53,8 @@ PublishBundle buildPublish({
   return PublishBundle(
     links: links,
     subscription: subscription(links),
-    yaml: buildMihomoYaml(v, targets),
+    // 与 Kotlin MihomoYaml.build 同构：逐条解析已展开的链接，
+    // 节点名取各自的 #备注，而不是用模板的序号拼 IP。
+    yaml: buildMihomoYaml(links),
   );
 }

@@ -10,6 +10,10 @@ class GitHub {
     required String repo,
     required String path,
     required String content,
+
+    /// 非空时把请求走本机 VLESS 代理（`127.0.0.1:port`）；空 = 直连。
+    /// 与 Kotlin `GitHubClient.upload(config, ..., proxy)` 的 `proxy` 参数同义。
+    int? proxyPort,
   }) async {
     if (token.trim().isEmpty) throw Exception('先在设置里填 GitHub token');
     if (!repo.contains('/')) throw Exception('仓库格式应为 owner/name');
@@ -18,6 +22,9 @@ class GitHub {
 
     final endpoint = Uri.parse('https://api.github.com/repos/$repo/contents/$target');
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
+    if (proxyPort != null) {
+      client.findProxy = (_) => 'PROXY 127.0.0.1:$proxyPort';
+    }
 
     String sha = '';
     try {

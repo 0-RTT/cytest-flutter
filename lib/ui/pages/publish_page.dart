@@ -37,6 +37,10 @@ class _PublishPageState extends State<PublishPage> {
 
   final _previewScroll = ScrollController();
   String _mode = 'sub';
+
+  /// 推 GitHub 时是否走本机 VLESS 代理。默认直连（国内网络通常可达 API）。
+  /// 打开后临时起一条 Xray，推完立即关闭 —— 与 Kotlin `github.viaProxy` 一致。
+  bool _useProxy = false;
   bool _busy = false;
   PublishBundle? _bundle;
   String? _error;
@@ -115,17 +119,32 @@ class _PublishPageState extends State<PublishPage> {
       return;
     }
     setState(() => _busy = true);
+    int? proxyPort;
     try {
+      if (_useProxy) {
+        if (state.settings.vlessLinks.isEmpty) {
+          throw const PublishException('走代理需要先在「线路与代理」填 VLESS 链接');
+        }
+        await state.startProxyLine(null);
+        proxyPort = state.xray.running ? state.xray.port : null;
+        if (proxyPort == null) throw const PublishException('代理线路启动失败');
+      }
       await GitHub.push(
         token: state.settings.githubToken,
         repo: state.settings.githubRepo,
         path: path,
         content: _content,
+        proxyPort: proxyPort,
       );
-      _toast('已推送到 $path');
+      _toast('已推送到 $path${_useProxy ? '（走代理）' : ''}');
     } catch (e) {
       _toast('推送失败：$e');
     } finally {
+      if (proxyPort != null) {
+        try {
+          await state.stopProxyLine();
+        } catch (_) {}
+      }
       if (mounted) setState(() => _busy = false);
     }
   }
@@ -220,6 +239,28 @@ class _PublishPageState extends State<PublishPage> {
                         showSelectedIcon: false,
                         style: const ButtonStyle(
                             visualDensity: VisualDensity.compact),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text('GitHub 访问',
+                                style: theme.textTheme.labelLarge),
+                          ),
+                          SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(value: false, label: Text('直连')),
+                              ButtonSegment(value: true, label: Text('走代理')),
+                            ],
+                            selected: {_useProxy},
+                            onSelectionChanged: _busy
+                                ? null
+                                : (s) => setState(() => _useProxy = s.first),
+                            showSelectedIcon: false,
+                            style: const ButtonStyle(
+                                visualDensity: VisualDensity.compact),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 10),
                       TextField(

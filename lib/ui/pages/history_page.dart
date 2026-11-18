@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/history.dart';
 import '../../state/app_state.dart';
+import 'result_page.dart';
 import 'test_page.dart';
 
 class HistoryPage extends StatefulWidget {
@@ -72,8 +73,9 @@ class _HistoryPageState extends State<HistoryPage> {
     try {
       await context.read<AppState>().loadRun(rec.id);
       if (!mounted) return;
+      // 载入的是该次测试的 rows，直接看结果页；TestPage 是重新跑测试的地方。
       Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const TestPage()))
+          .push(MaterialPageRoute(builder: (_) => const ResultPage()))
           .then((_) => _reload());
     } catch (e) {
       if (mounted) {

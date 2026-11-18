@@ -73,15 +73,6 @@ class _RemotePageState extends State<RemotePage> {
     }
   }
 
-  void _useTestInput() {
-    final state = context.read<AppState>();
-    setState(() {
-      // 复用最近一次测试的输入文件内容
-      _data.text = state.lastRunDir != null ? _data.text : _data.text;
-    });
-    _toast('请从「记录 → 存档」载入候选数据');
-  }
-
   void _toast(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
@@ -164,11 +155,6 @@ class _RemotePageState extends State<RemotePage> {
                       Row(
                         children: [
                           Text('候选数据', style: theme.textTheme.titleSmall),
-                          const Spacer(),
-                          TextButton(
-                            onPressed: _useTestInput,
-                            child: const Text('说明'),
-                          ),
                         ],
                       ),
                       const SizedBox(height: 6),

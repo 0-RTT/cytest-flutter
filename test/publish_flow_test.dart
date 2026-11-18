@@ -137,5 +137,34 @@ void main() {
       );
       expect(yamlField.controller?.text, 'config.yaml');
     });
+    testWidgets('推送页默认直连，可切到走代理', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const PublishPage(
+            targets: ['8.8.8.8:2222'],
+            template: _template,
+          ),
+          _state(),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('GitHub 访问'), findsOneWidget);
+      // 默认直连：不擅自起 Xray
+      final segmented = find.byType(SegmentedButton<bool>);
+      expect(segmented, findsOneWidget);
+      expect(
+        tester.widget<SegmentedButton<bool>>(segmented).selected,
+        {false},
+        reason: '默认应直连，不擅自起 Xray',
+      );
+
+      await tester.tap(find.text('走代理'));
+      await tester.pump();
+      expect(
+        tester.widget<SegmentedButton<bool>>(segmented).selected,
+        {true},
+      );
+    });
   });
 }

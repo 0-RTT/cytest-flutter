@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 
-import 'censys_http.dart' show censysJsonOrNull;
+import 'censys_json.dart' show censysJsonOrNull;
 
 /// 原生 WebView 抓取的失败原因，`toString()` 直接可展示给用户。
 class CensysNativeException implements Exception {
@@ -17,26 +17,6 @@ class CensysNativeException implements Exception {
 
 /// 与 `MainActivity` 的 `cytest/censys` channel 对应。
 const MethodChannel _channel = MethodChannel('cytest/censys');
-
-/// 读 WebView 内核里的 Cookie（`Cookie:` 头值，空串 = 没有）。
-///
-/// 抓取成功后调用，存进 `AppSettings.censysCookie`：下次「纯 HTTP 快速路径」带上它，
-/// 在干净出口 IP 上可能直接命中 JSON（Fastly 分级放行），省掉一次 WebView。
-///
-/// 注意：**Cookie 救不了被 TLS 指纹拦住的请求**（项目记忆 2026-11-16：带
-/// `_fs_ch_cp_*` 用 curl 直连仍是连接 000），所以它只是「锦上添花」的快速路径。
-Future<String> readCensysCookie({
-  String url = 'https://platform.censys.io',
-}) async {
-  try {
-    final value = await _channel.invokeMethod<String>('readCookie', <String, Object?>{'url': url});
-    return value ?? '';
-  } on MissingPluginException {
-    return '';
-  } on PlatformException {
-    return '';
-  }
-}
 
 /// 用**原生 WebView** 抓 Censys 搜索结果，返回 JSON 文本。
 ///

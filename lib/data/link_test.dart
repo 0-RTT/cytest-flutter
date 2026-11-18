@@ -30,15 +30,6 @@ enum LinkTestMode { latency, speed, auto }
 /// `done/failed/cancelled` 为终态；「重测」= 新建一次 run，不是原地改状态。
 enum ProbeState { pending, running, done, failed, cancelled }
 
-/// 模式的界面文案（UI 只取值，不自己造句，避免两处文案漂移）。
-extension LinkTestModeLabel on LinkTestMode {
-  String get label => switch (this) {
-        LinkTestMode.latency => '只测延迟',
-        LinkTestMode.speed => '只测速度',
-        LinkTestMode.auto => '自动（先延迟后速度）',
-      };
-}
-
 /// 单条结果。
 ///
 /// 与 Kotlin `LinkTestResult` 字段一一对应，**只有 [speedMib] 改成可空**（差异 D2）：

@@ -25,9 +25,6 @@ class _LinesPageState extends State<LinesPage> {
   /// 测速模式，默认自动（先延迟后速度，最省时间的推荐路径）。
   LinkTestMode _mode = LinkTestMode.auto;
 
-  /// 「启动线路」按钮的局部忙碌态（测速忙碌态由 [AppState.linkTestRunning] 表达）。
-  bool _starting = false;
-
   @override
   void initState() {
     super.initState();
@@ -53,35 +50,6 @@ class _LinesPageState extends State<LinesPage> {
 
   List<String> _lines(String text) =>
       text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-
-  Future<void> _start() async {
-    final state = context.read<AppState>();
-    // 测速期间启动单线路代理会被 XrayProc 拒绝（K4），这里先给出可读提示，
-    // 不让用户看到一句冷冰冰的异常。
-    if (state.linkTestRunning) {
-      _toast('测速进行中，请先停止测速');
-      return;
-    }
-    setState(() => _starting = true);
-    try {
-      await _save();
-      await state.startLine();
-      if (mounted) _toast('线路已启动');
-    } catch (e) {
-      if (mounted) _toast('启动失败：$e');
-    } finally {
-      if (mounted) setState(() => _starting = false);
-    }
-  }
-
-  Future<void> _stop() async {
-    if (context.read<AppState>().linkTestRunning) {
-      _toast('测速进行中，请先停止测速');
-      return;
-    }
-    await context.read<AppState>().stopLine();
-    if (mounted) _toast('已停止');
-  }
 
   /// 测速：交给 [AppState.runLinkTest]，UI 只负责收集链接与展示进度。
   Future<void> _runLinkTest() async {
@@ -157,13 +125,6 @@ class _LinesPageState extends State<LinesPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('线路与代理'),
-        actions: [
-          // 测速期间隐藏「停止线路」：点它会把批量进程杀掉，而 UI 上看起来
-          // 像一次正常操作（批量模式不是「线路」，不该给这个入口）。
-          if (state.xray.running && !testing)
-            TextButton(onPressed: _stop, child: const Text('停止线路')),
-          const SizedBox(width: 6),
-        ],
       ),
       // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航。
       // top: false —— 顶部已由 AppBar 处理。
@@ -263,12 +224,6 @@ class _LinesPageState extends State<LinesPage> {
                     const SizedBox(height: 12),
                     Row(
                       children: [
-                        FilledButton(
-                          // 测速期间禁用「启动线路」：批量与单线路互斥（K4）
-                          onPressed: (_starting || testing) ? null : _start,
-                          child: Text(_starting ? '处理中…' : '启动线路'),
-                        ),
-                        const SizedBox(width: 8),
                         OutlinedButton(
                           onPressed: testing ? null : _runLinkTest,
                           child: Text(testing ? '测速中…' : '测试全部线路'),

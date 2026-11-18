@@ -138,12 +138,13 @@ bad-line
   });
 
   group('mihomo', () {
-    test('生成 proxies 与分组', () {
-      final v = Vless.tryParse(
+    test('生成 proxies 与分组（逐条解析已展开链接）', () {
+      final links = expandTemplate(
         'vless://uuid-1@1.1.1.1:443?type=xhttp&mode=stream-one'
-        '&path=/104.202.107.180:9443&security=tls&sni=x.example.com&fp=chrome&alpn=h2',
-      )!;
-      final yaml = buildMihomoYaml(v, ['1.2.3.4:8443', '5.6.7.8:2053']);
+        '&path=/104.202.107.180:9443&security=tls&sni=x.example.com&fp=chrome&alpn=h2#节点A',
+        ['1.2.3.4:8443', '5.6.7.8:2053'],
+      );
+      final yaml = buildMihomoYaml(links);
 
       expect(yaml, contains('proxies:'));
       expect(yaml, contains('type: vless'));
@@ -151,11 +152,36 @@ bad-line
       expect(yaml, contains('network: xhttp'));
       expect(yaml, contains('xhttp-opts:'));
       expect(yaml, contains('mode: stream-one'));
+      // 节点名取 #备注，重名追加 (2)（与 Kotlin MihomoYaml 对齐）
+      expect(yaml, contains('name: "节点A"'));
+      expect(yaml, contains('"节点A (2)"'));
       expect(yaml, contains('proxy-groups:'));
       expect(yaml, contains('type: url-test'));
       expect(yaml, contains('rules:'));
       expect(yaml.contains('ws-opts:'), isFalse);
       expect('xhttp-opts:'.allMatches(yaml).length, 2);
+    });
+  });
+
+  group('mihomo · 节点命名（对齐 Kotlin MihomoYaml）', () {
+    test('空备注回退 节点-N（带序号，天然不重名）', () {
+      final links = expandTemplate(
+        'vless://u@1.1.1.1:443?type=tcp',
+        ['1.2.3.4:8443', '5.6.7.8:2053'],
+      );
+      final yaml = buildMihomoYaml(links);
+      expect(yaml, contains('  - name: "节点-1"\n'));
+      expect(yaml, contains('  - name: "节点-2"\n'));
+    });
+
+    test('备注含空格与中文时按 Kotlin SAFE_PLAIN 加引号', () {
+      final yaml = buildMihomoYaml(const [
+        'vless://u@1.1.1.1:443?type=tcp#A',
+        'vless://u@2.2.2.2:443?type=tcp#香港 01',
+      ]);
+      // 纯 ASCII 安全字符裸写，中文/空格加引号
+      expect(yaml, contains('  - name: A\n'));
+      expect(yaml, contains('  - name: "香港 01"\n'));
     });
   });
 

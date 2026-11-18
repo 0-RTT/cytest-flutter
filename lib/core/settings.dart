@@ -43,14 +43,6 @@ class AppSettings {
   String remotePassword;
   String remoteKeyPath;
 
-  /// Censys 抓取成功后从 WebView 内核取回的 `Cookie:` 头值（空 = 还没有）。
-  ///
-  /// 它只用于「纯 HTTP 快路径」的**尝试资格**，不保证一定命中：站点是 Fastly
-  /// 分级放行，同一份 Cookie 在干净出口 IP 上可能直接拿到 JSON，在可疑 IP 上
-  /// 仍会被要求过验证（详见 `lib/data/censys_fetch.dart`）。命中与否都不影响
-  /// 主链路 —— 没命中就回退原生 WebView。
-  String censysCookie;
-
   AppSettings({
     this.speedUrl = Defaults.speedUrl,
     this.fingerprint = Defaults.fingerprint,
@@ -72,7 +64,6 @@ class AppSettings {
     this.remoteUser = 'root',
     this.remotePassword = '',
     this.remoteKeyPath = '',
-    this.censysCookie = '',
   });
 
   static const _key = 'cytest.settings.v1';
@@ -92,41 +83,6 @@ class AppSettings {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, jsonEncode(toJson()));
   }
-
-  AppSettings copyWith({
-    String? githubToken,
-    String? githubRepo,
-    String? githubPath,
-    String? remoteHost,
-    int? remotePort,
-    String? remoteUser,
-    String? remotePassword,
-    String? remoteKeyPath,
-    String? censysCookie,
-  }) =>
-      AppSettings(
-        speedUrl: speedUrl,
-        fingerprint: fingerprint,
-        sha1Concurrency: sha1Concurrency,
-        latencyConcurrency: latencyConcurrency,
-        speedConcurrency: speedConcurrency,
-        dialTimeout: dialTimeout,
-        downloadTimeout: downloadTimeout,
-        maxLatency: maxLatency,
-        httpProxy: httpProxy,
-        fetchProxy: fetchProxy,
-        vlessLinks: vlessLinks,
-        proxyIps: proxyIps,
-        githubToken: githubToken ?? this.githubToken,
-        githubRepo: githubRepo ?? this.githubRepo,
-        githubPath: githubPath ?? this.githubPath,
-        remoteHost: remoteHost ?? this.remoteHost,
-        remotePort: remotePort ?? this.remotePort,
-        remoteUser: remoteUser ?? this.remoteUser,
-        remotePassword: remotePassword ?? this.remotePassword,
-        remoteKeyPath: remoteKeyPath ?? this.remoteKeyPath,
-        censysCookie: censysCookie ?? this.censysCookie,
-      );
 
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
         speedUrl: json['speedUrl'] as String? ?? Defaults.speedUrl,
@@ -153,7 +109,6 @@ class AppSettings {
         remoteUser: json['remoteUser'] as String? ?? 'root',
         remotePassword: json['remotePassword'] as String? ?? '',
         remoteKeyPath: json['remoteKeyPath'] as String? ?? '',
-        censysCookie: json['censysCookie'] as String? ?? '',
       );
 
   Map<String, dynamic> toJson() => {
@@ -177,6 +132,5 @@ class AppSettings {
         'remoteUser': remoteUser,
         'remotePassword': remotePassword,
         'remoteKeyPath': remoteKeyPath,
-        'censysCookie': censysCookie,
       };
 }
