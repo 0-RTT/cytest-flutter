@@ -328,6 +328,14 @@ void main() {
     expect(go, contains('TLS 根证书判定: %s'));
     expect(go, contains('pool.Equal(x509.NewCertPool())'),
         reason: 'Android 上 SystemCertPool 可能返回「非 nil 但空」的池，必须判空');
+    // 该分支必然 !systemBroken（顺序在 certBranchBroken 之后）→ 系统 CA 可用，
+    // 公共站点 HTTPS 正常。说「HTTPS 可能失败」是假警报（QA 实测反例：同状态
+    // 下 104.16.1.1:443 1599ms 成功）。文案必须只陈述「没补到证书」。
+    expect(go, isNot(contains('证书目录存在但没读到可用证书')));
+    expect(go, contains('未补载到证书'));
+    // 自检只打印协议样例，不该在 cwd 生成 result.csv。
+    expect(go, contains('*resultCSV = os.DevNull'),
+        reason: '自检模式不要落盘（真机 cwd 常不可写）');
   });
 }
 

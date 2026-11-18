@@ -65,7 +65,7 @@ var (
 	// 与 -only-speed 的区别是：会先做一轮延迟筛选，只给能连通的 IP 测速。
 	topN     = flag.Int("top", 10, "汇总时打印前 N 名")
 	quiet    = flag.Bool("quiet", false, "不打印逐条匹配/进度明细")
-	selftest = flag.Bool("protocol-selftest", false, "打印各分支的协议样例到 stdout 后退出（供契约测试使用）")
+	selftest = flag.Bool("protocol-selftest", false, "打印各分支的协议样例到 stdout 后退出（供契约测试使用；自检模式不产出 result.csv）")
 	listOnly = flag.Bool("list", false, "只把 data.txt 里通过服务筛选的候选逐行打印到 stdout，不联网、不写文件")
 )
 
@@ -520,8 +520,12 @@ func systemRootCAs() *x509.CertPool {
 			// 常返回空池，必须靠上面的目录补载）。
 			logf("   ⚠️ TLS 根证书：系统证书库不可用或不含证书，HTTPS 会以 unknown authority 失败")
 		case certBranchEmptyDir:
-			// Android 且目录在、却一张都没补载成功：这时候确实可能缺根证书。
-			logf("   ⚠️ TLS 根证书：证书目录存在但没读到可用证书，HTTPS 可能失败")
+			// 走到这里必然 !systemBroken（顺序在 certBranchBroken 之后），
+			// 也就是系统 CA 齐全、公共站点 HTTPS 正常 —— 所以**不能**报警，
+			// 否则又是「桌面端假警报」的翻版（QA 实测：同状态下
+			// 104.16.1.1:443 1599ms 成功）。这里只说明「没补到证书」这一事实，
+			// 并点明影响面仅限自建/用户级 CA。
+			logf("   TLS 根证书：证书目录存在但未补载到证书（系统 CA 已可用，仅影响自建/用户级 CA）")
 		case certBranchDesktop:
 			// 桌面端常见路径：系统证书库可用、没有 Android 证书目录 —— 静默。
 		}
@@ -1561,7 +1565,12 @@ func reportSpeedResults(sorted []*TestResult) bool {
 		fmt.Fprintln(os.Stderr, err)
 		return false
 	}
-	logf("   测试完成，共 %d 个 IP，结果已写入 %s", len(sorted), *resultCSV)
+	// 自检模式把结果指到 os.DevNull：别对用户说「已写入 NUL」。
+	if *resultCSV == os.DevNull {
+		logf("   测试完成，共 %d 个 IP（自检模式，不落盘）", len(sorted))
+	} else {
+		logf("   测试完成，共 %d 个 IP，结果已写入 %s", len(sorted), *resultCSV)
+	}
 	if ok == 0 {
 		fmt.Fprintln(os.Stderr, "❌ 没有任何 IP 测出可用速率，视为无可用结果")
 		return false
@@ -1573,6 +1582,9 @@ func runProtocolSelftest() {
 	cfg.MaxSpeedConcurrency = 2
 	cfg.DownloadTimeout = 5
 	cfg.SpeedTestURL = "https://speed.cloudflare.com/__down?bytes=209715200"
+	// 自检只打印协议样例，不该产出产物：把结果文件指到 os.DevNull，
+	// 免得在 cwd 里凭空生成 result.csv（真机 cwd 常不可写，还会多一行写盘失败）。
+	*resultCSV = os.DevNull
 
 	// 一行根证书自检：Android 上「系统池为空 → 靠 cert 目录补载」这条分支
 	// 没有真机就验不了，真机跑 `-protocol-selftest` 即可看到走了哪条。
