@@ -116,6 +116,26 @@ Kotlin 版 111 个 .kt / 17,108 行；Flutter 版 21 个 .dart / 4,236 行。
 - 缺失大头：结果页排序/筛选/导出文件、历史合并、mihomo 的 rule-providers/dns/tun、
   备份 UI（`history.dart` 的 exportBackup/importBackup 已实现但零调用）、last run 恢复
 
+## Censys 抓取架构（v1.0.11 定稿）
+
+**主通道是原生 WebView，纯 HTTP 只是「有 Cookie 时先问一句」的快路径。**
+站点 Fastly 分级放行：干净出口 IP 可能直给 JSON；可疑 IP 一律挑战页；被 TLS
+指纹拦时请求根本发不出去（带齐 27 个浏览器头也一样）。
+
+链路：`fetch_page` → `lib/data/censys_fetch.dart`（编排，可单测）→
+`censys_http.dart`（纯 HTTP）/ `MainActivity.kt` 的 `fetchSearch`（原生 WebView）。
+
+失败处置别写成一刀切（这是唯一容易退化的判断，单测钉住）：
+- 拿到 JSON → 直接用，不启动 WebView
+- HTML 挑战页 / 401 / 403 → **清 Cookie**，回退 WebView
+- **无状态码**（握手/连接/超时）→ 本会话**禁用快路径**，Cookie 救不了 TLS 指纹
+- 其它错误 JSON（如 400）→ 保持现状，多半是 CQL 语法错
+
+`CensysFetchPlan.maxHttpFailures = 2`：WebView 每次都刷新 Cookie，若挑战按出口 IP
+判定，快路径会永远不收敛、每次白等 1~2s，所以给个上界。
+Cookie 存 `AppSettings.censysCookie`（设置页可见可清），**变更含被清空都要落盘**，
+失败路径也要落 —— 否则下次还拿着过期 Cookie 白试。
+
 ## 版本号
 
 `pubspec.yaml` 的 version 是占位，实际由 `--build-name` / `--build-number` 覆盖。

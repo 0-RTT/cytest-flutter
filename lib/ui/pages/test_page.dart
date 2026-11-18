@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/app_state.dart';
@@ -20,11 +22,60 @@ class _TestPageState extends State<TestPage> {
   String _mode = 'full';
   final _logScroll = ScrollController();
 
+  /// 输入摘要（候选数 + 体积），避免在主页面铺开整段 JSON。
+  String _summary = '';
+
+  /// 用户手动上滑看历史时不再强行拉回底部。
+  bool _stickToBottom = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateSummary();
+    _logScroll.addListener(() {
+      if (!_logScroll.hasClients) return;
+      final after = _logScroll.position.extentAfter;
+      if (after > 120 && _stickToBottom) {
+        _stickToBottom = false;
+      } else if (after <= 8 && !_stickToBottom) {
+        _stickToBottom = true;
+      }
+    });
+  }
+
   @override
   void dispose() {
     _input.dispose();
     _logScroll.dispose();
     super.dispose();
+  }
+
+  /// 摘要只做一次轻量解析，不随 build 反复 jsonDecode 大字符串。
+  void _updateSummary() {
+    final t = _input.text.trim();
+    if (t.isEmpty) {
+      _summary = '';
+      return;
+    }
+    var count = 0;
+    try {
+      final decoded = jsonDecode(t);
+      final results = decoded is Map ? decoded['results'] : null;
+      final hits = results is Map ? results['hits'] : null;
+      if (hits is List) count = hits.length;
+    } catch (_) {
+      // 只测速模式传的是 ip:port 文本， Decode 失败属正常。
+    }
+    if (count == 0) {
+      count = t.split('\n').where((l) => l.trim().isNotEmpty).length;
+    }
+    _summary = '$count 个候选 · ${_formatBytes(t.length)}';
+  }
+
+  static String _formatBytes(int n) {
+    if (n < 1024) return '$n B';
+    if (n < 1024 * 1024) return '${(n / 1024).toStringAsFixed(1)} KB';
+    return '${(n / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 
   Future<void> _start() async {
@@ -38,29 +89,44 @@ class _TestPageState extends State<TestPage> {
     }
   }
 
+  /// 全文编辑放进底部弹层：主页面永远只留一行摘要，日志不被挤出去。
+  void _openEditor(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => _InputEditorSheet(
+        initial: _input.text,
+        mode: _mode,
+        onSave: (text) {
+          _input.text = text;
+          _updateSummary();
+          setState(() {});
+        },
+      ),
+    );
+  }
+
+  void _autoScrollLogs() {
+    if (!_stickToBottom || !_logScroll.hasClients) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_logScroll.hasClients) {
+        _logScroll.jumpTo(_logScroll.position.maxScrollExtent);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final theme = Theme.of(context);
+    final hasInput = _input.text.trim().isNotEmpty;
 
-    // 日志自动滚到底
-    if (state.logs.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_logScroll.hasClients) {
-          _logScroll.jumpTo(_logScroll.position.maxScrollExtent);
-        }
-      });
-    }
+    _autoScrollLogs();
 
     final pct = state.progressTotal > 0
         ? (state.progressCur / state.progressTotal).clamp(0.0, 1.0)
         : 0.0;
-
-    // 日志区高度按屏高自适应：写死 240 在小屏上会把输入区挤出首屏，大屏又浪费空间。
-    // 这里用 MediaQuery 估算即可——它在 ListView 内部，再套 LayoutBuilder 会变成嵌套滚动度量。
-    final logHeight = (MediaQuery.sizeOf(context).height * 0.3)
-        .clamp(160.0, 240.0)
-        .toDouble();
 
     return Scaffold(
       appBar: AppBar(
@@ -75,210 +141,284 @@ class _TestPageState extends State<TestPage> {
         ],
       ),
       // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
-      // 不包这层，最后的日志区 / lastError 会被系统栏压住。
+      // 不包这层，最后的错误提示会被系统栏压住。
       // top: false —— 顶部已由 AppBar 处理。
       body: SafeArea(
         top: false,
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: ListView(
-                // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
-                padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+            // 顶部三卡固定，不参与滚动。
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      _stat(
-                          theme,
-                          '候选总量',
-                          state.progressTotal > 0
-                              ? '${state.progressTotal}'
-                              : '—'),
-                      const SizedBox(width: 10),
-                      _stat(
-                          theme,
-                          '当前阶段',
-                          state.progressStage.isEmpty
-                              ? '待开始'
-                              : _trim(state.progressStage)),
-                      const SizedBox(width: 10),
-                      _stat(theme, '可用',
-                          state.rows.isEmpty ? '—' : '${state.usableCount}'),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Text('输入', style: theme.textTheme.titleSmall),
-                              const Spacer(),
-                              SegmentedButton<String>(
-                                segments: const [
-                                  ButtonSegment(
-                                      value: 'full', label: Text('完整三阶段')),
-                                  ButtonSegment(
-                                      value: 'speed', label: Text('只测速')),
-                                ],
-                                selected: {_mode},
-                                onSelectionChanged: (s) =>
-                                    setState(() => _mode = s.first),
-                                showSelectedIcon: false,
-                                style: const ButtonStyle(
-                                    visualDensity: VisualDensity.compact),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _input,
-                            maxLines: 6,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              // Android 的 monospace 族不含完整中文字形，缺 fallback 会显示方块
-                              fontFamilyFallback: ['sans-serif'],
-                              fontSize: 12,
-                            ),
-                            decoration: InputDecoration(
-                              border: const OutlineInputBorder(),
-                              isDense: true,
-                              hintText: _mode == 'full'
-                                  ? '粘贴 Censys JSON（可从「获取数据」导入）'
-                                  : '每行一个 ip:port',
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              FilledButton.icon(
-                                onPressed: state.running ? null : _start,
-                                icon: const Icon(Icons.play_arrow, size: 18),
-                                label: Text(state.running ? '运行中…' : '开始测试'),
-                              ),
-                              const Spacer(),
-                              TextButton(
-                                onPressed: () => setState(() => _input.clear()),
-                                child: const Text('清空'),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Text('进度', style: theme.textTheme.titleSmall),
-                              const Spacer(),
-                              Text(
-                                state.progressTotal > 0
-                                    ? '${state.progressCur} / ${state.progressTotal}'
-                                    : '等待开始',
-                                style: theme.textTheme.labelSmall,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(3),
-                            child: LinearProgressIndicator(
-                              value: pct,
-                              minHeight: 5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Text('日志', style: theme.textTheme.titleSmall),
-                              const Spacer(),
-                              if (state.logs.isNotEmpty)
-                                Text('${state.logs.length} 行',
-                                    style: theme.textTheme.labelSmall),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            height: logHeight,
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: state.logs.isEmpty
-                                ? Center(
-                                    child: Text('暂无输出',
-                                        style: theme.textTheme.bodySmall
-                                            ?.copyWith(
-                                                color: theme.colorScheme
-                                                    .onSurfaceVariant)),
-                                  )
-                                : ListView.builder(
-                                    controller: _logScroll,
-                                    padding: const EdgeInsets.all(10),
-                                    itemCount: state.logs.length,
-                                    itemBuilder: (_, i) {
-                                      final line = state.logs[i];
-                                      return Text(
-                                        line,
-                                        style: TextStyle(
-                                          fontFamily: 'monospace',
-                                          // 日志是中文，monospace 里没有中文字形，必须回落系统字体
-                                          fontFamilyFallback: const [
-                                            'sans-serif'
-                                          ],
-                                          fontSize: 11.5,
-                                          color: line.contains('✗') ||
-                                                  line.contains('失败')
-                                              ? theme.colorScheme.error
-                                              : line.contains('阶段')
-                                                  ? theme.colorScheme.primary
-                                                  : null,
-                                        ),
-                                      );
-                                    },
-                                  ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (state.lastError != null) ...[
-                    const SizedBox(height: 12),
-                    Text(state.lastError!,
-                        style: TextStyle(
-                            color: theme.colorScheme.error, fontSize: 12)),
-                  ],
+                  _stat(
+                      theme,
+                      '候选总量',
+                      state.progressTotal > 0
+                          ? '${state.progressTotal}'
+                          : '—'),
+                  const SizedBox(width: 10),
+                  _stat(
+                      theme,
+                      '当前阶段',
+                      state.progressStage.isEmpty
+                          ? '待开始'
+                          : _trim(state.progressStage)),
+                  const SizedBox(width: 10),
+                  _stat(theme, '可用',
+                      state.rows.isEmpty ? '—' : '${state.usableCount}'),
                 ],
               ),
             ),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: _inputCard(theme, state, hasInput),
+            ),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: _progressCard(theme, state, pct),
+            ),
+            const SizedBox(height: 10),
+            // 日志吃掉剩余空间：永远在首屏、独立滚动，不再被外层 ListView 挤下去。
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: _logCard(theme, state),
+              ),
+            ),
+            if (state.lastError != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: Text(state.lastError!,
+                    style:
+                        TextStyle(color: theme.colorScheme.error, fontSize: 12)),
+              ),
           ],
         ),
       ),
     );
   }
+
+  Widget _inputCard(ThemeData theme, AppState state, bool hasInput) => Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.input_outlined,
+                      size: 17, color: theme.colorScheme.primary),
+                  const SizedBox(width: 6),
+                  Text('输入', style: theme.textTheme.titleSmall),
+                  const Spacer(),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'full', label: Text('完整三阶段')),
+                      ButtonSegment(value: 'speed', label: Text('只测速')),
+                    ],
+                    selected: {_mode},
+                    onSelectionChanged: state.running
+                        ? null
+                        : (s) => setState(() => _mode = s.first),
+                    showSelectedIcon: false,
+                    style: const ButtonStyle(
+                        visualDensity: VisualDensity.compact),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              InkWell(
+                onTap: state.running ? null : () => _openEditor(context),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: double.infinity,
+                  constraints: const BoxConstraints(minHeight: 52),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        hasInput
+                            ? Icons.description_outlined
+                            : Icons.content_paste_outlined,
+                        size: 18,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: hasInput
+                            ? Text(_summary,
+                                style: theme.textTheme.bodyMedium)
+                            : Text('点击粘贴候选数据',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.onSurfaceVariant)),
+                      ),
+                      Icon(Icons.edit_outlined,
+                          size: 17,
+                          color: theme.colorScheme.onSurfaceVariant),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  FilledButton.icon(
+                    onPressed: state.running || !hasInput ? null : _start,
+                    icon: const Icon(Icons.play_arrow, size: 18),
+                    label: Text(state.running ? '运行中…' : '开始测试'),
+                  ),
+                  const Spacer(),
+                  if (hasInput)
+                    TextButton(
+                      onPressed: state.running
+                          ? null
+                          : () => setState(() {
+                                _input.clear();
+                                _updateSummary();
+                              }),
+                      child: const Text('清空'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _progressCard(ThemeData theme, AppState state, double pct) => Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('进度', style: theme.textTheme.titleSmall),
+                  const Spacer(),
+                  Text(
+                    state.progressTotal > 0
+                        ? '${state.progressCur} / ${state.progressTotal}'
+                        : '等待开始',
+                    style: theme.textTheme.labelSmall,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(value: pct, minHeight: 5),
+              ),
+            ],
+          ),
+        ),
+      );
+
+  Widget _logCard(ThemeData theme, AppState state) => Card(
+        key: const ValueKey('test_page_log_card'),
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 8, 8, 6),
+              child: Row(
+                children: [
+                  Text('日志', style: theme.textTheme.titleSmall),
+                  if (state.running) ...[
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: theme.colorScheme.primary),
+                    ),
+                  ],
+                  const Spacer(),
+                  if (state.logs.isNotEmpty)
+                    Text('${state.logs.length} 行',
+                        style: theme.textTheme.labelSmall),
+                  IconButton(
+                    onPressed: state.logs.isEmpty
+                        ? null
+                        : () {
+                            _stickToBottom = true;
+                            if (_logScroll.hasClients) {
+                              _logScroll.jumpTo(
+                                  _logScroll.position.maxScrollExtent);
+                            }
+                          },
+                    tooltip: '跳到最新',
+                    icon: const Icon(Icons.vertical_align_bottom, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  IconButton(
+                    onPressed: state.logs.isEmpty
+                        ? null
+                        : () async {
+                            await Clipboard.setData(
+                                ClipboardData(text: state.logs.join('\n')));
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('日志已复制')));
+                            }
+                          },
+                    tooltip: '复制日志',
+                    icon: const Icon(Icons.copy_all_outlined, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: state.logs.isEmpty
+                    ? Center(
+                        child: Text('暂无输出',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant)),
+                      )
+                    : ListView.builder(
+                        controller: _logScroll,
+                        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                        itemCount: state.logs.length,
+                        itemBuilder: (_, i) {
+                          final line = state.logs[i];
+                          return Text(
+                            line,
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              // 日志是中文，monospace 里没有中文字形，必须回落系统字体
+                              fontFamilyFallback: const ['sans-serif'],
+                              fontSize: 11.5,
+                              color: line.contains('✗') || line.contains('失败')
+                                  ? theme.colorScheme.error
+                                  : line.contains('阶段')
+                                      ? theme.colorScheme.primary
+                                      : null,
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ),
+          ],
+        ),
+      );
 
   String _trim(String s) {
     final t = s.replaceAll(RegExp(r'^[=\-\s]+|[=\-\s]+$'), '');
@@ -301,6 +441,94 @@ class _TestPageState extends State<TestPage> {
           ),
         ),
       );
+}
+
+/// 编辑弹层自己持有 controller：showModalBottomSheet 的 Future 在退出动画
+/// 开始前就 complete，若在那时 dispose，正在卸载的 TextField 仍会访问它。
+class _InputEditorSheet extends StatefulWidget {
+  const _InputEditorSheet({
+    required this.initial,
+    required this.mode,
+    required this.onSave,
+  });
+
+  final String initial;
+  final String mode;
+  final ValueChanged<String> onSave;
+
+  @override
+  State<_InputEditorSheet> createState() => _InputEditorSheetState();
+}
+
+class _InputEditorSheetState extends State<_InputEditorSheet> {
+  late final TextEditingController _draft =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _draft.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
+      ),
+      child: SizedBox(
+        height: MediaQuery.sizeOf(context).height * 0.65,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Text('编辑候选数据', style: theme.textTheme.titleMedium),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: TextField(
+                controller: _draft,
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  // Android 的 monospace 族不含完整中文字形，缺 fallback 会显示方块
+                  fontFamilyFallback: ['sans-serif'],
+                  fontSize: 12,
+                ),
+                decoration: InputDecoration(
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                  hintText: widget.mode == 'full'
+                      ? '粘贴 Censys JSON（可从「获取数据」导入）'
+                      : '每行一个 ip:port',
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: () {
+                widget.onSave(_draft.text);
+                Navigator.of(context).pop();
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// 测试完成后就地展示结果，避免再跳一次。
