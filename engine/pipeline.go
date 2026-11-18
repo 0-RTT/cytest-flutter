@@ -60,6 +60,7 @@ var (
 	onlySpeed   = flag.Bool("only-speed", false, "只做阶段3（速度测试），跳过阶段1 指纹比对与阶段2 延迟测试")
 	onlyLatency = flag.Bool("only-latency", false, "只做延迟测试，跳过速度测试")
 	targetsFile = flag.String("targets", "", "候选清单；每行 `ip:port` 或 `ip:port,延迟毫秒`，`#` 开头为注释")
+	sha1Filter  = flag.Bool("sha1", false, "对 -targets 清单先做阶段1 SHA1 指纹比对（与原版同口径：明文 HTTP、读 50MiB、不按端口预筛）")
 
 	// 带 -targets 且没有 -only-* 时：跑「延迟 + 速度」。
 	// 与 -only-speed 的区别是：会先做一轮延迟筛选，只给能连通的 IP 测速。
@@ -727,74 +728,31 @@ type bufferedConn struct {
 
 func (c *bufferedConn) Read(p []byte) (int, error) { return c.r.Read(p) }
 
-// latencyOutcome 是一次「这个 ip:port 真的能用吗」延迟探测的结果。
+// latencyOutcome 是一次延迟探测的结果。
 //
-// 与早期只做 TCP 握手的 measureTCPLatency 不同，这里走完整的 HTTPS 请求：
-// TCP 连通 → TLS 握手（SNI = 测速域名）→ HTTP 响应头到达，全部成功才算可用。
-// 这样「延迟测试通过」与「速度测试通过」是同一套判定标准：
-// 用户不会看到「延迟有数、一测速全挂」。
+// 口径 = 原版 `measureTCPLatency`（censys-speedtest 的 src/pipeline.go:401）：
+// **只测 TCP 握手**。直连时就是 `DialContext` 的往返；走代理时先建 CONNECT 隧道、
+// 再发一个最小 `GET /` 读到首字节，否则测出来的只是「本地代理响应快慢」。
+//
+// 为什么不再走 HTTPS（TCP + TLS + HEAD 响应头）：那是 Flutter 版曾经的做法，
+// 实测同一条 104.16.1.1:443 是 2023ms，而 TCP 握手只有几十毫秒 —— 用户看到的
+// 「延迟怎么这么大」就是这么来的。延迟阶段的职责是「筛掉连不上的候选」，
+// 能不能真的拿到 HTTP 内容由速度阶段判定。
 type latencyOutcome struct {
-	// Latency 为 -1 表示不可用；>= 0 表示「发起请求 → 收到响应头」的毫秒数。
+	// Latency 为 -1 表示不可用；>= 0 表示 TCP 握手（走代理时含一次真实往返）的毫秒数。
 	Latency int64
 	// Reason 为空表示可用；否则是可读的失败原因，直接落进 CSV 的 Reason 列。
 	Reason string
-	// Status 是最后一次响应的 HTTP 状态码（0 表示压根没拿到响应）。
-	Status int
-	// methodRejected 表示这次失败源于「服务器不接受 HEAD 方法」而不是真的不可用，
-	// 调用方可以退化成 GET 再探一次。
-	methodRejected bool
 }
 
-const (
-	latencyTimeoutFloor = 10 * time.Second
-	latencyTimeoutCeil  = 30 * time.Second
-)
-
-// latencyRequestTimeout 是单条延迟探测的总时长上限（拨号 + TLS 握手 + 等响应头）。
+// measureTCPLatency 测量「建连到目标」的往返耗时（返回 -1 表示失败）：
+//   - 未配置代理：直接建 TCP 连接，计时 = 三次握手；
+//   - 配置了代理：经代理建 CONNECT 隧道，再完成一次真实往返（发最小 GET、读 1 字节）。
 //
-// 取 2×cfg.DialTimeout，并把下限拉到 10s：这里测的不再是裸 TCP 握手，而是
-// 「完整的 HTTPS 请求」，跨境 CDN 边缘节点实测首字节常在 0.5~1.5s，个别冷连接
-// 能到 3~4s。用 5s 这种紧超时会把「慢但真能用」的目标误判成不可用 —— 那正是
-// 这次要修的「看起来全部失败」。上限 30s 防止单个卡死目标拖住整轮。
-//
-// 注意这个值必须与 ClientPool 给的 client.Timeout（= downloadTimeout）解耦：
-// 否则用户调小「下载超时」会把延迟探测一起截断，日志里的秒数也就成了假数字
-// （见 probeLatencyOnce 里的浅拷贝 client）。
-func latencyRequestTimeout() time.Duration {
-	d := 2 * time.Duration(cfg.DialTimeout) * time.Second
-	if d < latencyTimeoutFloor {
-		return latencyTimeoutFloor
-	}
-	if d > latencyTimeoutCeil {
-		return latencyTimeoutCeil
-	}
-	return d
-}
-
-// measureClientLatency 用「已绑定候选 ip:port 的 http.Client」测一次真实可用性延迟。
-//
-// 优先 HEAD（只要响应头，不搬数据，最贴近首字节延迟）；站点不支持 HEAD 时
-// 退化成 GET + Range: bytes=0-0（只要首字节，不会真的下载整个测速文件）。
-//
-// client 由 ClientPool.NewClient(ip, port) 提供，其 DialContext 会忽略 URL 里的
-// 主机名、永远连候选 ip:port，同时按 URL 的主机名做 SNI —— 所以这里传
-// cfg.SpeedTestURL 进来，延迟阶段和速度阶段访问的是同一个站点、走同一套
-// TLS/SNI 校验口径。
-func measureClientLatency(
-	ctx context.Context, client *http.Client, target string,
-) latencyOutcome {
-	out := probeLatencyOnce(ctx, client, http.MethodHead, target)
-	if out.Latency >= 0 || !out.methodRejected {
-		return out
-	}
-	// HEAD 被拒（403/405/501 之类）不代表目标不可用：换成 GET 再判一次，
-	// 以 GET 的结果为准。真实不可用的目标会在这里再失败一次，Reason 更准确。
-	return probeLatencyOnce(ctx, client, http.MethodGet, target)
-}
-
-// probeLatencyOnce 用指定方法探一次，返回「响应头到达」的耗时。
-func probeLatencyOnce(
-	ctx context.Context, client *http.Client, method, target string,
+// 只测「隧道建立成功」是不够的：那只反映本地代理响应快慢（约 1~2ms），
+// 完全没有体现到境外目标的真实往返延迟。
+func measureTCPLatency(
+	ctx context.Context, ip, port string, timeout time.Duration,
 ) latencyOutcome {
 	select {
 	case <-ctx.Done():
@@ -802,140 +760,68 @@ func probeLatencyOnce(
 	default:
 	}
 
-	timeout := latencyRequestTimeout()
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, method, target, nil)
-	if err != nil {
-		return latencyOutcome{Latency: -1, Reason: "测速地址不合法: " + describeIOError(err, ctx)}
-	}
-	req.Header.Set("Accept-Encoding", "identity")
-	if method == http.MethodGet {
-		// 只取首字节：即便站点不支持 HEAD，也不会把 300MB 拉下来。
-		req.Header.Set("Range", "bytes=0-0")
-	}
-
+	target := net.JoinHostPort(ip, port)
 	start := time.Now()
-	// http.Client.Timeout（= downloadTimeout）会盖过上面的 reqCtx：
-	// 有效超时 = min(client.Timeout, reqCtx)。用户把设置页「下载超时」调小到
-	// 3~5s 想快点测速时，延迟探测会被静默截断到同一个值 —— 日志和 Reason 里
-	// 声明的秒数变成假数字，而且「慢但真能用」的目标又被误判成超时（正是本轮
-	// 要修的那类误判）。所以这里浅拷贝一个 client 只改 Timeout：
-	// 结构体拷贝共享 Transport，不额外建连、不改 ClientPool 的缓存语义；
-	// 速度阶段用的是原 client，行为完全不变。
-	probeClient := *client
-	probeClient.Timeout = timeout
-	resp, err := probeClient.Do(req)
-	elapsed := time.Since(start)
-	if err != nil {
-		return latencyOutcome{Latency: -1, Reason: describeLatencyError(err, reqCtx, timeout)}
-	}
-	// 只要响应头：不 drain body，直接关。连不连得上由上面的 client.Do 决定。
-	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		return latencyOutcome{
-			Latency:        -1,
-			Reason:         fmt.Sprintf("HTTP %d %s", resp.StatusCode, strings.TrimSpace(http.StatusText(resp.StatusCode))),
-			Status:         resp.StatusCode,
-			methodRejected: isMethodRejectedStatus(resp.StatusCode),
+	var (
+		conn net.Conn
+		err  error
+	)
+	if proxyURL != nil {
+		conn, err = dialTunnelViaProxy(ctx, proxyURL.Host, target, timeout)
+	} else {
+		d := &net.Dialer{Timeout: timeout}
+		conn, err = d.DialContext(ctx, "tcp", target)
+	}
+	if err != nil {
+		return latencyOutcome{Latency: -1, Reason: describeTCPLatencyError(err, ctx)}
+	}
+	defer conn.Close()
+
+	if proxyURL != nil {
+		_ = conn.SetDeadline(time.Now().Add(timeout))
+		if _, werr := conn.Write([]byte("GET / HTTP/1.0\r\nHost: " + target + "\r\n\r\n")); werr != nil {
+			return latencyOutcome{Latency: -1, Reason: describeTCPLatencyError(werr, ctx)}
+		}
+		if _, rerr := io.ReadFull(conn, make([]byte, 1)); rerr != nil {
+			return latencyOutcome{Latency: -1, Reason: describeTCPLatencyError(rerr, ctx)}
 		}
 	}
-	return latencyOutcome{Latency: elapsed.Milliseconds(), Status: resp.StatusCode}
+
+	return latencyOutcome{Latency: time.Since(start).Milliseconds()}
 }
 
-// isMethodRejectedStatus 判断某个 4xx/5xx 是否更可能是「不支持这个方法」而非目标不可用。
-func isMethodRejectedStatus(code int) bool {
-	switch code {
-	case http.StatusBadRequest, http.StatusForbidden, http.StatusMethodNotAllowed,
-		http.StatusNotImplemented:
-		return true
-	default:
-		return false
-	}
-}
-
-// describeLatencyError 把延迟探测的失败原因翻成人话写进 CSV 的 Reason 列。
+// describeTCPLatencyError 把延迟探测的失败原因翻成人话写进 CSV 的 Reason 列。
 //
-// 分级顺序按「用户最需要先排除的」排：
-// 代理不可用 → 超时/拒绝/DNS → TLS（证书不受信任 / SNI 不匹配）→ HTTP 4xx/5xx。
-// 这样用户看一眼 Reason 列就知道该改设置、该换节点、还是该换测速地址。
-func describeLatencyError(err error, reqCtx context.Context, timeout time.Duration) string {
+// 口径收敛为「连接超时 / 连接失败」两类：延迟阶段量的是 TCP 握手，
+// 不涉及 TLS 证书、SNI、HTTP 状态码，把那些文案写进这一列就是误导。
+// 代理侧失败单独分级（`代理隧道失败…`），否则用户会以为节点全挂了。
+func describeTCPLatencyError(err error, ctx context.Context) string {
 	if err == nil {
 		return ""
 	}
-
-	// 本条的独立超时先说清楚，否则会被摊成 "context deadline exceeded"。
-	if errors.Is(reqCtx.Err(), context.DeadlineExceeded) {
-		return timeoutReason(timeout)
-	}
-	if errors.Is(reqCtx.Err(), context.Canceled) {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		return reasonCancelled
 	}
 
-	// client.Do 的返回值恒为 *url.Error，先剥掉这层壳再分类。
-	var uerr *url.Error
-	if errors.As(err, &uerr) && uerr.Err != nil {
-		err = uerr.Err
-	}
-
-	// 代理侧的失败优先暴露：否则一堆 "i/o timeout" 会让人以为是节点的问题。
 	var perr *proxyDialError
 	if errors.As(err, &perr) {
 		return perr.Error()
 	}
 
-	// 拨号阶段超时用 dialTimeout 报数：dial=3 连不上时，说「>10s」是撒谎。
-	// 注意这行必须放在 proxyDialError 之后（走代理时拨号目标是代理，
-	// 由代理分支给出更准确的原因）。
+	// 拨号阶段超时用 dialTimeout 报数：dial=5 连不上时说「>20s」是撒谎。
 	var opErr *net.OpError
 	if errors.As(err, &opErr) && opErr.Op == "dial" && isTimeoutErr(err) {
 		return dialTimeoutReason()
 	}
-
-	if errors.Is(err, context.DeadlineExceeded) {
-		return timeoutReason(timeout)
+	if errors.Is(err, context.DeadlineExceeded) || isTimeoutErr(err) {
+		return "连接超时"
 	}
-	if errors.Is(err, context.Canceled) {
-		return reasonCancelled
-	}
-	if msg, ok := describeTLSError(err); ok {
-		return msg
-	}
-
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		return fmt.Sprintf("DNS 解析失败（%s）", dnsErr.Name)
-	}
-	if isTimeoutErr(err) {
-		return timeoutReason(timeout)
-	}
-	switch {
-	case isConnRefused(err):
-		return "连接被拒绝（端口未开放）"
-	case isConnReset(err):
-		return "连接被重置"
-	case isUnreachable(err):
-		return "网络不可达"
-	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		return "EOF（对端未返回任何数据）"
-	}
-	return describeIOError(err, context.Background())
-}
-
-// timeoutReason 统一「整体等待」超时文案：已经连上了、但迟迟等不到响应头，
-// 这时有效预算是 latencyRequestTimeout()。走代理时点明链路，避免误判成节点问题。
-func timeoutReason(timeout time.Duration) string {
-	if proxyURL != nil {
-		return fmt.Sprintf("连接超时（>%ds，经代理 %s）", int(timeout.Seconds()), proxyURL.Host)
-	}
-	return fmt.Sprintf("连接超时（>%ds）", int(timeout.Seconds()))
+	return "连接失败"
 }
 
 // dialTimeoutReason 是「拨号阶段」超时的文案：TCP 握手都没完成，
-// 此时真正的预算是 cfg.DialTimeout，报总预算的秒数会骗人
-// （dial=3 的用户看到「>10s」会以为引擎没按设置走）。
+// 此时真正的预算是 cfg.DialTimeout，报别的秒数会骗人。
 func dialTimeoutReason() string {
 	d := cfg.DialTimeout
 	if d <= 0 {
@@ -945,53 +831,6 @@ func dialTimeoutReason() string {
 		return fmt.Sprintf("连接超时（>%ds，拨号到代理 %s）", d, proxyURL.Host)
 	}
 	return fmt.Sprintf("连接超时（>%ds，拨号阶段）", d)
-}
-
-// describeTLSError 识别 TLS/证书类错误。第二个返回值说明是否命中。
-func describeTLSError(err error) (string, bool) {
-	var cvErr *tls.CertificateVerificationError
-	if errors.As(err, &cvErr) {
-		if msg, ok := describeX509Error(cvErr.Err); ok {
-			return msg, true
-		}
-		return "TLS 证书校验失败: " + describeIOError(cvErr, context.Background()), true
-	}
-	if msg, ok := describeX509Error(err); ok {
-		return msg, true
-	}
-
-	var recordErr tls.RecordHeaderError
-	if errors.As(err, &recordErr) {
-		return "TLS 握手失败（对端不是 HTTPS 服务）", true
-	}
-	var alertErr tls.AlertError
-	if errors.As(err, &alertErr) {
-		return "TLS 握手失败（对端返回 alert: " + alertErr.Error() + "）", true
-	}
-	return "", false
-}
-
-// describeX509Error 识别 crypto/x509 的几类校验失败。
-func describeX509Error(err error) (string, bool) {
-	if err == nil {
-		return "", false
-	}
-	var hostErr x509.HostnameError
-	if errors.As(err, &hostErr) {
-		return fmt.Sprintf("SNI 不匹配（证书不含 %s）", hostErr.Host), true
-	}
-	var unknownErr x509.UnknownAuthorityError
-	if errors.As(err, &unknownErr) {
-		return "TLS 证书不受信任（系统根证书里没有签发者）", true
-	}
-	var invalidErr x509.CertificateInvalidError
-	if errors.As(err, &invalidErr) {
-		if invalidErr.Reason == x509.Expired {
-			return "TLS 证书已过期", true
-		}
-		return "TLS 证书无效: " + describeIOError(invalidErr, context.Background()), true
-	}
-	return "", false
 }
 
 const (
@@ -1188,22 +1027,21 @@ func speedStats(results []*TestResult) (ok, zero, fail int) {
 
 // runLatencyStage 对 ipsToTest 做一轮「真的能用吗」的延迟测量。
 //
-// 测量走 ClientPool 提供的 http.Client（`measureClientLatency`）：TCP 连通 +
-// TLS 握手（SNI = 测速域名）+ HTTP 响应头到达全通才算可用，与速度测试同一口径。
-// 早期版本只做 TCP 直连握手，导致「TCP 通但 TLS 不通」的候选在延迟阶段"通过"、
-// 到速度阶段整批失败，用户看到的就是「延迟有数、测速全挂」。
+// 口径与最初原版（censys-speedtest/src/pipeline.go 的 measureTCPLatency）一致：
+// **只量 TCP 三次握手**（走代理时含一次真实往返），不做 TLS 握手、不看 HTTP 状态码。
 //
-// 原地写入每个目标的 Latency；不可用的条目同时写入 Reason（比如
-// `SNI 不匹配（证书不含 ...）` / `连接超时（>5s）`），这样「只延迟」模式
-// 可以直接把它们写进 CSV 给用户看。
+// 为什么改回来：早期 Flutter 版把它换成「TCP + TLS + HEAD 响应头全通」，
+// 同一条 104.16.1.1:443 实测 2023ms，而 TCP 握手只有几十毫秒 —— 用户看到的
+// 「延迟怎么这么大」就是这么来的。延迟阶段的职责是「筛掉连不上的候选」，
+// 能不能真拿到 HTTP 内容由速度阶段判定，两件事不该混在一个数里。
+//
+// 原地写入每个目标的 Latency；不可用的条目同时写入 Reason（`连接超时` / `连接失败`），
+// 这样「只延迟」模式可以直接把它们写进 CSV 给用户看。
 //
 // [applyThreshold] 决定是否把超过 cfg.MaxLatency 的条目判为失败：
 //   - 速度/一键模式传 true：阈值用于「筛掉高延迟候选」，让速度阶段少测几条；
 //   - 只延迟模式传 false：用户点「延迟测试」是想看每条候选的真实延迟，
-//     200ms 的默认阈值会把大量跨境候选直接标成失败，看起来像「全挂了」。
-//
-// 注意 applyThreshold 只影响「太慢」的判定，不影响「跑不通」的判定：
-// 只延迟模式下连接失败/TLS 失败/HTTP 4xx 依然记为 Latency=-1 的失败。
+//     阈值会把大量跨境候选直接标成失败，看起来像「全挂了」。
 func runLatencyStage(
 	ctx context.Context, ipsToTest []*TestResult, clientPool *ClientPool, applyThreshold bool,
 ) []*TestResult {
@@ -1212,13 +1050,8 @@ func runLatencyStage(
 		return nil
 	}
 
-	probeURL := strings.TrimSpace(cfg.SpeedTestURL)
-	if probeURL == "" {
-		fmt.Fprintln(os.Stderr, "配置里没有 speedTestURL，无法用「能否访问测速站」判定延迟")
-		return nil
-	}
-
-	// 延迟探测每条都要建连接（比纯 TCP 重），并发上限独立于速度阶段。
+	// 延迟探测每条都要建连接，并发上限独立于速度阶段。
+	dialTimeout := time.Duration(cfg.DialTimeout) * time.Second
 	concurrency := cfg.MaxLatencyConcurrency
 	if concurrency <= 0 {
 		concurrency = 10
@@ -1226,10 +1059,8 @@ func runLatencyStage(
 
 	logf("")
 	logf("   ----- 延迟测试 -----")
-	logf("   探测方式: %s %s（TCP + TLS + 响应头全通才算可用；HEAD 被拒时自动退化为 GET）",
-		http.MethodHead, probeURL)
-	logf("   单条超时: %ds（拨号 %ds）",
-		int(latencyRequestTimeout().Seconds()), cfg.DialTimeout)
+	logf("   探测方式: TCP 握手（老口径：能连上就算通过，不看 TLS / HTTP 状态码）")
+	logf("   单条超时: %ds", cfg.DialTimeout)
 	passed := NewSafeResults()
 	totalIPs := int32(len(ipsToTest))
 	var latencyDone int32
@@ -1259,8 +1090,7 @@ func runLatencyStage(
 				return
 			}
 
-			client := clientPool.NewClient(result.IP, port)
-			out := measureClientLatency(ctx, client, probeURL)
+			out := measureTCPLatency(ctx, result.IP, result.Port, dialTimeout)
 			result.Latency = out.Latency
 			cur := atomic.AddInt32(&latencyDone, 1)
 
@@ -1461,6 +1291,121 @@ func speedReason(out speedOutcome) string {
 		return reasonCancelled
 	}
 	return fmt.Sprintf("%s: %s", out.Stage, out.Err)
+}
+
+// filterTargetsBySHA1 对 `ip:port` 清单跑阶段1（等价原版 runSHA1Filter，只是输入不是 Censys JSON）。
+//
+// 与原版逐条对齐：`GET http://ip:port`、读最多 maxResponseBytes 算 SHA1、5s 超时、
+// 重试 1 次、并发 MaxSha1Concurrency；**不按端口预筛**（80 / 443 / 8443 一视同仁，
+// 谁命中留谁）。原版的指纹是对**明文 HTTP** 响应体算的，443 走 TLS 拿到的是另一份
+// 内容（实测同一台 CF 边缘：80 命中 108b6115…，443 是 f56c7076…），所以这里不做
+// 「443 自动换 https」的花活——那会让哈希永远对不上。
+func filterTargetsBySHA1(ctx context.Context, targets []*TestResult) []*TestResult {
+	target := strings.ToLower(strings.TrimSpace(cfg.TargetSHA1Hash))
+	if len(target) != 40 {
+		fmt.Fprintf(os.Stderr, "TargetSHA1Hash 不合法（应为 40 字符 hex，实际 %d 字符）\n", len(target))
+		return nil
+	}
+	if _, err := hex.DecodeString(target); err != nil {
+		fmt.Fprintln(os.Stderr, "TargetSHA1Hash 不是合法的十六进制字符串:", err)
+		return nil
+	}
+
+	conc := cfg.MaxSha1Concurrency
+	if conc <= 0 {
+		conc = 10
+	}
+
+	logf("")
+	logf("====================================================================")
+	logf("▶ 阶段1/3：SHA1 指纹比对（-targets 清单）")
+	logf("====================================================================")
+	logf("   目标 SHA1: %s | 并发: %d | 候选: %d | 不按端口预筛", target, conc, len(targets))
+
+	transport := &http.Transport{
+		MaxIdleConns:        conc,
+		MaxIdleConnsPerHost: conc,
+		IdleConnTimeout:     30 * time.Second,
+	}
+	if proxyURL != nil {
+		transport.Proxy = http.ProxyURL(proxyURL)
+	}
+	client := &http.Client{Timeout: shaHTTPTimeout, Transport: transport}
+	defer transport.CloseIdleConnections()
+
+	type shaTarget struct{ ip, port string }
+	jobChan := make(chan shaTarget, 256)
+	matched := NewSafeResults()
+	var processed, failed int64
+	var wg sync.WaitGroup
+
+	for i := 0; i < conc; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobChan {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				var (
+					sum     string
+					lastErr error
+				)
+				url := "http://" + net.JoinHostPort(j.ip, j.port)
+				for attempt := 0; attempt <= retryAttempts; attempt++ {
+					sum, lastErr = fetchSHA1(ctx, client, url)
+					if lastErr == nil {
+						break
+					}
+				}
+				cur := atomic.AddInt64(&processed, 1)
+				switch {
+				case lastErr != nil:
+					atomic.AddInt64(&failed, 1)
+					if !*quiet {
+						logf("   [%d] %s:%s  网络错误", cur, j.ip, j.port)
+					}
+				case sum == target:
+					if !*quiet {
+						logf("   [%d] %s:%s  命中", cur, j.ip, j.port)
+					}
+					matched.Add(&TestResult{IP: j.ip, Port: j.port, Latency: -1})
+				default:
+					if !*quiet {
+						logf("   [%d] %s:%s  指纹不匹配", cur, j.ip, j.port)
+					}
+				}
+			}
+		}()
+	}
+	for _, t := range targets {
+		jobChan <- shaTarget{ip: t.IP, port: t.Port}
+	}
+	close(jobChan)
+	wg.Wait()
+
+	out := matched.Snapshot()
+	logf("   [漏斗] 导入 %d → 指纹命中 %d（网络失败 %d）",
+		len(targets), len(out), atomic.LoadInt64(&failed))
+	return out
+}
+
+// loadTargets 读清单，并在 -sha1 时先过阶段1。全不命中按原版语义中止（exit 1）。
+func loadTargets(ctx context.Context) ([]*TestResult, error) {
+	targets, err := readSpeedTargets(*targetsFile)
+	if err != nil {
+		return nil, err
+	}
+	if !*sha1Filter || len(targets) == 0 {
+		return targets, nil
+	}
+	kept := filterTargetsBySHA1(ctx, targets)
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("阶段1 没有命中任何目标（检查 TargetSHA1Hash 与候选清单）")
+	}
+	return kept, nil
 }
 
 func readSpeedTargets(path string) ([]*TestResult, error) {
@@ -1668,10 +1613,19 @@ func writeLatencyFailureCSV(targets []*TestResult) {
 func runSpeedOnly(ctx context.Context, targets []*TestResult) []*TestResult {
 	dialTimeout := time.Duration(cfg.DialTimeout) * time.Second
 	downloadTimeout := time.Duration(cfg.DownloadTimeout) * time.Second
+	clientPool := NewClientPool(dialTimeout, downloadTimeout)
 
-	logSpeedPlan(len(targets))
+	// 与最初原版 runSpeedTest 一致：**先测 TCP 延迟、按 maxLatency 过滤，再测速**。
+	// 只测速而不筛延迟，会让几百条连不通的候选全部走到下载阶段，
+	// 既慢又给不出一句有用的失败原因。
+	passed := runLatencyStage(ctx, targets, clientPool, true)
+	if len(passed) == 0 {
+		fmt.Fprintln(os.Stderr, "没有 IP 通过延迟测试")
+		return nil
+	}
 
-	return runSpeedStage(ctx, targets, NewClientPool(dialTimeout, downloadTimeout))
+	logSpeedPlan(len(passed))
+	return runSpeedStage(ctx, passed, clientPool)
 }
 
 func logLatencyPlan(total int) {
@@ -1679,9 +1633,8 @@ func logLatencyPlan(total int) {
 	logf("====================================================================")
 	logf("▶ 阶段2/2：延迟测试（只延迟模式）")
 	logf("====================================================================")
-	logf("   候选数量: %d | 并发: %d | 单条超时: %ds（其中拨号 %ds）",
-		total, cfg.MaxLatencyConcurrency,
-		int(latencyRequestTimeout().Seconds()), cfg.DialTimeout)
+	logf("   候选数量: %d | 并发: %d | 单条超时: %ds",
+		total, cfg.MaxLatencyConcurrency, cfg.DialTimeout)
 	if cfg.MaxLatency > 0 {
 		logf("   延迟阈值: %dms（只延迟模式不据此淘汰，仅一键测试使用）", cfg.MaxLatency)
 	} else {
@@ -1874,7 +1827,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "-only-speed 需要配合 -targets <文件> 使用")
 			os.Exit(2)
 		}
-		targets, terr := readSpeedTargets(*targetsFile)
+		targets, terr := loadTargets(ctx)
 		if terr != nil {
 			fmt.Fprintln(os.Stderr, terr)
 			os.Exit(2)
@@ -1898,7 +1851,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "-only-latency 需要配合 -targets <文件> 使用")
 			os.Exit(2)
 		}
-		targets, terr := readSpeedTargets(*targetsFile)
+		targets, terr := loadTargets(ctx)
 		if terr != nil {
 			fmt.Fprintln(os.Stderr, terr)
 			os.Exit(2)
@@ -1915,9 +1868,10 @@ func main() {
 		return
 	}
 
-	// 带 -targets 且没有 -only-*：延迟 + 速度（跳过指纹筛选阶段）。
+	// 带 -targets 且没有 -only-*：一键测试。带 -sha1 时先过指纹阶段，
+	// 然后是延迟 + 速度（完整三阶段，与最初原版一致）。
 	if *targetsFile != "" {
-		targets, terr := readSpeedTargets(*targetsFile)
+		targets, terr := loadTargets(ctx)
 		if terr != nil {
 			fmt.Fprintln(os.Stderr, terr)
 			os.Exit(2)

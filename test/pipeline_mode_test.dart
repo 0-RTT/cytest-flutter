@@ -177,24 +177,53 @@ void main() {
   // TLS + HTTP 全通。于是「TCP 通但 TLS/SNI 不通」的候选在延迟阶段算"可用"，
   // 到速度阶段整批失败 —— 用户看到「延迟有数、一测速全挂」或「全部失败」。
   // 现在两个阶段共用 ClientPool 的 client，口径统一：响应头没拿到就不算可用。
-  test('延迟测试走 HTTP 客户端：TCP + TLS + 响应头全通才算可用', () {
+  test('延迟测试走 TCP 握手（对齐最初原版 measureTCPLatency）', () {
     final go = File('engine/pipeline.go').readAsStringSync();
 
-    expect(go, contains('func measureClientLatency('),
-        reason: '延迟测量必须经 ClientPool 的 client 发真实请求');
-    expect(go, isNot(contains('func measureTCPLatency(')),
-        reason: '裸 TCP 握手判定已废弃，别悄悄复活');
-    expect(go, contains('clientPool.NewClient(result.IP, port)'),
-        reason: '每条候选都要绑定自己的 ip:port 建 client');
-    expect(go, contains('measureClientLatency(ctx, client, probeURL)'),
-        reason: 'runLatencyStage 必须调用新测量函数');
-    expect(go, contains('http.MethodHead'),
-        reason: '优先 HEAD：测延迟不该把测速文件拉下来');
-    expect(go, contains('func describeLatencyError('),
-        reason: '失败必须给可读 Reason（超时 / SNI 不匹配 / TLS 不受信任…）');
+    expect(go, contains('func measureTCPLatency('),
+        reason: '延迟必须回到「纯 TCP 握手」口径');
+    expect(go, isNot(contains('func measureClientLatency(')),
+        reason: 'TCP+TLS+HEAD 首字节口径已废弃：同一条 104.16.1.1:443 实测 2023ms，'
+            '而原版 TCP 口径只有几十毫秒，用户看到的就是「延迟怎么这么大」');
+    expect(go, contains('measureTCPLatency(ctx, result.IP, result.Port, dialTimeout)'),
+        reason: 'runLatencyStage 必须调用 TCP 口径的测量函数');
+    expect(go, isNot(contains('http.MethodHead')),
+        reason: 'HEAD 那套属于已废弃的首字节口径，别悄悄复活');
+    expect(go, contains('func describeTCPLatencyError('),
+        reason: '失败必须给可读 Reason（连接超时 / 连接失败）');
     // 只延迟模式只是「不按阈值淘汰」，跑不通的仍要失败。
     expect(go, contains('case out.Latency < 0:'),
         reason: '只延迟模式仍需把跑不通的判为失败');
+  });
+
+  test('-sha1：-targets 清单必须先过指纹阶段，且不按端口预筛', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+
+    expect(go, contains('flag.Bool("sha1"'), reason: '缺少 -sha1 开关');
+    expect(go, contains('func filterTargetsBySHA1('),
+        reason: 'ip:port 清单这条路必须能跑阶段1（原版 runSHA1Filter 的等价物）');
+    expect(go, contains('[漏斗] 导入'),
+        reason: '必须打出漏斗，否则用户看不出被指纹筛掉了多少');
+    // 原版口径：明文 HTTP + 读满上限，谁命中留谁；不许按端口加白名单。
+    expect(go, contains('"http://" + net.JoinHostPort(j.ip, j.port)'));
+    expect(go, isNot(contains('port == 80')));
+    expect(go, isNot(contains('port == 443')));
+  });
+
+  test('只测速也要先过 TCP 延迟（对齐原版 runSpeedTest 顺序）', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+    final start = go.indexOf('func runSpeedOnly(');
+    expect(start, greaterThan(-1), reason: 'runSpeedOnly 缺失');
+    final tail = go.substring(start);
+    final nextFunc = tail.indexOf('\nfunc ');
+    final body = nextFunc < 0 ? tail : tail.substring(0, nextFunc);
+
+    final latAt = body.indexOf('runLatencyStage(');
+    final speedAt = body.indexOf('runSpeedStage(');
+    expect(latAt, greaterThan(-1), reason: '只测速必须先测 TCP 延迟');
+    expect(speedAt, greaterThan(-1));
+    expect(latAt, lessThan(speedAt),
+        reason: '原版是「先延迟、按 maxLatency 过滤、再测速」，顺序不能反');
   });
 
   // 真实事故：用户报「三个按钮全部失败」，根因是配了测速代理但代理没起来 ——
@@ -294,17 +323,18 @@ void main() {
   // （ClientPool 里设的 downloadTimeout）盖住，有效超时 = 两者的 min。
   // 用户想把测速调快点、把「下载超时」填成 3~5s 时，延迟探测被静默截断，
   // 日志/Reason 里声明的秒数成了假数字，而且「慢但真能用」的候选又被误杀。
-  test('延迟探测超时不被 downloadTimeout 截断（浅拷贝 client）', () {
+  test('延迟用 dialTimeout、测速用 downloadTimeout，两者互不干扰', () {
     final go = File('engine/pipeline.go').readAsStringSync();
 
-    expect(go, contains('probeClient := *client'),
-        reason: '浅拷贝 client：Transport 共享，不额外建连');
-    expect(go, contains('probeClient.Timeout = timeout'),
-        reason: '探测超时必须用延迟自己的声明值，不能沿用 downloadTimeout');
-    expect(go, contains('probeClient.Do(req)'));
-    // 速度阶段必须仍用池子里的原 client，别被这次改动带跑。
+    expect(go, contains('dialTimeout := time.Duration(cfg.DialTimeout) * time.Second'),
+        reason: 'TCP 延迟的预算必须是 dialTimeout');
     expect(go, contains('measureDownload(ctx, client, cfg.SpeedTestURL)'),
         reason: '测速阶段的行为与超时口径不能变');
+    expect(go, isNot(contains('probeClient := *client')),
+        reason: '浅拷贝 client 属于已废弃的 HEAD 口径，不该残留');
+    // 阈值语义：0 = 不筛选，只保留能连通的。
+    expect(go, contains('applyThreshold && cfg.MaxLatency > 0'),
+        reason: '只延迟模式不能按阈值把人筛光');
   });
 
   // 两条「日志/Reason 说的和实际不一致」的修正（QA 实测提出）：

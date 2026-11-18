@@ -162,14 +162,18 @@ class Pipeline {
   ///
   /// 抽成纯函数便于单测；未识别的模式按 `full` 处理，保持旧行为。
   static List<String> _modeArgs(String mode, String inputPath) {
+    // `-sha1`：对 ip:port 清单先跑阶段1 指纹比对（与原版 runSHA1Filter 同口径：
+    // 明文 HTTP、读最多 50MiB、不按端口预筛）。三个入口都带上它，否则
+    // 「一键测试」就退化成了「延迟+速度」，与最初原版的三段漏斗不是一回事。
     switch (mode) {
       case 'latency':
-        return <String>['-only-latency', '-targets', inputPath];
+        return <String>['-only-latency', '-targets', inputPath, '-sha1'];
       case 'speed':
-        return <String>['-only-speed', '-targets', inputPath];
+        return <String>['-only-speed', '-targets', inputPath, '-sha1'];
       case 'both':
-        return <String>['-targets', inputPath];
+        return <String>['-targets', inputPath, '-sha1'];
       default:
+        // -data 走 Censys JSON，引擎内部本来就有阶段1，不需要再加 -sha1。
         return <String>['-data', inputPath];
     }
   }
