@@ -2,12 +2,65 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-import '../../data/github.dart';
-import '../../data/node_template.dart';
 import '../../state/app_state.dart';
+import 'publish_page.dart';
 
-class ResultPage extends StatelessWidget {
+class ResultPage extends StatefulWidget {
   const ResultPage({super.key});
+
+  @override
+  State<ResultPage> createState() => _ResultPageState();
+}
+
+class _ResultPageState extends State<ResultPage> {
+  /// 勾选的行索引；默认全选可用节点，保持旧版「一键用全部」的行为。
+  final Set<int> _selected = <int>{};
+
+  bool _initialized = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    final rows = context.read<AppState>().rows;
+    for (var i = 0; i < rows.length; i++) {
+      if ((rows[i]['Reason'] ?? '').isEmpty) _selected.add(i);
+    }
+  }
+
+  List<String> _targets(AppState state) {
+    final out = <String>[];
+    for (final i in _selected.toList()..sort()) {
+      if (i < 0 || i >= state.rows.length) continue;
+      final r = state.rows[i];
+      if ((r['Reason'] ?? '').isNotEmpty) continue;
+      final ip = r['IP'] ?? '';
+      final port = r['Port'] ?? '';
+      if (ip.isNotEmpty && port.isNotEmpty) out.add('$ip:$port');
+    }
+    return out;
+  }
+
+  void _openPublish() {
+    final state = context.read<AppState>();
+    final targets = _targets(state);
+    if (targets.isEmpty) {
+      _toast(context, '先勾选至少一个测速成功的节点');
+      return;
+    }
+    final template = state.settings.vlessLinks.isNotEmpty
+        ? state.settings.vlessLinks.first
+        : '';
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PublishPage(
+          targets: targets,
+          template: template,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,23 +81,26 @@ class ResultPage extends StatelessWidget {
       );
     }
 
+    final picked = _targets(state).length;
+
     return Scaffold(
       appBar: AppBar(
         title: Text('结果 · ${state.rows.length} 条'),
         actions: [
+          TextButton.icon(
+            onPressed: picked == 0 ? null : _openPublish,
+            icon: const Icon(Icons.send_outlined, size: 17),
+            label: Text('推送 ($picked)'),
+          ),
           PopupMenuButton<String>(
             onSelected: (v) => _onAction(context, v),
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'csv', child: Text('导出 CSV（复制）')),
-              PopupMenuItem(value: 'sub', child: Text('生成订阅（复制）')),
-              PopupMenuItem(value: 'mihomo', child: Text('生成 mihomo（复制）')),
-              PopupMenuItem(value: 'github', child: Text('推送到 GitHub')),
             ],
           ),
         ],
       ),
-      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
-      // 不包这层列表最后几行会被系统栏压住。
+      // 底部 SafeArea：Scaffold 的 body 不避让系统手势条 / 三键导航。
       // top: false —— 顶部已由 AppBar 处理。
       body: SafeArea(
         top: false,
@@ -63,6 +119,33 @@ class ResultPage extends StatelessWidget {
                 ],
               ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Row(
+                children: [
+                  Text('勾选要推送的节点',
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () => setState(() {
+                      if (_selected.length == state.usableCount) {
+                        _selected.clear();
+                      } else {
+                        for (var i = 0; i < state.rows.length; i++) {
+                          if ((state.rows[i]['Reason'] ?? '').isEmpty) {
+                            _selected.add(i);
+                          }
+                        }
+                      }
+                    }),
+                    child: Text(_selected.length == state.usableCount
+                        ? '取消全选'
+                        : '全选可用'),
+                  ),
+                ],
+              ),
+            ),
             Expanded(
               child: ListView.separated(
                 // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
@@ -75,22 +158,47 @@ class ResultPage extends StatelessWidget {
                   final speed = double.tryParse(r['Speed (MiB/s)'] ?? '') ?? 0;
                   return ListTile(
                     dense: true,
-                    leading: SizedBox(
-                      width: 28,
-                      child: Text('${i + 1}',
-                          style: theme.textTheme.labelSmall
-                              ?.copyWith(color: theme.hintColor)),
+                    onTap: ok
+                        ? () => setState(() {
+                              if (_selected.contains(i)) {
+                                _selected.remove(i);
+                              } else {
+                                _selected.add(i);
+                              }
+                            })
+                        : null,
+                    leading: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Checkbox 只作选中指示：整行点击统一由 ListTile.onTap
+                        // 处理，否则 checkbox 与行会各切一次、等于没变。
+                        IgnorePointer(
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: Checkbox(
+                              value: _selected.contains(i),
+                              onChanged: ok ? (_) {} : null,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Text('${i + 1}',
+                            style: theme.textTheme.labelSmall
+                                ?.copyWith(color: theme.hintColor)),
+                      ],
                     ),
                     // 长地址 / 长 Reason 会顶破 ListTile，单行省略。
                     title: Text(
                       '${r['IP']}:${r['Port']}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'monospace',
                         // monospace 不含中文字形，缺 fallback 时含中文的行会显示方块
-                        fontFamilyFallback: ['sans-serif'],
+                        fontFamilyFallback: const ['sans-serif'],
                         fontSize: 13,
+                        color: ok ? null : theme.hintColor,
                       ),
                     ),
                     subtitle: ok
@@ -141,73 +249,15 @@ class ResultPage extends StatelessWidget {
       );
 
   Future<void> _onAction(BuildContext context, String action) async {
+    if (action != 'csv') return;
     final state = context.read<AppState>();
-    final targets = state.usableTargets.map((e) => '${e.$1}:${e.$2}').toList();
-    if (targets.isEmpty) {
-      _toast(context, '没有可用节点');
-      return;
+    final buf = StringBuffer('IP,Port,Latency (ms),Speed (MiB/s),Reason\n');
+    for (final r in state.rows) {
+      buf.writeln(
+          '${r['IP']},${r['Port']},${r['Latency (ms)']},${r['Speed (MiB/s)']},${r['Reason']}');
     }
-
-    switch (action) {
-      case 'csv':
-        final buf = StringBuffer('IP,Port,Latency (ms),Speed (MiB/s),Reason\n');
-        for (final r in state.rows) {
-          buf.writeln(
-              '${r['IP']},${r['Port']},${r['Latency (ms)']},${r['Speed (MiB/s)']},${r['Reason']}');
-        }
-        await Clipboard.setData(ClipboardData(text: buf.toString()));
-        _toast(context, 'CSV 已复制到剪贴板');
-        break;
-
-      case 'sub':
-        final v = state.primaryLine;
-        if (v == null) {
-          _toast(context, '先在「线路与代理」填一条 vless 链接');
-          return;
-        }
-        final template = state.settings.vlessLinks.first;
-        final nodes = expandTemplate(template, targets);
-        final body = subscription(nodes);
-        await Clipboard.setData(ClipboardData(text: body));
-        _toast(context, '订阅已复制（${nodes.length} 个节点，base64）');
-        break;
-
-      case 'mihomo':
-        final v = state.primaryLine;
-        if (v == null) {
-          _toast(context, '先在「线路与代理」填一条 vless 链接');
-          return;
-        }
-        final yaml = buildMihomoYaml(v, targets);
-        if (yaml.isEmpty) {
-          _toast(context, '生成失败：候选地址无法解析');
-          return;
-        }
-        await Clipboard.setData(ClipboardData(text: yaml));
-        _toast(context, 'mihomo 配置已复制（${targets.length} 个节点）');
-        break;
-
-      case 'github':
-        final v = state.primaryLine;
-        if (v == null) {
-          _toast(context, '先在「线路与代理」填一条 vless 链接');
-          return;
-        }
-        final body = subscription(
-            expandTemplate(state.settings.vlessLinks.first, targets));
-        try {
-          final path = await GitHub.push(
-            token: state.settings.githubToken,
-            repo: state.settings.githubRepo,
-            path: state.settings.githubPath,
-            content: body,
-          );
-          _toast(context, '已推送到 $path');
-        } catch (e) {
-          _toast(context, '推送失败：$e');
-        }
-        break;
-    }
+    await Clipboard.setData(ClipboardData(text: buf.toString()));
+    _toast(context, 'CSV 已复制到剪贴板');
   }
 
   void _toast(BuildContext context, String msg) {

@@ -13,19 +13,27 @@ class LogPanel extends StatelessWidget {
     required this.title,
     required this.lines,
     required this.scrollController,
-    required this.onJumpToLatest,
     required this.onCopy,
+    this.onJumpToLatest,
     this.running = false,
     this.emptyText = '暂无输出',
+    this.showJumpToLatest = true,
+    this.copyTooltip = '复制日志',
   });
 
   final String title;
   final List<String> lines;
   final ScrollController scrollController;
-  final VoidCallback onJumpToLatest;
+  final VoidCallback? onJumpToLatest;
   final Future<void> Function() onCopy;
   final bool running;
   final String emptyText;
+
+  /// 静态内容（如推送预览）不需要「跳到最新」，设 false 隐藏。
+  final bool showJumpToLatest;
+
+  /// 复制按钮的提示文案，随用途变化（日志 / 产物内容）。
+  final String copyTooltip;
 
   @override
   Widget build(BuildContext context) {
@@ -47,29 +55,43 @@ class LogPanel extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(14, 8, 8, 6),
             child: Row(
               children: [
-                Text(title, style: theme.textTheme.titleSmall),
-                if (running) ...[
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: theme.colorScheme.primary),
+                // 长标题（如「mihomo YAML 预览」）在窄屏必须可省略，
+                // 否则标题 + 行数 + 两个按钮会撑破 Row。
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(title,
+                            style: theme.textTheme.titleSmall,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                      if (running) ...[
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: theme.colorScheme.primary),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-                const Spacer(),
+                ),
+                const SizedBox(width: 4),
                 if (lines.isNotEmpty)
                   Text('${lines.length} 行',
                       style: theme.textTheme.labelSmall),
-                IconButton(
-                  onPressed: lines.isEmpty ? null : onJumpToLatest,
-                  tooltip: '跳到最新',
-                  icon: const Icon(Icons.vertical_align_bottom, size: 18),
-                  visualDensity: VisualDensity.compact,
-                ),
+                if (showJumpToLatest)
+                  IconButton(
+                    onPressed: lines.isEmpty ? null : onJumpToLatest,
+                    tooltip: '跳到最新',
+                    icon: const Icon(Icons.vertical_align_bottom, size: 18),
+                    visualDensity: VisualDensity.compact,
+                  ),
                 IconButton(
                   onPressed: lines.isEmpty ? null : () { onCopy(); },
-                  tooltip: '复制日志',
+                  tooltip: copyTooltip,
                   icon: const Icon(Icons.copy_all_outlined, size: 18),
                   visualDensity: VisualDensity.compact,
                 ),
