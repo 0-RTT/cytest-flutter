@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/remote.dart';
 import '../../state/app_state.dart';
+import '../widgets/log_panel.dart';
 
 class RemotePage extends StatefulWidget {
   const RemotePage({super.key, this.initialInput});
@@ -85,6 +87,19 @@ class _RemotePageState extends State<RemotePage> {
         SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
   }
 
+  void _jumpToLatest() {
+    if (_logScroll.hasClients) {
+      _logScroll.jumpTo(_logScroll.position.maxScrollExtent);
+    }
+  }
+
+  Future<void> _copyLogs() async {
+    await Clipboard.setData(ClipboardData(text: _log.join('\n')));
+    if (mounted) {
+      _toast('输出已复制');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -103,120 +118,99 @@ class _RemotePageState extends State<RemotePage> {
           ),
         ],
       ),
-      // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
-      // 不包这层底部内容会被系统栏压住。
+      // 底部 SafeArea：body 不会自动避让系统手势条 / 三键导航。
       // top: false —— 顶部已由 AppBar 处理。
       body: SafeArea(
         top: false,
-        child: ListView(
-          // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Card(
-              margin: EdgeInsets.zero,
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('服务器', style: theme.textTheme.titleSmall),
-                    const SizedBox(height: 6),
-                    Text(
-                      s.remoteHost.isEmpty
-                          ? '未配置，请到「设置 → 远程执行」填写'
-                          : '${s.remoteUser}@${s.remoteHost}:${s.remotePort}',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: s.remoteHost.isEmpty
-                            ? theme.colorScheme.error
-                            : theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              margin: EdgeInsets.zero,
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text('候选数据', style: theme.textTheme.titleSmall),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: _useTestInput,
-                          child: const Text('说明'),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+              child: Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('服务器', style: theme.textTheme.titleSmall),
+                      const SizedBox(height: 6),
+                      Text(
+                        s.remoteHost.isEmpty
+                            ? '未配置，请到「设置 → 远程执行」填写'
+                            : '${s.remoteUser}@${s.remoteHost}:${s.remotePort}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: s.remoteHost.isEmpty
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.onSurfaceVariant,
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: _data,
-                      maxLines: 6,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        // monospace 在 Android 上不含中文字形，缺 fallback 中文显示方块
-                        fontFamilyFallback: ['sans-serif'],
-                        fontSize: 11.5,
                       ),
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                        hintText: '粘贴 Censys JSON，或从「记录 → 存档」载入',
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 12),
-            Card(
-              margin: EdgeInsets.zero,
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text('远端输出', style: theme.textTheme.titleSmall),
-                        const Spacer(),
-                        Text(_running ? '执行中' : '${_log.length} 行',
-                            style: theme.textTheme.labelSmall),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      height: 220,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text('候选数据', style: theme.textTheme.titleSmall),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: _useTestInput,
+                            child: const Text('说明'),
+                          ),
+                        ],
                       ),
-                      child: _log.isEmpty
-                          ? Center(
-                              child: Text('未执行',
-                                  style: TextStyle(
-                                      color:
-                                          theme.colorScheme.onSurfaceVariant)),
-                            )
-                          : ListView.builder(
-                              controller: _logScroll,
-                              padding: const EdgeInsets.all(10),
-                              itemCount: _log.length,
-                              itemBuilder: (_, i) => Text(
-                                _log[i],
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  // 远端日志常含中文，必须回落系统字体
-                                  fontFamilyFallback: ['sans-serif'],
-                                  fontSize: 11.5,
-                                ),
-                              ),
-                            ),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: _data,
+                        maxLines: 4,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          // monospace 在 Android 上不含中文字形，缺 fallback 中文显示方块
+                          fontFamilyFallback: ['sans-serif'],
+                          fontSize: 11.5,
+                        ),
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          hintText: '粘贴 Censys JSON，或从「记录 → 存档」载入',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // 输出模块：Expanded 独占剩余空间；bottom=14 包底，圆角完整露出。
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: LogPanel(
+                        key: const ValueKey('remote_output_panel'),
+                        title: '远端输出',
+                        lines: _log,
+                        running: _running,
+                        emptyText: '未执行',
+                        scrollController: _logScroll,
+                        onJumpToLatest: _jumpToLatest,
+                        onCopy: _copyLogs,
+                      ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 8),
@@ -233,4 +227,5 @@ class _RemotePageState extends State<RemotePage> {
       ),
     );
   }
+
 }

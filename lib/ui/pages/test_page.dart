@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/app_state.dart';
+import '../widgets/log_panel.dart';
 
 class TestPage extends StatefulWidget {
   const TestPage({super.key, this.initialInput});
@@ -116,6 +117,23 @@ class _TestPageState extends State<TestPage> {
     });
   }
 
+  void _jumpToLatest() {
+    setState(() => _stickToBottom = true);
+    if (_logScroll.hasClients) {
+      _logScroll.jumpTo(_logScroll.position.maxScrollExtent);
+    }
+  }
+
+  Future<void> _copyLogs() async {
+    final state = context.read<AppState>();
+    await Clipboard.setData(ClipboardData(text: state.logs.join('\n')));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('日志已复制')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -183,20 +201,36 @@ class _TestPageState extends State<TestPage> {
               child: _progressCard(theme, state, pct),
             ),
             const SizedBox(height: 10),
-            // 日志吃掉剩余空间：永远在首屏、独立滚动，不再被外层 ListView 挤下去。
+            // 日志模块：吃掉剩余空间、独立滚动，永远在首屏。
+            // fromLTRB 的 bottom=14 是「包底」：让卡片底边和圆角完整露出来，
+            // 否则贴着屏幕边缘会融合在一起、最后一行看着像被切掉。
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: _logCard(theme, state),
+                padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: LogPanel(
+                        key: const ValueKey('test_page_log_card'),
+                        title: '日志',
+                        lines: state.logs,
+                        running: state.running,
+                        scrollController: _logScroll,
+                        onJumpToLatest: _jumpToLatest,
+                        onCopy: _copyLogs,
+                      ),
+                    ),
+                    if (state.lastError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(state.lastError!,
+                          style: TextStyle(
+                              color: theme.colorScheme.error, fontSize: 12)),
+                    ],
+                  ],
+                ),
               ),
             ),
-            if (state.lastError != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                child: Text(state.lastError!,
-                    style:
-                        TextStyle(color: theme.colorScheme.error, fontSize: 12)),
-              ),
           ],
         ),
       ),
@@ -325,101 +359,6 @@ class _TestPageState extends State<TestPage> {
         ),
       );
 
-  Widget _logCard(ThemeData theme, AppState state) => Card(
-        key: const ValueKey('test_page_log_card'),
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 8, 8, 6),
-              child: Row(
-                children: [
-                  Text('日志', style: theme.textTheme.titleSmall),
-                  if (state.running) ...[
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: theme.colorScheme.primary),
-                    ),
-                  ],
-                  const Spacer(),
-                  if (state.logs.isNotEmpty)
-                    Text('${state.logs.length} 行',
-                        style: theme.textTheme.labelSmall),
-                  IconButton(
-                    onPressed: state.logs.isEmpty
-                        ? null
-                        : () {
-                            _stickToBottom = true;
-                            if (_logScroll.hasClients) {
-                              _logScroll.jumpTo(
-                                  _logScroll.position.maxScrollExtent);
-                            }
-                          },
-                    tooltip: '跳到最新',
-                    icon: const Icon(Icons.vertical_align_bottom, size: 18),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  IconButton(
-                    onPressed: state.logs.isEmpty
-                        ? null
-                        : () async {
-                            await Clipboard.setData(
-                                ClipboardData(text: state.logs.join('\n')));
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('日志已复制')));
-                            }
-                          },
-                    tooltip: '复制日志',
-                    icon: const Icon(Icons.copy_all_outlined, size: 18),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                color: theme.colorScheme.surfaceContainerHighest,
-                child: state.logs.isEmpty
-                    ? Center(
-                        child: Text('暂无输出',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant)),
-                      )
-                    : ListView.builder(
-                        controller: _logScroll,
-                        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-                        itemCount: state.logs.length,
-                        itemBuilder: (_, i) {
-                          final line = state.logs[i];
-                          return Text(
-                            line,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              // 日志是中文，monospace 里没有中文字形，必须回落系统字体
-                              fontFamilyFallback: const ['sans-serif'],
-                              fontSize: 11.5,
-                              color: line.contains('✗') || line.contains('失败')
-                                  ? theme.colorScheme.error
-                                  : line.contains('阶段')
-                                      ? theme.colorScheme.primary
-                                      : null,
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ),
-          ],
-        ),
-      );
-
   String _trim(String s) {
     final t = s.replaceAll(RegExp(r'^[=\-\s]+|[=\-\s]+$'), '');
     return t.length > 10 ? t.substring(0, 10) : t;
@@ -442,6 +381,7 @@ class _TestPageState extends State<TestPage> {
         ),
       );
 }
+
 
 /// 编辑弹层自己持有 controller：showModalBottomSheet 的 Future 在退出动画
 /// 开始前就 complete，若在那时 dispose，正在卸载的 TextField 仍会访问它。

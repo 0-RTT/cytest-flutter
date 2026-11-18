@@ -104,6 +104,21 @@ APK 小 12MB 且运行时报找不到 libxray.so）。
 四个构造参数在 M3 下会被 `_IconButtonM3` 丢弃，且 `tapTargetSize: padded` 会把按钮
 撑到 40px。要压尺寸必须走 `style: ButtonStyle(...)`。
 
+**长时间运行的页面（v1.0.13 定稿）**：日志/输出统一用公共模块
+`lib/ui/widgets/log_panel.dart` 的 `LogPanel`，两个使用方（test_page 日志、
+remote_page 远端输出）都是 `Column` 固定区 + `Expanded(LogPanel)`，
+不再有写死高度的日志小盒。**绝不能把日志卡塞进整体滚动的 ListView 末尾**
+（内外双层滚动会互相传递边界，日志既小又被挤到首屏外）。
+
+**包底（用户明确反馈）**：`Expanded` 外层 `Padding` 必须给 `bottom` 留 14px。
+只给 horizontal 会让卡片底边贴着 SafeArea/屏幕物理边缘，圆角和最后一行糊在一起，
+看着像"没包底、显示不完整"。列表内容区本身再加 `bottom: 12`，让末行远离圆角。
+
+**输入全文**：放 `showModalBottomSheet`，主页面只留一行摘要 —— 抓取 JSON 有几十 KB，
+塞进 6 行 TextField 会把整页撑满。弹层里的 `TextEditingController` 必须由弹层自己的
+StatefulWidget 持有：`showModalBottomSheet(...).whenComplete()` 在退出动画开始前就触发，
+那时 dispose 会让正在卸载的 TextField 抛 "used after being disposed"。
+
 ## 与 Kotlin 版的功能差距（2026-11-17 逐条对照）
 Kotlin 版 111 个 .kt / 17,108 行；Flutter 版 21 个 .dart / 4,236 行。
 69 个用户可见功能点：已对齐 8 / 缺失 37 / 退化 24，加权完成度约 **30%**。

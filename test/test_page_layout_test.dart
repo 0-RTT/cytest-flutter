@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 import 'package:cytest/state/app_state.dart';
+import 'package:cytest/ui/pages/remote_page.dart';
 import 'package:cytest/ui/pages/test_page.dart';
 
 const _bigJson =
@@ -103,7 +104,27 @@ void main() {
       final topLeft = tester.getTopLeft(card);
       // 640 逻辑像素高的小屏：日志至少 160px，且底部不越屏
       expect(size.height, greaterThan(160));
-      expect(topLeft.dy + size.height, lessThanOrEqualTo(641));
+      // 「包底」：卡片底边与屏幕底至少留 10px，圆角完整露出、最后一行不糊在屏幕边
+      expect(640 - (topLeft.dy + size.height), greaterThanOrEqualTo(10));
+    });
+  });
+
+  group('RemotePage · 输出模块', () {
+    testWidgets('远端输出面板有包底、独占剩余高度', (tester) async {
+      tester.view.physicalSize = const Size(1080, 1920);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(_host(const RemotePage()));
+      await tester.pump();
+
+      final panel = find.byKey(const ValueKey('remote_output_panel'));
+      final size = tester.getSize(panel);
+      final topLeft = tester.getTopLeft(panel);
+      expect(size.height, greaterThan(100));
+      expect(640 - (topLeft.dy + size.height), greaterThanOrEqualTo(10));
+      expect(find.text('未执行'), findsOneWidget);
+      expect(find.byTooltip('复制日志'), findsOneWidget);
     });
   });
 }
