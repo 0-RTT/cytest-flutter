@@ -202,13 +202,19 @@ jobs:
         run: |
           set -euo pipefail
           FL=$(flutter --version | head -1 | awk '{print $2}')
-          DART=$(flutter --version | sed -n '2p' | awk '{print $2}')
+          # Dart 版本在 "Tools • Dart 3.14.0 • DevTools …" 那一行，不能按行号取
+          DART=$(flutter --version | grep -oE 'Dart [0-9][0-9.]*' | head -1 | awk '{print $2}')
           GV=$(go version | awk '{print $3}')
           AGP=$(grep -oE 'com\.android\.application"\) version "[^"]+' android/settings.gradle.kts | grep -oE '[0-9][0-9.]*')
           KT=$(grep -oE 'kotlin\.android"\) version "[^"]+' android/settings.gradle.kts | grep -oE '[0-9][0-9.]*')
           GRADLE=$(grep -oE 'gradle-[0-9.]+-bin' android/gradle/wrapper/gradle-wrapper.properties | sed 's/gradle-//; s/-bin//')
-          DEPS=$(grep -E '^  (provider|crypto|shared_preferences|path_provider|flutter_inappwebview|dartssh2):' -A6 pubspec.lock \
-            | awk '/^  [a-z_]+:$/{n=$1; sub(":","",n)} /^    version:/{if(n!=""){gsub(/[",]/,"",$2); printf "%s%s=%s", sep, n, $2; sep="、"; n=""}}')
+          # 包名里可能带数字（dartssh2），字符类必须是 [a-z0-9_]
+          DEPS=$(awk '
+            /^  [a-z0-9_]+:$/ {n=$1; sub(":","",n)}
+            /^    version:/ {if(n!=""){v=$2; gsub(/"/,"",v);
+              if(n ~ /^(provider|crypto|shared_preferences|path_provider|flutter_inappwebview|dartssh2)$/){
+                printf "%s%s=%s", sep, n, v; sep="、"}; n=""}}
+          ' pubspec.lock)
           {
             echo "# 本次构建实际使用的版本"
             echo ""
