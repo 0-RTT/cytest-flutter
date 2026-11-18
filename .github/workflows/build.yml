@@ -14,15 +14,25 @@ on:
 permissions:
   contents: write
 
+# 同一分支/同一 tag 只保留最新一次：重打 tag、连续 push 时把旧构建直接取消，
+# 否则旧构建会跑满 7 分钟白占 runner（还会和新的抢带宽）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FLUTTER_VERSION: '3.50.0'
   XRAY_VERSION: 'v26.11.9'
+  GO_VERSION: '1.27.x'
 
 jobs:
+  # 出包与发版合并成一个 job：
+  # 原来 build → artifact 上传(3s) → 新 job 冷启动(4s) + 下载(9s) → 发布(10s)，
+  # 其中 16 秒纯属搬运。tag 构建直接在同一个 job 里读本地 APK 发版即可。
   build:
     name: Build APK
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -41,6 +51,16 @@ jobs:
           channel: stable
           cache: true
 
+      # 原来是 curl 下载 70MB 的 go tar.gz 再 sudo tar 到 /usr/local，实测 28 秒。
+      # setup-go 优先命中 runner 预装的 toolcache，命中时 1~2 秒。
+      # cache: false —— 本仓库没有 go.mod/go.sum（单文件 go build），
+      # 让 setup-go 去找依赖文件只会打一条「no dependency file」警告。
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
       # subosito 的 cache 只缓存 Flutter SDK，不管 Maven 依赖。
       # v1.0.7 曾因 Maven Central 对共享 runner 返回 429 Too Many Requests，
       # Gradle 在配置阶段拉不到 Kotlin 插件直接失败（35s，编译都还没开始）。
@@ -51,7 +71,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', 'android/gradle.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-
 
@@ -61,35 +81,32 @@ jobs:
           JNI=android/app/src/main/jniLibs/arm64-v8a
           mkdir -p assets "$JNI"
           echo "== xray (android arm64) =="
-          curl -fsSL -o /tmp/xray.zip \
+          # --retry：这个项目被网络抖动坑过多次（SDK 包损坏、Maven 429），
+          # 大文件下载一律带退避重试，别让一次抖断掉整次发版。
+          curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused -o /tmp/xray.zip \
             "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-android-arm64-v8a.zip"
           unzip -j -o -q /tmp/xray.zip xray -d /tmp
           # 必须以 lib*.so 进 jniLibs，系统才会解压到 nativeLibraryDir 并给执行权限
           mv -f /tmp/xray "$JNI/libxray.so"
           ls -lh "$JNI/libxray.so"
 
-      - name: Download pipeline binaries from cytest-app release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # pipeline 二进制由本仓库 engine/pipeline.go 现场编译（与 cytest-app 的
+      # tools/pipeline 是同一份源码的副本，改动需两侧同步）。
+      - name: Build pipeline binaries
         run: |
           set -euo pipefail
-          # pipeline 二进制由 cytest-app 仓库的 CI 产出，这里直接取 latest release 的同名产物不可行，
-          # 改为在本地用 Go 编译（同一份 pipeline.go 已复制到 engine/）
-          mkdir -p android/app/src/main/jniLibs/arm64-v8a assets
-          if [ -f engine/pipeline.go ]; then
-            echo "使用内置 engine/pipeline.go 编译"
-            curl -fsSL -o /tmp/go.tar.gz https://go.dev/dl/go1.27.1.linux-amd64.tar.gz
-            sudo tar -C /usr/local -xzf /tmp/go.tar.gz
-            export PATH="/usr/local/go/bin:$PATH"
-            CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-              go build -trimpath -ldflags="-s -w" -o android/app/src/main/jniLibs/arm64-v8a/libpipeline.so engine/pipeline.go
-            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-              go build -trimpath -ldflags="-s -w" -o assets/pipeline-linux engine/pipeline.go
-            ls -lh android/app/src/main/jniLibs/arm64-v8a/libpipeline.so assets/pipeline-linux
-          else
+          JNI=android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$JNI" assets
+          if [ ! -f engine/pipeline.go ]; then
             echo "::error title=缺少引擎::engine/pipeline.go 不存在，无法产出 pipeline 二进制"
             exit 1
           fi
+          go version
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -trimpath -ldflags="-s -w" -o "$JNI/libpipeline.so" engine/pipeline.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags="-s -w" -o assets/pipeline-linux engine/pipeline.go
+          ls -lh "$JNI/libpipeline.so" assets/pipeline-linux
 
       - name: Resolve version
         shell: bash
@@ -109,9 +126,9 @@ jobs:
         # 不能用 `|| true`：那会把 error 的退出码一起吞掉，即使 analyze 报 error
         # CI 也会继续构建并出包（曾经踩过：并发编辑期间出现 undefined_identifier，
         # 若那时打 tag 就会带着 error 发版，而 CI 仍是绿的）。
-        # --no-fatal-infos 是唯一让步：242 条 info 绝大多数来自 vendor 的
-        # flutter_inappwebview 包。项目的 warning 已于 2026-11-18 清零
-        # （remote.dart 两条 always-false 判断），所以 warning 恢复默认「致命」。
+        # --no-fatal-infos 是唯一让步：绝大多数 info 来自 vendor 的
+        # flutter_inappwebview 包。项目的 warning 已于 2026-11-18 清零，
+        # 所以 warning 恢复默认「致命」。
         run: flutter analyze --no-fatal-infos
 
       - name: Unit tests
@@ -119,33 +136,32 @@ jobs:
 
       - name: Build release APK
         run: |
-          flutter build apk --release --target-platform android-arm64             --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
+          set -euo pipefail
+          flutter build apk --release --target-platform android-arm64 \
+            --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
           ls -lh build/app/outputs/flutter-apk/
 
-      - name: Upload APK
+      # 非 tag 构建（PR / 手动触发）仍然留一份 artifact 方便下载排查；
+      # tag 构建直接进下一步发版，省掉上传+下载的往返。
+      - name: Upload APK (non-tag)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v7
         with:
           name: cytest-flutter-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 14
 
-  release:
-    name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [ build ]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download APK
-        uses: actions/download-artifact@v8
-        with:
-          name: cytest-flutter-apk
-          path: dist
+      - name: Publish release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/cytest-flutter.apk
+          ls -lh dist/
 
-      - name: Rename
-        run: mv dist/app-release.apk dist/cytest-flutter.apk
-
-      - name: Publish
+      - name: Upload to GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@v3
         with:
           files: dist/cytest-flutter.apk

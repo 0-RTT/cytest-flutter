@@ -37,8 +37,9 @@ void main() {
     // 线路配置已移入设置，首页不再有该卡位
     expect(find.text('线路与代理'), findsNothing);
 
-    // 配置指引可点（去设置）
-    expect(find.textContaining('在「设置」里配置'), findsOneWidget);
+    // 底部那条「…在『设置』里配置」的指引已删除：它与设置页重复，
+    // 底部导航本来就有「设置」入口，再挂一条是同一件事的第二个说法。
+    expect(find.textContaining('在「设置」里配置'), findsNothing);
 
     // 没有溢出（overflow 会以异常形式抛出，这里断言无此类异常）
     expect(tester.takeException(), isNull);

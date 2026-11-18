@@ -30,7 +30,7 @@ class _HomeShellState extends State<HomeShell> {
       body: IndexedStack(
         index: _index,
         children: [
-          _HomeTab(onOpenSettings: () => setState(() => _index = 1)),
+          const _HomeTab(),
           const SettingsPage(),
         ],
       ),
@@ -55,9 +55,7 @@ class _HomeShellState extends State<HomeShell> {
 }
 
 class _HomeTab extends StatelessWidget {
-  const _HomeTab({required this.onOpenSettings});
-
-  final VoidCallback onOpenSettings;
+  const _HomeTab();
 
   @override
   Widget build(BuildContext context) {
@@ -164,8 +162,6 @@ class _HomeTab extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              _settingsHint(theme),
             ],
           ),
         ),
@@ -180,32 +176,6 @@ class _HomeTab extends StatelessWidget {
           style: theme.textTheme.labelMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
             letterSpacing: 1.2,
-          ),
-        ),
-      );
-
-  /// 配置项都不在首页占卡位，给一条可点的指引，避免用户找不到。
-  Widget _settingsHint(ThemeData theme) => Card(
-        margin: EdgeInsets.zero,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onOpenSettings,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              children: [
-                Icon(Icons.tune, size: 18, color: theme.colorScheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    '线路、GitHub、远程账号在「设置」里配置',
-                    style: theme.textTheme.labelSmall,
-                  ),
-                ),
-                Icon(Icons.chevron_right,
-                    size: 18, color: theme.colorScheme.onSurfaceVariant),
-              ],
-            ),
           ),
         ),
       );
