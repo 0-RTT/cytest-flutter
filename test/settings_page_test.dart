@@ -150,4 +150,17 @@ void main() {
       expect(field.controller?.text, '0');
     });
   });
+
+  // 「抓取代理」是「线路与代理」的第二份开关：同一件事两个值必然漂移，
+  // 而且它只被设置页读写、没有任何代码真正使用（grep fetchProxy 零调用）。
+  group('SettingsPage · 已移除的开关', () {
+    testWidgets('不再提供「抓取代理」输入项', (tester) async {
+      _tallViewport(tester);
+      await tester.pumpWidget(_host(AppState()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('抓取代理'), findsNothing);
+      expect(find.widgetWithText(TextField, '抓取代理'), findsNothing);
+    });
+  });
 }

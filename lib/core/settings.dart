@@ -8,7 +8,7 @@ class Defaults {
   static const speedUrl = 'https://е.eu.org/300.zip';
   static const sha1Concurrency = 30;
   static const latencyConcurrency = 100;
-  static const speedConcurrency = 2;
+  static const speedConcurrency = 3;
   static const dialTimeout = 5;
   static const downloadTimeout = 10;
 
@@ -16,15 +16,18 @@ class Defaults {
   ///
   /// 语义澄清：这个值只用来「跳过太慢的候选、省测速时间」，**不承担
   /// 判定节点可用的职责**。能用的候选在延迟阶段已经用统一口径
-  /// （TCP + TLS/SNI + HTTP 响应头）筛过一遍了。
+  /// （纯 TCP 握手，与原版 `measureTCPLatency` 一致）筛过一遍了。
   ///
-  /// v1.0.19 之前这里是 200ms。延迟口径从「TCP 握手」改成「HTTP 响应头到达」
-  /// 之后，跨境候选普遍 300~1500ms，200ms 会把大量本来能用的节点整批标成
+  /// v1.0.19 之前这里是 200ms。延迟口径曾经被改成「HTTP 响应头到达」，
+  /// 跨境候选普遍 300~1500ms，200ms 会把大量本来能用的节点整批标成
   /// 「超过阈值」，用户看到的就是「一键测试全部失败」。所以默认改为 0。
   static const maxLatency = 0;
 
   /// v1.0.19 及更早版本的默认值，仅用于一次性迁移识别（见 AppSettings.fromJson）。
   static const legacyMaxLatency = 200;
+
+  /// v1.0.24 及更早版本的测速并发默认值，同样只用于一次性迁移识别。
+  static const legacySpeedConcurrency = 2;
 
   static const asn = 45090;
 
@@ -50,6 +53,12 @@ class AppSettings {
   /// 只做一次的原因：迁移靠「值恰好等于旧默认 200 且没有标记」来识别老数据。
   /// 打完标记之后，用户再手填 200 就是他自己的选择，不能再被下次启动改掉。
   bool latencyThresholdMigrated;
+
+  /// 「测速并发默认值 2 → 3」这次迁移是否已经落到这份设置里。
+  ///
+  /// 与 [latencyThresholdMigrated] 同一套做法：只认「恰好等于旧默认 2」且没有标记的
+  /// 老数据，迁到 3 之后打标记；用户此后手填 2 就是他自己的选择，不再被覆盖。
+  bool speedConcurrencyMigrated;
 
   /// 已停用：原版 Kotlin 没有「测速代理」这个概念，优选 IP 测速始终直连
   /// （`LocalSpeedProtocol.configJson` 不含 httpProxy，`LocalSpeedRunner` 也不传 `-proxy`）。
@@ -83,6 +92,7 @@ class AppSettings {
     this.downloadTimeout = Defaults.downloadTimeout,
     this.maxLatency = Defaults.maxLatency,
     this.latencyThresholdMigrated = true,
+    this.speedConcurrencyMigrated = true,
     this.httpProxy = '',
     this.fetchProxy = '',
     this.vlessLinks = const [],
@@ -127,8 +137,7 @@ class AppSettings {
             (json['sha1Concurrency'] as num?)?.toInt() ?? Defaults.sha1Concurrency,
         latencyConcurrency:
             (json['latencyConcurrency'] as num?)?.toInt() ?? Defaults.latencyConcurrency,
-        speedConcurrency:
-            (json['speedConcurrency'] as num?)?.toInt() ?? Defaults.speedConcurrency,
+        speedConcurrency: _migrateSpeedConcurrency(json),
         dialTimeout: (json['dialTimeout'] as num?)?.toInt() ?? Defaults.dialTimeout,
         downloadTimeout:
             (json['downloadTimeout'] as num?)?.toInt() ?? Defaults.downloadTimeout,
@@ -136,6 +145,7 @@ class AppSettings {
         // 读进来的这份设置今后都算「已迁移」：toJson 会把这个标记写回去，
         // 下次启动就不会再触发迁移。
         latencyThresholdMigrated: true,
+        speedConcurrencyMigrated: true,
         httpProxy: json['httpProxy'] as String? ?? '',
         fetchProxy: json['fetchProxy'] as String? ?? '',
         vlessLinks: (json['vlessLinks'] as List?)?.cast<String>() ?? const [],
@@ -171,6 +181,21 @@ class AppSettings {
     return stored;
   }
 
+  /// 把老用户存下来的 `speedConcurrency: 2` 迁到新默认 `3`。
+  ///
+  /// 为什么迁：2 是「本地带宽有限、并发少单条更准」时代的默认值；实测 3 并发
+  /// 在移动网络下既不会互相抢带宽，又能把整轮耗时压下来约三分之一。
+  /// 只改 `Defaults` 不够 —— 老用户的 2 早已落盘。
+  static int _migrateSpeedConcurrency(Map<String, dynamic> json) {
+    final stored =
+        (json['speedConcurrency'] as num?)?.toInt() ?? Defaults.speedConcurrency;
+    final migrated = json['speedConcurrencyMigrated'] as bool? ?? false;
+    if (!migrated && stored == Defaults.legacySpeedConcurrency) {
+      return Defaults.speedConcurrency;
+    }
+    return stored;
+  }
+
   Map<String, dynamic> toJson() => {
         'speedUrl': speedUrl,
         'fingerprint': fingerprint,
@@ -182,6 +207,7 @@ class AppSettings {
         'maxLatency': maxLatency,
         // 迁移标记：写下之后，「200 就是用户自己选的」不会再被改成 0。
         'latencyThresholdMigrated': true,
+        'speedConcurrencyMigrated': true,
         'httpProxy': httpProxy,
         'fetchProxy': fetchProxy,
         'vlessLinks': vlessLinks,

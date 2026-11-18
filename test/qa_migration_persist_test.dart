@@ -129,7 +129,10 @@ void main() {
     expect(s.downloadTimeout, 10);
     expect(s.sha1Concurrency, 30);
     expect(s.latencyConcurrency, 100);
-    expect(s.speedConcurrency, 2);
+    // 2.0 等价于旧默认 2，按「从没改过」迁移到新默认 3（与 maxLatency 同一套做法）
+    expect(s.speedConcurrency, Defaults.speedConcurrency,
+        reason: '旧默认 2 会被一次性迁到 3');
+    expect(s.speedConcurrencyMigrated, isTrue);
     expect(s.remotePort, 2222);
     expect(s.speedUrl, 'https://example.com/x.zip');
     expect(s.remoteHost, '10.0.0.9');

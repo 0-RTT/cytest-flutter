@@ -198,7 +198,7 @@ class _HomeTab extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    '线路、proxyip、GitHub、远程账号在「设置」里配置',
+                    '线路、GitHub、远程账号在「设置」里配置',
                     style: theme.textTheme.labelSmall,
                   ),
                 ),

@@ -58,9 +58,11 @@ void main() {
     expect(find.text('线路与代理'), findsOneWidget);
     expect(find.text('VLESS 链接'), findsOneWidget);
     expect(find.text('加载文件'), findsOneWidget);
-    expect(find.textContaining('已加载'), findsOneWidget);
-    // 只显示条目数，不给可编辑的 proxyip 文本框
+    // 只显示条目数（徽标形式），不给可编辑的 proxyip 文本框
+    expect(find.textContaining('proxyip'), findsOneWidget);
     expect(find.text('每行 ip:port，用于替换 ws 路径里的回源地址'), findsNothing);
+    // 抓取代理已删除：抓取走什么代理由这里的 VLESS 线路决定
+    expect(find.text('抓取代理'), findsNothing);
 
     expect(tester.takeException(), isNull);
   });
