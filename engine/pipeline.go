@@ -408,17 +408,81 @@ var androidCertDirs = []string{
 var (
 	rootCAsOnce sync.Once
 	rootCAs     *x509.CertPool
+	// rootCAState 记录根证书装配结果，供 -protocol-selftest 打印。
+	// Android 上这条分支（系统池空 → 靠 cert 目录补载）没有真机就验不了，
+	// 所以留一个一行自检出口：真机跑 -protocol-selftest 就能看到走了哪条分支。
+	rootCAState certPoolState
 )
+
+// certPoolState 是根证书装配结果。判定分支抽成纯函数，
+// 日志与自检共用同一套口径，避免两处判断漂移。
+type certPoolState struct {
+	systemBroken bool // 系统证书库报错或一张证书都没有
+	added        int  // 从 Android 证书目录补载的证书数量
+	sawCertDir   bool // 是否真的找到了 Android 证书目录
+}
+
+// certPoolBranch 是装配结果对应的分支（决定要不要告警）。
+type certPoolBranch int
+
+const (
+	certBranchLoaded   certPoolBranch = iota // 从证书目录补载成功
+	certBranchBroken                         // 系统证书库不可用
+	certBranchEmptyDir                       // Android 目录在，但没读到证书
+	certBranchDesktop                        // 桌面端：系统库可用，静默
+)
+
+func (b certPoolBranch) String() string {
+	switch b {
+	case certBranchLoaded:
+		return "补载成功"
+	case certBranchBroken:
+		return "系统池不可用"
+	case certBranchEmptyDir:
+		return "证书目录空"
+	default:
+		return "桌面端静默"
+	}
+}
+
+func (s certPoolState) branch() certPoolBranch {
+	switch {
+	case s.added > 0:
+		return certBranchLoaded
+	case s.systemBroken:
+		return certBranchBroken
+	case s.sawCertDir:
+		return certBranchEmptyDir
+	default:
+		return certBranchDesktop
+	}
+}
+
+// describe 供自检输出：一句话看清平台与分支。
+func (s certPoolState) describe() string {
+	system := "可用"
+	if s.systemBroken {
+		system = "空或报错"
+	}
+	hasDir := "否"
+	if s.sawCertDir {
+		hasDir = "是"
+	}
+	return fmt.Sprintf("系统池=%s | 补载=%d 张 | 有证书目录=%s | 分支=%s",
+		system, s.added, hasDir, s.branch())
+}
 
 func systemRootCAs() *x509.CertPool {
 	rootCAsOnce.Do(func() {
 		pool, err := x509.SystemCertPool()
-		systemBroken := err != nil || pool == nil
-		if systemBroken {
+		if err != nil || pool == nil {
 			pool = x509.NewCertPool()
 		}
-		added := 0
-		sawCertDir := false
+		// 「系统池可用」不能只看 err/nil：Android 上 SystemCertPool 常常
+		// 返回一个**空池**（err 为 nil），真正的证书要靠下面的目录补载。
+		// 用 Equal(空池) 判断是否一张证书都没有 —— Subjects() 已废弃，
+		// 这里只需判空，而这段是 sync.Once 内的一次性开销，O(n) 没关系。
+		state := certPoolState{systemBroken: err != nil || pool.Equal(x509.NewCertPool())}
 		probed := make([]string, 0, len(androidCertDirs))
 		for _, dir := range androidCertDirs {
 			entries, err := os.ReadDir(dir)
@@ -428,7 +492,7 @@ func systemRootCAs() *x509.CertPool {
 			// 目录存在 ≠ 桌面端：这些路径只在 Android 上有。桌面端读不到是正常分支，
 			// 以前把「读不到 Android 目录」当成「没有根证书」报警，Windows 上每轮都
 			// 打一行误导性警告（HTTPS 其实好好的）。
-			sawCertDir = true
+			state.sawCertDir = true
 			count := 0
 			for _, e := range entries {
 				if e.IsDir() {
@@ -443,21 +507,22 @@ func systemRootCAs() *x509.CertPool {
 				}
 			}
 			if count > 0 {
-				added += count
+				state.added += count
 				probed = append(probed, fmt.Sprintf("%s %d", dir, count))
 			}
 		}
-		switch {
-		case added > 0:
-			logf("   TLS 根证书：从系统证书目录补载 %d 张（%s）", added, strings.Join(probed, "、"))
-		case systemBroken:
+		rootCAState = state
+		switch state.branch() {
+		case certBranchLoaded:
+			logf("   TLS 根证书：从系统证书目录补载 %d 张（%s）", state.added, strings.Join(probed, "、"))
+		case certBranchBroken:
 			// 只有「系统证书库本身不可用」才是真的要提醒（Android 上 SystemCertPool
 			// 常返回空池，必须靠上面的目录补载）。
 			logf("   ⚠️ TLS 根证书：系统证书库不可用或不含证书，HTTPS 会以 unknown authority 失败")
-		case sawCertDir:
+		case certBranchEmptyDir:
 			// Android 且目录在、却一张都没补载成功：这时候确实可能缺根证书。
 			logf("   ⚠️ TLS 根证书：证书目录存在但没读到可用证书，HTTPS 可能失败")
-		default:
+		case certBranchDesktop:
 			// 桌面端常见路径：系统证书库可用、没有 Android 证书目录 —— 静默。
 		}
 		rootCAs = pool
@@ -1508,6 +1573,11 @@ func runProtocolSelftest() {
 	cfg.MaxSpeedConcurrency = 2
 	cfg.DownloadTimeout = 5
 	cfg.SpeedTestURL = "https://speed.cloudflare.com/__down?bytes=209715200"
+
+	// 一行根证书自检：Android 上「系统池为空 → 靠 cert 目录补载」这条分支
+	// 没有真机就验不了，真机跑 `-protocol-selftest` 即可看到走了哪条。
+	systemRootCAs()
+	logf("TLS 根证书判定: %s", rootCAState.describe())
 
 	cases := []struct {
 		ip   string

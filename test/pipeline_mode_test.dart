@@ -322,6 +322,12 @@ void main() {
         reason: '桌面端每轮打这行是误导：HTTPS 其实是好的');
     expect(go, contains('sawCertDir'),
         reason: '只有「证书目录存在但没读到证书」才值得提醒');
+    // Android 的「系统池空 → 靠 cert 目录补载」分支没有真机验不了，
+    // 所以留了一行自检出口：真机跑 -protocol-selftest 就能看到走了哪条分支。
+    expect(go, contains('func (s certPoolState) describe()'));
+    expect(go, contains('TLS 根证书判定: %s'));
+    expect(go, contains('pool.Equal(x509.NewCertPool())'),
+        reason: 'Android 上 SystemCertPool 可能返回「非 nil 但空」的池，必须判空');
   });
 }
 
