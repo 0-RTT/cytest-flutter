@@ -66,18 +66,20 @@ jobs:
       # Gradle 在配置阶段拉不到 Kotlin 插件直接失败（35s，编译都还没开始）。
       #
       # 只缓存 modules-2（依赖本身）而不缓存整个 ~/.gradle/caches：
-      # 后者含 build-cache/tmp/transforms，动辄 1~2GB，会把仓库的 10GB 缓存配额
-      # 挤爆导致 LRU 淘汰 —— 实测多次发版都是 `Cache not found`，白付下载时间。
-      # key 里**不要**放 gradle.properties：改一个注释就会换 key、白丢整份依赖缓存。
+      # 后者含 build-cache/tmp/transforms，动辄 1~2GB。
+      #
+      # key **固定**、不带 hashFiles：仓库缓存配额只有 10GB，而 Flutter SDK 就占了
+      # 1.6GB。历史上 key 里混了 gradle 文件 hash，改一行注释就多一份 ~1GB 的
+      # Gradle 条目，累计 8 份把配额顶满 → 新条目把旧条目淘汰 → 之后每次构建都
+      # `Cache not found`（实测 v1.0.25/26/27/28 四次全部 miss）。
+      # 依赖真正大改时手动把 v1 改成 v2 即可，不要退回自动 hash。
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches/modules-2
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
+          key: gradle-${{ runner.os }}-modules-v1
 
       - name: Fetch native binaries
         run: |
