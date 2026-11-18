@@ -58,11 +58,15 @@ var (
 	insecure    = flag.Bool("insecure", false, "关闭 TLS 证书校验（存在中间人风险，慎用）")
 	onlyIP      = flag.Bool("only-ip", false, "只做阶段1（SHA1 筛选），匹配结果打印到屏幕，不测速、不写文件")
 	onlySpeed   = flag.Bool("only-speed", false, "只做阶段3（速度测试），跳过阶段1 指纹比对与阶段2 延迟测试")
-	targetsFile = flag.String("targets", "", "只测速模式的候选清单；每行 `ip:port` 或 `ip:port,延迟毫秒`，`#` 开头为注释")
-	topN        = flag.Int("top", 10, "汇总时打印前 N 名")
-	quiet       = flag.Bool("quiet", false, "不打印逐条匹配/进度明细")
-	selftest    = flag.Bool("protocol-selftest", false, "打印各分支的协议样例到 stdout 后退出（供契约测试使用）")
-	listOnly    = flag.Bool("list", false, "只把 data.txt 里通过服务筛选的候选逐行打印到 stdout，不联网、不写文件")
+	onlyLatency = flag.Bool("only-latency", false, "只做延迟测试，跳过速度测试")
+	targetsFile = flag.String("targets", "", "候选清单；每行 `ip:port` 或 `ip:port,延迟毫秒`，`#` 开头为注释")
+
+	// 带 -targets 且没有 -only-* 时：跑「延迟 + 速度」。
+	// 与 -only-speed 的区别是：会先做一轮延迟筛选，只给能连通的 IP 测速。
+	topN     = flag.Int("top", 10, "汇总时打印前 N 名")
+	quiet    = flag.Bool("quiet", false, "不打印逐条匹配/进度明细")
+	selftest = flag.Bool("protocol-selftest", false, "打印各分支的协议样例到 stdout 后退出（供契约测试使用）")
+	listOnly = flag.Bool("list", false, "只把 data.txt 里通过服务筛选的候选逐行打印到 stdout，不联网、不写文件")
 )
 
 func logf(format string, a ...any) { fmt.Printf(format+"\n", a...) }
@@ -761,22 +765,18 @@ func speedStats(results []*TestResult) (ok, zero, fail int) {
 	return ok, zero, fail
 }
 
-func runSpeedTest(ctx context.Context, ipsToTest []*TestResult) []*TestResult {
-	logf("")
-	logf("====================================================================")
-	logf("▶ 阶段2/2：延迟 + 速度测试")
-	logf("====================================================================")
-
+// runLatencyStage 对 ipsToTest 做一轮 TCP 延迟测量。
+//
+// 原地写入每个目标的 Latency；连接失败/超阈值的条目同时写入 Reason（这样
+// 「只延迟」模式可以直接把它们写进 CSV）。返回值是**通过阈值**的子集，
+// 供速度阶段继续使用；没有目标通过时返回 nil。
+func runLatencyStage(ctx context.Context, ipsToTest []*TestResult) []*TestResult {
 	if len(ipsToTest) == 0 {
 		fmt.Fprintln(os.Stderr, "没有找到待测试的 IP")
 		return nil
 	}
 
 	dialTimeout := time.Duration(cfg.DialTimeout) * time.Second
-	downloadTimeout := time.Duration(cfg.DownloadTimeout) * time.Second
-	clientPool := NewClientPool(dialTimeout, downloadTimeout)
-
-	logf("   共加载 %d 个 IP", len(ipsToTest))
 
 	logf("")
 	logf("   ----- 延迟测试 -----")
@@ -795,6 +795,8 @@ func runSpeedTest(ctx context.Context, ipsToTest []*TestResult) []*TestResult {
 
 			select {
 			case <-ctx.Done():
+				result.Latency = -1
+				result.Reason = reasonCancelled
 				return
 			default:
 			}
@@ -805,10 +807,12 @@ func runSpeedTest(ctx context.Context, ipsToTest []*TestResult) []*TestResult {
 
 			switch {
 			case latency < 0:
+				result.Reason = "延迟测试失败"
 				if !*quiet {
 					logf("   [延迟 %d/%d] %s:%s 连接失败", cur, totalIPs, result.IP, result.Port)
 				}
 			case cfg.MaxLatency > 0 && latency > cfg.MaxLatency:
+				result.Reason = fmt.Sprintf("延迟 %dms 超过阈值 %dms", latency, cfg.MaxLatency)
 				if !*quiet {
 					logf("   [延迟 %d/%d] %s:%s %dms (超过阈值)", cur, totalIPs, result.IP, result.Port, latency)
 				}
@@ -830,12 +834,38 @@ func runSpeedTest(ctx context.Context, ipsToTest []*TestResult) []*TestResult {
 	if cfg.MaxLatency > 0 {
 		logf("   延迟测试完成，%d/%d 个 IP 通过（阈值 %dms）", len(passedList), len(ipsToTest), cfg.MaxLatency)
 	} else {
-
 		logf("   延迟测试完成，%d/%d 个 IP 通过（未设阈值，只保留能连通的）", len(passedList), len(ipsToTest))
+	}
+	return passedList
+}
+
+func runSpeedTest(ctx context.Context, ipsToTest []*TestResult) []*TestResult {
+	logf("")
+	logf("====================================================================")
+	logf("▶ 阶段2/2：延迟 + 速度测试")
+	logf("====================================================================")
+
+	if len(ipsToTest) == 0 {
+		fmt.Fprintln(os.Stderr, "没有找到待测试的 IP")
+		return nil
+	}
+
+	logf("   共加载 %d 个 IP", len(ipsToTest))
+
+	passedList := runLatencyStage(ctx, ipsToTest)
+	if passedList == nil {
+		// 一条都没通过延迟测试：与「只延迟」模式对齐，把失败明细落盘，
+		// 让 Dart 侧在 code != 0 时仍能读到部分结果；返回值仍是 nil → 调用方 exit 1。
+		writeLatencyFailureCSV(ipsToTest)
+		return nil
 	}
 
 	logf("")
 	logf("   ----- 速度测试 -----")
+	dialTimeout := time.Duration(cfg.DialTimeout) * time.Second
+	downloadTimeout := time.Duration(cfg.DownloadTimeout) * time.Second
+	clientPool := NewClientPool(dialTimeout, downloadTimeout)
+
 	sorted := runSpeedStage(ctx, passedList, clientPool)
 	if sorted == nil {
 		return nil
@@ -1023,6 +1053,16 @@ func logSpeedWindowPlan(workers int) {
 		workers, speedWarmupBytes/1024, speedWindowSeconds, speedWindowMaxBytes/(1024*1024))
 }
 
+// reportSpeedResults 打印汇总并写 result.csv。
+//
+// 退出码口径与 reportLatencyResults 完全一致：**只看有没有可用结果**。
+// 「可用」直接复用 speedStats 的 ok 计数（Reason 为空，即实测速率
+// >= speedDisplayEpsilon）；零速率与各类失败都不算可用。
+//
+// 返回 true 仅在「有结果、已写盘、且 ok > 0」时成立。全部失败 / 全部零速率
+// 属于「一次都没有可用结果」，返回 false，由调用方转成 exit 1
+// （`-only-speed` 与 `-targets` 全量模式共用这一处判定）。
+// 注意：即使一条都没成功，CSV 也照旧写盘，Dart 侧在 code != 0 时能读到明细。
 func reportSpeedResults(sorted []*TestResult) bool {
 	ok, zero, fail := speedStats(sorted)
 	logf("[汇总] 总数=%d 成功=%d 零速率=%d 失败=%d", len(sorted), ok, zero, fail)
@@ -1036,6 +1076,10 @@ func reportSpeedResults(sorted []*TestResult) bool {
 		return false
 	}
 	logf("   测试完成，共 %d 个 IP，结果已写入 %s", len(sorted), *resultCSV)
+	if ok == 0 {
+		fmt.Fprintln(os.Stderr, "❌ 没有任何 IP 测出可用速率，视为无可用结果")
+		return false
+	}
 	return true
 }
 
@@ -1096,6 +1140,28 @@ func runListOnly() int {
 	return 0
 }
 
+// writeLatencyFailureCSV 把「没有任何目标通过延迟测试」的明细写进 result.csv。
+//
+// 与「只延迟」模式（runLatencyOnly → reportLatencyResults）对齐：即便一条都没
+// 通过也照旧落盘，Dart 侧才能在 code != 0 时读到部分结果并展示失败原因。
+// 写盘失败只打日志，不影响退出码——该场景恒为 exit 1。
+func writeLatencyFailureCSV(targets []*TestResult) {
+	if len(targets) == 0 {
+		return
+	}
+	if err := writeResultCSV(targets); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+	logf("   失败明细已写入 %s（共 %d 条，均未通过延迟测试）", *resultCSV, len(targets))
+}
+
+// runSpeedOnly 只跑速度阶段（-only-speed）：不做延迟筛选，
+// Latency 沿用清单里的值（没给就是 -1）。
+//
+// 返回 nil 表示「没有可用结果」：全部失败、全部零速率、或写 CSV 失败。
+// 判定在 reportSpeedResults 里完成，与 -only-latency / -targets 三种模式
+// 口径统一——**一次都没有可用结果 → exit 1**；失败明细照旧写进 result.csv。
 func runSpeedOnly(ctx context.Context, targets []*TestResult) []*TestResult {
 	dialTimeout := time.Duration(cfg.DialTimeout) * time.Second
 	downloadTimeout := time.Duration(cfg.DownloadTimeout) * time.Second
@@ -1103,6 +1169,79 @@ func runSpeedOnly(ctx context.Context, targets []*TestResult) []*TestResult {
 	logSpeedPlan(len(targets))
 
 	return runSpeedStage(ctx, targets, NewClientPool(dialTimeout, downloadTimeout))
+}
+
+func logLatencyPlan(total int) {
+	logf("")
+	logf("====================================================================")
+	logf("▶ 阶段2/2：延迟测试（只延迟模式）")
+	logf("====================================================================")
+	logf("   候选数量: %d | 并发: %d | 单 IP 超时: %ds", total, cfg.MaxLatencyConcurrency, cfg.DialTimeout)
+	if cfg.MaxLatency > 0 {
+		logf("   延迟阈值: %dms（超过记为失败）", cfg.MaxLatency)
+	} else {
+		logf("   延迟阈值: 未设置（只要求能连通）")
+	}
+}
+
+// runLatencyOnly 只跑延迟阶段，并把**全部**目标（含失败）写进 result.csv。
+//
+// 与只测速模式对齐：Speed 记 0，失败原因写进 Reason。
+// 返回值 ok 表示「至少 1 条通过延迟测试且结果已落盘」；为 false 时调用方
+// 应 os.Exit(1)，与 -only-speed 的「没有可用结果」口径保持一致。
+// 即使全部失败，失败明细也照旧写进 result.csv，便于排查。
+func runLatencyOnly(
+	ctx context.Context, targets []*TestResult,
+) (results []*TestResult, ok bool) {
+	logLatencyPlan(len(targets))
+
+	// 忽略返回值：失败项也要进 CSV，所以直接复用被原地写好的 targets。
+	_ = runLatencyStage(ctx, targets)
+
+	sorted := make([]*TestResult, len(targets))
+	copy(sorted, targets)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a, b := sorted[i].Latency, sorted[j].Latency
+		// 失败项（延迟为负）永远排最后。
+		if (a < 0) != (b < 0) {
+			return b < 0
+		}
+		if a < 0 {
+			return false
+		}
+		return a < b
+	})
+
+	return sorted, reportLatencyResults(sorted)
+}
+
+// reportLatencyResults 打印汇总并写 result.csv。
+//
+// 返回 true 仅在「有结果、已写盘、且至少 1 条通过延迟测试」时成立；
+// 全部失败属于「无可用结果」，返回 false 由调用方转成 exit 1。
+func reportLatencyResults(sorted []*TestResult) bool {
+	ok := 0
+	for _, r := range sorted {
+		if r.Reason == "" {
+			ok++
+		}
+	}
+	logf("[汇总] 总数=%d 成功=%d 失败=%d", len(sorted), ok, len(sorted)-ok)
+
+	if len(sorted) == 0 {
+		fmt.Fprintln(os.Stderr, "没有延迟测试结果")
+		return false
+	}
+	if err := writeResultCSV(sorted); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return false
+	}
+	logf("   延迟测试完成，共 %d 个 IP，结果已写入 %s", len(sorted), *resultCSV)
+	if ok == 0 {
+		fmt.Fprintln(os.Stderr, "❌ 没有任何 IP 通过延迟测试，视为无可用结果")
+		return false
+	}
+	return true
 }
 
 func main() {
@@ -1183,9 +1322,57 @@ func main() {
 			fmt.Fprintln(os.Stderr, "没有待测速的候选")
 			os.Exit(2)
 		}
+		// runSpeedOnly 返回 nil = 「一次都没有可用结果」（含全部失败/全部零速率）
+		// → exit 1，不是 exit 0。失败明细已由 reportSpeedResults 写进 result.csv，
+		// Dart 侧在 code != 0 时照常能读到。
 		if runSpeedOnly(ctx, targets) == nil {
 			os.Exit(1)
 		}
+		return
+	}
+
+	// 只延迟：延迟阶段复用 runLatencyStage，失败项也写进 CSV（Speed=0）。
+	if *onlyLatency {
+		if *targetsFile == "" {
+			fmt.Fprintln(os.Stderr, "-only-latency 需要配合 -targets <文件> 使用")
+			os.Exit(2)
+		}
+		targets, terr := readSpeedTargets(*targetsFile)
+		if terr != nil {
+			fmt.Fprintln(os.Stderr, terr)
+			os.Exit(2)
+		}
+		if len(targets) == 0 {
+			fmt.Fprintln(os.Stderr, "没有待测延迟的候选")
+			os.Exit(2)
+		}
+		// 全部失败（一条都没通过延迟测试）时 exit 1，与 -only-speed 的
+		// 「无可用结果」口径统一；失败明细仍会写进 result.csv 便于排查。
+		if _, ok := runLatencyOnly(ctx, targets); !ok {
+			os.Exit(1)
+		}
+		return
+	}
+
+	// 带 -targets 且没有 -only-*：延迟 + 速度（跳过指纹筛选阶段）。
+	if *targetsFile != "" {
+		targets, terr := readSpeedTargets(*targetsFile)
+		if terr != nil {
+			fmt.Fprintln(os.Stderr, terr)
+			os.Exit(2)
+		}
+		if len(targets) == 0 {
+			fmt.Fprintln(os.Stderr, "没有待测试的候选")
+			os.Exit(2)
+		}
+		// 延迟 + 速度：runSpeedTest 返回 nil 同样是「没有可用结果」——
+		// 延迟阶段全失败（此时失败明细已落盘）或速度阶段全失败，统一 exit 1。
+		sorted := runSpeedTest(ctx, targets)
+		if sorted == nil {
+			os.Exit(1)
+		}
+		logf("")
+		logf("✅ 全部完成 | 最终产物: %s", *resultCSV)
 		return
 	}
 

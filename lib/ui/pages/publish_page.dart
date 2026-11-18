@@ -30,7 +30,8 @@ class PublishPage extends StatefulWidget {
 class _PublishPageState extends State<PublishPage> {
   late final TextEditingController _template =
       TextEditingController(text: widget.template);
-  late final TextEditingController _subPath = TextEditingController();
+  late final TextEditingController _subPath =
+      TextEditingController(text: 'cytest-sub.txt');
   late final TextEditingController _yamlPath =
       TextEditingController(text: 'config.yaml');
 
@@ -55,10 +56,6 @@ class _PublishPageState extends State<PublishPage> {
   @override
   void initState() {
     super.initState();
-    final s = context.read<AppState>().settings;
-    _subPath.text = s.githubPath.trim().isEmpty
-        ? 'cytest-sub.txt'
-        : s.githubPath.trim();
     _rebuild();
   }
 
@@ -123,8 +120,8 @@ class _PublishPageState extends State<PublishPage> {
       return;
     }
     if (state.settings.githubToken.trim().isEmpty ||
-        !state.settings.githubRepo.contains('/')) {
-      _toast('先在「设置 → GitHub 推送」填仓库和 Token');
+        parseRepoSlug(state.settings.githubRepo).isEmpty) {
+      _toast('先在「设置 → GitHub 推送」填仓库地址和 Token');
       return;
     }
     setState(() => _busy = true);
@@ -324,10 +321,8 @@ class _PublishPageState extends State<PublishPage> {
                     children: [
                       SegmentedButton<String>(
                         segments: const [
-                          ButtonSegment(
-                              value: 'sub', label: Text('订阅 base64')),
-                          ButtonSegment(
-                              value: 'yaml', label: Text('mihomo YAML')),
+                          ButtonSegment(value: 'sub', label: Text('base64')),
+                          ButtonSegment(value: 'yaml', label: Text('yaml')),
                         ],
                         selected: {_mode},
                         onSelectionChanged: (s) =>
@@ -405,32 +400,19 @@ class _PublishPageState extends State<PublishPage> {
                           ),
                       ],
                       const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: _error != null ? null : _copy,
-                              icon: const Icon(Icons.copy_all_outlined,
-                                  size: 17),
-                              label: const Text('复制'),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: _busy || _error != null ? null : _push,
-                              icon: _busy
-                                  ? const SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2),
-                                    )
-                                  : const Icon(Icons.upload, size: 17),
-                              label: Text(_busy ? '推送中…' : '推送 GitHub'),
-                            ),
-                          ),
-                        ],
+                      // 推送按钮独占整行：复制能力已由下方预览面板的
+                      // 「复制内容」按钮提供，这里不再重复。
+                      FilledButton.icon(
+                        onPressed: _busy || _error != null ? null : _push,
+                        icon: _busy
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.upload, size: 17),
+                        label: Text(_busy ? '推送中…' : '推送 GitHub'),
                       ),
                       if (_error != null) ...[
                         const SizedBox(height: 8),

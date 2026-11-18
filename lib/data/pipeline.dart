@@ -65,7 +65,11 @@ class PipelineCancelToken {
 class Pipeline {
   Pipeline._();
 
-  /// [mode] 为 full（Censys JSON，跑三阶段）或 speed（ip:port 列表，只测速）。
+  /// 运行模式与 Go 侧 flag 的映射：
+  /// - `latency` → `-only-latency -targets`（只做延迟）；
+  /// - `speed`   → `-only-speed -targets`（只做速度）；
+  /// - `both`    → `-targets`（延迟 + 速度）；
+  /// - `full`    → `-data`（Censys JSON：指纹筛选 + 延迟 + 速度）。
   ///
   /// [token] 用于取消：调用方 `await token.cancel()` 后本方法会在
   /// `proc.exitCode` 处自然返回（进程已死），无需额外中断逻辑。
@@ -96,14 +100,7 @@ class Pipeline {
       cfgFile.path,
       '-result',
       resultFile.path,
-      if (mode == 'speed') ...[
-        '-only-speed',
-        '-targets',
-        inputFile.path
-      ] else ...[
-        '-data',
-        inputFile.path
-      ],
+      ..._modeArgs(mode, inputFile.path),
     ];
 
     final proc =
@@ -146,13 +143,32 @@ class Pipeline {
       // 仍尝试读结果：pipeline 可能在部分失败时也写了 csv
       final partial = await _readCsv(resultFile);
       if (partial.isEmpty) {
-        throw Exception('pipeline 退出码 $code，且没有产出结果');
+        // 全失败时引擎 exit 1 且不落 CSV（见 engine/pipeline.go）。这不是程序
+        // 出错，而是「本轮没有任何节点可用」，文案要能被普通用户读懂；退出码
+        // 保留在括号里，排障时对得上 Go 侧日志。
+        throw Exception('没有测出可用结果（引擎退出码 $code）');
       }
       return RunOutput(runDir, partial);
     }
 
     final rows = await _readCsv(resultFile);
     return RunOutput(runDir, rows);
+  }
+
+  /// 把运行模式翻译成 pipeline 的命令行参数（不含 `-config` / `-result`）。
+  ///
+  /// 抽成纯函数便于单测；未识别的模式按 `full` 处理，保持旧行为。
+  static List<String> _modeArgs(String mode, String inputPath) {
+    switch (mode) {
+      case 'latency':
+        return <String>['-only-latency', '-targets', inputPath];
+      case 'speed':
+        return <String>['-only-speed', '-targets', inputPath];
+      case 'both':
+        return <String>['-targets', inputPath];
+      default:
+        return <String>['-data', inputPath];
+    }
   }
 
   static String _stamp() {

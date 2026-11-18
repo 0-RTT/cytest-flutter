@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -6,11 +8,12 @@ import 'package:cytest/state/app_state.dart';
 import 'package:cytest/ui/pages/remote_page.dart';
 import 'package:cytest/ui/pages/test_page.dart';
 
+/// 真实 Censys 响应结构：候选来自 `results.hits[].host.ip` + `.port`。
 const _bigJson =
-    '{"pageLimitMessage":"Register to unlock","results":{"total_hits":89,'
-    '"hits":[{"host":"1.1.1.1","ip":"1.1.1.1"},'
-    '{"host":"2.2.2.2","ip":"2.2.2.2"},'
-    '{"host":"3.3.3.3","ip":"3.3.3.3"}]}}';
+    '{"pageLimitMessage":"Register to unlock","results":{"total_hits":3,'
+    '"hits":[{"host":{"ip":"1.1.1.1","port":443}},'
+    '{"host":{"ip":"2.2.2.2","port":8443}},'
+    '{"host":{"ip":"3.3.3.3","port":2053}}]}}';
 
 Widget _host(Widget child, {AppState? state}) => MaterialApp(
       home: ChangeNotifierProvider<AppState>(
@@ -20,58 +23,123 @@ Widget _host(Widget child, {AppState? state}) => MaterialApp(
     );
 
 void main() {
-  group('TestPage · 布局重设计', () {
-    testWidgets('大段抓取 JSON 只显示摘要，不铺在输入区', (tester) async {
+  group('TestPage · 本地记录选择', () {
+    testWidgets('抓取 JSON 只显示摘要，不铺在输入区', (tester) async {
       await tester.pumpWidget(_host(const TestPage(initialInput: _bigJson)));
       await tester.pump();
 
-      // 核心诉求：页面上看不到抓取内容本身（原先 6 行 TextField 会被撑满）
+      // 核心诉求：页面上看不到抓取内容本身
       expect(find.textContaining('pageLimitMessage'), findsNothing);
       expect(find.textContaining('Register to unlock'), findsNothing);
 
-      // 只留一行摘要，候选数来自 results.hits 而不是文本行数
+      // 一行摘要：来源 + 候选数
+      expect(find.textContaining('来自抓取结果'), findsOneWidget);
       expect(find.textContaining('3 个候选'), findsOneWidget);
-      expect(find.textContaining(' KB'), findsNothing);
-      expect(find.textContaining(' B'), findsOneWidget);
 
-      // 仍然能一眼看出这是输入区，且能开始测试
-      expect(find.text('输入'), findsOneWidget);
-      expect(find.text('开始测试'), findsOneWidget);
+      // 三个测试入口都在，且可用
+      expect(find.text('延迟测试'), findsOneWidget);
+      expect(find.text('速度测试'), findsOneWidget);
+      expect(
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '一键测试'))
+            .onPressed,
+        isNotNull,
+      );
     });
 
-    testWidgets('空输入显示引导，开始按钮不可用', (tester) async {
+    testWidgets('没有数据时提示「选择记录」，三个按钮全部禁用', (tester) async {
       await tester.pumpWidget(_host(const TestPage()));
       await tester.pump();
 
-      expect(find.text('点击粘贴候选数据'), findsOneWidget);
-      final start = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, '开始测试'),
+      expect(find.text('选择记录'), findsOneWidget);
+
+      final latency = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, '延迟测试'),
       );
-      expect(start.onPressed, isNull);
+      final speed = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, '速度测试'),
+      );
+      final both = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '一键测试'),
+      );
+      expect(latency.onPressed, isNull);
+      expect(speed.onPressed, isNull);
+      expect(both.onPressed, isNull);
     });
 
-    testWidgets('点摘要打开编辑层，保存后摘要更新且主页面仍不铺全文', (tester) async {
+    testWidgets('清空后回到未选择状态', (tester) async {
       await tester.pumpWidget(_host(const TestPage(initialInput: _bigJson)));
       await tester.pump();
 
-      await tester.tap(find.textContaining('3 个候选'));
-      await tester.pumpAndSettle();
+      await tester.tap(find.text('清空'));
+      await tester.pump();
 
-      // 编辑层里的 TextField 才有全文
-      expect(find.byType(TextField), findsOneWidget);
-      await tester.enterText(
-        find.byType(TextField),
-        '{"results":{"hits":[{"ip":"9.9.9.9"}]}}',
+      expect(find.text('选择记录'), findsOneWidget);
+      expect(
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '一键测试'))
+            .onPressed,
+        isNull,
       );
-      await tester.tap(find.widgetWithText(FilledButton, '保存'));
-      await tester.pumpAndSettle();
-
-      expect(find.textContaining('1 个候选'), findsOneWidget);
-      expect(find.textContaining('pageLimitMessage'), findsNothing);
     });
 
-    testWidgets('日志有内容时渲染在页面上（不再藏在外层滚动的底部小盒）',
-        (tester) async {
+    testWidgets('运行中三个测试按钮全部禁用，主按钮文案改为「运行中…」', (tester) async {
+      final state = AppState()..running = true;
+      await tester.pumpWidget(
+        _host(const TestPage(initialInput: _bigJson), state: state),
+      );
+      await tester.pump();
+
+      // 运行中主按钮文案变化，但仍必须是禁用态
+      expect(find.text('运行中…'), findsOneWidget);
+
+      final latency = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, '延迟测试'),
+      );
+      final speed = tester.widget<OutlinedButton>(
+        find.widgetWithText(OutlinedButton, '速度测试'),
+      );
+      final both = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, '运行中…'),
+      );
+      expect(latency.onPressed, isNull, reason: '运行中不允许再点延迟测试');
+      expect(speed.onPressed, isNull, reason: '运行中不允许再点速度测试');
+      expect(both.onPressed, isNull, reason: '运行中不允许再点一键测试');
+
+      // 换记录 / 清空同样要锁住，否则中途换输入会让进度和结果对不上
+      final picker = find.ancestor(
+        of: find.textContaining('来自抓取结果'),
+        matching: find.byType(InkWell),
+      );
+      expect(tester.widget<InkWell>(picker.first).onTap, isNull);
+      expect(
+        tester.widget<TextButton>(find.widgetWithText(TextButton, '清空')).onPressed,
+        isNull,
+      );
+    });
+
+    testWidgets('不再提供「粘贴候选数据」入口：整页没有任何可编辑输入框', (tester) async {
+      await tester.pumpWidget(_host(const TestPage(initialInput: _bigJson)));
+      await tester.pump();
+
+      expect(find.byType(TextField), findsNothing);
+      expect(find.textContaining('粘贴'), findsNothing);
+      expect(find.textContaining('完整三阶段'), findsNothing);
+      expect(find.textContaining('候选数据'), findsNothing);
+    });
+
+    // 源码级钉住：这三样东西被删掉后被误加回来时，上面的 UI 断言未必抓得到
+    // （弹层是懒构建的），所以直接扫源码。
+    test('test_page.dart 不再残留旧入口', () {
+      final src = File('lib/ui/pages/test_page.dart').readAsStringSync();
+      expect(src, isNot(contains('_InputEditorSheet')));
+      expect(src, isNot(contains('完整三阶段')));
+      expect(src, isNot(contains('粘贴候选数据')));
+      // 三个模式的实参必须与 pipeline 的 mode 映射一一对应
+      expect(src, contains("_start('latency')"));
+      expect(src, contains("_start('speed')"));
+      expect(src, contains("_start('both')"));
+    });
+
+    testWidgets('日志有内容时渲染在页面上', (tester) async {
       final state = AppState();
       state.logs.addAll(const [
         '[速度 1/2] 1.1.1.1:443 正常',
@@ -82,7 +150,6 @@ void main() {
 
       expect(find.textContaining('[速度 1/2]'), findsOneWidget);
       expect(find.text('2 行'), findsOneWidget);
-      // 日志工具按钮：跳到最新 + 复制
       expect(find.byTooltip('跳到最新'), findsOneWidget);
       expect(find.byTooltip('复制日志'), findsOneWidget);
     });
@@ -104,7 +171,7 @@ void main() {
       final topLeft = tester.getTopLeft(card);
       // 640 逻辑像素高的小屏：日志至少 160px，且底部不越屏
       expect(size.height, greaterThan(160));
-      // 「包底」：卡片底边与屏幕底至少留 10px，圆角完整露出、最后一行不糊在屏幕边
+      // 「包底」：卡片底边与屏幕底至少留 10px
       expect(640 - (topLeft.dy + size.height), greaterThanOrEqualTo(10));
     });
   });

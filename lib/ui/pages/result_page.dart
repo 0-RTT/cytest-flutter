@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/app_state.dart';
-import 'publish_page.dart';
+import 'vless_test_page.dart';
 
 class ResultPage extends StatefulWidget {
   const ResultPage({super.key});
@@ -42,7 +42,9 @@ class _ResultPageState extends State<ResultPage> {
     return out;
   }
 
-  void _openPublish() {
+  /// 进入 VLESS 测试页：本地测速只证明 IP:port 通，真正能不能用要跑协议测速。
+  /// 推送入口挪到测试页里 —— 只有测速成功的节点才有资格被推送。
+  void _openTest() {
     final state = context.read<AppState>();
     final targets = _targets(state);
     if (targets.isEmpty) {
@@ -54,7 +56,7 @@ class _ResultPageState extends State<ResultPage> {
         : '';
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PublishPage(
+        builder: (_) => VlessTestPage(
           targets: targets,
           template: template,
         ),
@@ -88,9 +90,9 @@ class _ResultPageState extends State<ResultPage> {
         title: Text('结果 · ${state.rows.length} 条'),
         actions: [
           TextButton.icon(
-            onPressed: picked == 0 ? null : _openPublish,
-            icon: const Icon(Icons.send_outlined, size: 17),
-            label: Text('推送 ($picked)'),
+            onPressed: picked == 0 ? null : _openTest,
+            icon: const Icon(Icons.science_outlined, size: 17),
+            label: Text('测试 ($picked)'),
           ),
           PopupMenuButton<String>(
             onSelected: (v) => _onAction(context, v),

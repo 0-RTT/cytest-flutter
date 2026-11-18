@@ -457,7 +457,7 @@ class _FetchPageState extends State<FetchPage> {
                                 builder: (_) => const TestPage(),
                               ),
                             ),
-                            child: const Text('手动粘贴 JSON'),
+                            child: const Text('打开本地测试'),
                           ),
                         ],
                       ),

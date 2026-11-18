@@ -268,10 +268,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 本地三阶段。返回是否成功。
+  /// 本地测试。返回是否成功。
+  ///
+  /// [mode] 为 `latency`（只延迟）/ `speed`（只速度）/ `both`（延迟+速度），
+  /// 由 [Pipeline.run] 映射到对应的 Go flag。
   Future<bool> runLocal({required String mode, required String input}) async {
     if (running) throw Exception('上一次测试还在进行');
-    if (input.trim().isEmpty) throw Exception('先粘贴候选数据');
+    if (input.trim().isEmpty) throw Exception('先选择记录或导入抓取结果');
+
+    final modeLabel = switch (mode) {
+      'latency' => '延迟测试',
+      'speed' => '速度测试',
+      _ => '延迟 + 速度',
+    };
 
     running = true;
     lastError = null;
@@ -279,7 +288,8 @@ class AppState extends ChangeNotifier {
     clearLogs();
     progressCur = 0;
     progressTotal = 0;
-    progressStage = '';
+    progressStage = '准备中（$modeLabel）';
+    pushLog('▶ 本地测试：$modeLabel');
     notifyListeners();
 
     try {

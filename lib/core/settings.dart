@@ -35,8 +35,9 @@ class AppSettings {
   List<String> vlessLinks;
   List<String> proxyIps;
   String githubToken;
+
+  /// 已规范化的 `owner/repo`（设置页保存时用 parseRepoSlug 转过）。
   String githubRepo;
-  String githubPath;
   String remoteHost;
   int remotePort;
   String remoteUser;
@@ -58,7 +59,6 @@ class AppSettings {
     this.proxyIps = const [],
     this.githubToken = '',
     this.githubRepo = '',
-    this.githubPath = '',
     this.remoteHost = '',
     this.remotePort = 22,
     this.remoteUser = 'root',
@@ -103,7 +103,6 @@ class AppSettings {
         proxyIps: (json['proxyIps'] as List?)?.cast<String>() ?? const [],
         githubToken: json['githubToken'] as String? ?? '',
         githubRepo: json['githubRepo'] as String? ?? '',
-        githubPath: json['githubPath'] as String? ?? '',
         remoteHost: json['remoteHost'] as String? ?? '',
         remotePort: json['remotePort'] as int? ?? 22,
         remoteUser: json['remoteUser'] as String? ?? 'root',
@@ -126,7 +125,6 @@ class AppSettings {
         'proxyIps': proxyIps,
         'githubToken': githubToken,
         'githubRepo': githubRepo,
-        'githubPath': githubPath,
         'remoteHost': remoteHost,
         'remotePort': remotePort,
         'remoteUser': remoteUser,

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:cytest/state/app_state.dart';
 import 'package:cytest/ui/pages/publish_page.dart';
 import 'package:cytest/ui/pages/result_page.dart';
+import 'package:cytest/ui/pages/vless_test_page.dart';
 
 const _template =
     'vless://8b1c2d3e-4f5a-4b6c-8d9e-0a1b2c3d4e5f@1.2.3.4:443'
@@ -45,14 +46,14 @@ Widget _host(Widget child, AppState state) => ChangeNotifierProvider<AppState>.v
     );
 
 void main() {
-  group('结果页 → 推送页', () {
-    testWidgets('默认全选可用节点，取消一条后推送页只带选中的 ip:port', (tester) async {
+  group('结果页 → VLESS 测试页', () {
+    testWidgets('默认全选可用节点，取消一条后测试页只带选中的 ip:port', (tester) async {
       final state = _state();
       await tester.pumpWidget(_host(const ResultPage(), state));
       await tester.pump();
 
-      expect(find.text('推送 (2)'), findsOneWidget);
-      // 失败行的复选框必须禁用，避免把失败节点推上去
+      expect(find.text('测试 (2)'), findsOneWidget);
+      // 失败行的复选框必须禁用，避免把失败节点带进测试
       final boxes = tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
       expect(boxes, hasLength(3));
       expect(boxes[0].onChanged, isNotNull);
@@ -61,26 +62,28 @@ void main() {
 
       await tester.tap(find.text('9.9.9.9:1111'));
       await tester.pump();
-      expect(find.text('推送 (1)'), findsOneWidget);
+      expect(find.text('测试 (1)'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(TextButton, '推送 (1)'));
+      await tester.tap(find.widgetWithText(TextButton, '测试 (1)'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(PublishPage), findsOneWidget);
-      expect(find.text('推送'), findsOneWidget);
-      expect(find.textContaining('8.8.8.8:2222'), findsOneWidget);
-      expect(find.textContaining('9.9.9.9:1111'), findsNothing);
-
-      final fields = tester.widgetList<TextField>(find.byType(TextField)).toList();
-      expect(fields.isNotEmpty, isTrue);
+      // 推送入口已挪到测试页：结果页的按钮只负责进入 VLESS 测试。
+      expect(find.byType(VlessTestPage), findsOneWidget);
+      expect(find.byType(PublishPage), findsNothing);
+      expect(find.textContaining('1 个目标'), findsOneWidget);
+      expect(find.textContaining('模板已就绪'), findsOneWidget);
+      // 还没测速 → 推送按钮 0 条且不可点
+      expect(find.text('推送 (0)'), findsOneWidget);
       expect(
-        fields.any((f) => f.controller?.text.contains('vless://') ?? false),
-        isTrue,
-        reason: '模板链接应从设置页预填到输入框',
+        tester
+            .widget<FilledButton>(
+                find.widgetWithText(FilledButton, '推送 (0)'))
+            .onPressed,
+        isNull,
       );
     });
 
-    testWidgets('推送页可在 base64 与 mihomo YAML 之间切换预览', (tester) async {
+    testWidgets('推送页可在 base64 与 yaml 之间切换预览', (tester) async {
       tester.view.physicalSize = const Size(1080, 2400);
       tester.view.devicePixelRatio = 3.0;
       addTearDown(tester.view.reset);
@@ -99,12 +102,50 @@ void main() {
       expect(find.byKey(const ValueKey('publish_preview_panel')), findsOneWidget);
       expect(find.text('base64 订阅预览'), findsOneWidget);
 
-      await tester.tap(find.text('mihomo YAML'));
+      await tester.tap(find.text('yaml'));
       await tester.pump();
 
       // YAML 有 200+ 行，预览只渲染视口内前几行；结构正确性由
       // mihomo_test.dart 的 12 项断言负责，这里只验切换生效。
       expect(find.text('mihomo YAML 预览'), findsOneWidget);
+    });
+
+    testWidgets('模式标签为 base64 / yaml，推送按钮独占整行且无独立复制按钮', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        _host(
+          const PublishPage(
+            targets: ['8.8.8.8:2222'],
+            template: _template,
+          ),
+          _state(),
+        ),
+      );
+      await tester.pump();
+
+      // 标签改成短名，避免窄屏挤压
+      expect(find.text('base64'), findsOneWidget);
+      expect(find.text('yaml'), findsOneWidget);
+      expect(find.text('订阅 base64'), findsNothing);
+      expect(find.text('mihomo YAML'), findsNothing);
+
+      // 顶部那个 OutlinedButton「复制」已删除……
+      expect(find.text('复制'), findsNothing);
+      // ……但预览面板自带的「复制内容」必须保留
+      expect(find.byTooltip('复制内容'), findsOneWidget);
+
+      // 推送按钮与模式切换按钮同宽 = 独占整行
+      final pushButton = find.widgetWithText(FilledButton, '推送 GitHub');
+      expect(pushButton, findsOneWidget);
+      final modeSwitch = find.byType(SegmentedButton<String>);
+      expect(
+        tester.getRect(pushButton).width,
+        moreOrLessEquals(tester.getRect(modeSwitch).width, epsilon: 1),
+        reason: '推送按钮应独占整行（复制按钮删除后不再对半分）',
+      );
     });
 
     testWidgets('切换格式时文件名各自独立，预览区不显示无意义的跳到最新', (tester) async {
@@ -129,7 +170,7 @@ void main() {
       expect(subField.controller?.text, 'cytest-sub.txt');
 
       // 改成 YAML 后文件名切到 config.yaml，且没有跳到最新按钮
-      await tester.tap(find.text('mihomo YAML'));
+      await tester.tap(find.text('yaml'));
       await tester.pump();
       expect(find.text('mihomo 文件名（YAML）'), findsOneWidget);
       expect(find.byTooltip('跳到最新'), findsNothing);
@@ -186,7 +227,7 @@ void main() {
 
       // base64 模式下不显示高级选项，切到 YAML 才有
       expect(find.text('高级选项'), findsNothing);
-      await tester.tap(find.text('mihomo YAML'));
+      await tester.tap(find.text('yaml'));
       await tester.pump();
       expect(find.text('高级选项'), findsOneWidget);
 

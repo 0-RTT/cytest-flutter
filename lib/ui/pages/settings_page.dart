@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/github.dart';
 import '../../state/app_state.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -23,7 +24,6 @@ class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _httpProxy;
   late TextEditingController _fetchProxy;
   late TextEditingController _ghRepo;
-  late TextEditingController _ghPath;
   late TextEditingController _ghToken;
   late TextEditingController _remoteHost;
   late TextEditingController _remotePort;
@@ -51,7 +51,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _httpProxy = TextEditingController(text: s.httpProxy);
     _fetchProxy = TextEditingController(text: s.fetchProxy);
     _ghRepo = TextEditingController(text: s.githubRepo);
-    _ghPath = TextEditingController(text: s.githubPath);
     _ghToken = TextEditingController(text: s.githubToken);
     _remoteHost = TextEditingController(text: s.remoteHost);
     _remotePort = TextEditingController(text: '${s.remotePort}');
@@ -65,7 +64,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     for (final c in [
       _sha1, _latency, _speed, _maxLatency, _dial, _download,
-      _speedUrl, _httpProxy, _fetchProxy, _ghRepo, _ghPath, _ghToken,
+      _speedUrl, _httpProxy, _fetchProxy, _ghRepo, _ghToken,
       _remoteHost, _remotePort, _remoteUser, _remotePassword, _remoteKey,
     ]) {
       c.dispose();
@@ -76,6 +75,23 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _save() async {
     final state = context.read<AppState>();
     final s = state.settings;
+
+    // 仓库地址允许用户直接粘网页链接，先规范化成 owner/repo 再落库，
+    // 这样发布页 / GitHub.push 都不用重复解析。
+    final repoInput = _ghRepo.text.trim();
+    final repoSlug = parseRepoSlug(repoInput);
+    if (repoInput.isNotEmpty && repoSlug.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('仓库地址格式不对，应形如 https://github.com/owner/repo'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
     s.sha1Concurrency = int.tryParse(_sha1.text) ?? s.sha1Concurrency;
     s.latencyConcurrency = int.tryParse(_latency.text) ?? s.latencyConcurrency;
     s.speedConcurrency = int.tryParse(_speed.text) ?? s.speedConcurrency;
@@ -85,14 +101,15 @@ class _SettingsPageState extends State<SettingsPage> {
     s.speedUrl = _speedUrl.text.trim();
     s.httpProxy = _httpProxy.text.trim();
     s.fetchProxy = _fetchProxy.text.trim();
-    s.githubRepo = _ghRepo.text.trim();
-    s.githubPath = _ghPath.text.trim();
+    s.githubRepo = repoSlug;
     s.githubToken = _ghToken.text.trim();
     s.remoteHost = _remoteHost.text.trim();
     s.remotePort = int.tryParse(_remotePort.text) ?? 22;
     s.remoteUser = _remoteUser.text.trim();
     s.remotePassword = _remotePassword.text;
     s.remoteKeyPath = _remoteKey.text.trim();
+    // 回填规范化结果，让用户看到实际生效的 owner/repo。
+    _ghRepo.text = repoSlug;
     await state.saveSettings();
     if (mounted) {
       ScaffoldMessenger.of(context)
@@ -146,9 +163,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 _text('抓取代理', _fetchProxy, hint: 'WebView 抓取用，留空走 Xray 或直连'),
               ]),
               _section(theme, 'GitHub 推送', '把订阅写到仓库文件', [
-                _text('仓库', _ghRepo, hint: 'owner/name'),
-                _text('文件路径', _ghPath, hint: '默认 cytest-sub.txt'),
-                _text('Token', _ghToken, obscure: true, hint: '需要 repo contents 写权限'),
+                _text('仓库地址', _ghRepo,
+                    hint: 'https://github.com/0-RTT/sub'),
+                _text('Token', _ghToken,
+                    obscure: true, hint: '需要 repo contents 写权限'),
               ]),
               _section(theme, '远程执行', 'SSH 到服务器跑三阶段', [
                 _text('主机', _remoteHost, hint: '1.2.3.4'),
