@@ -163,12 +163,165 @@ void main() {
 
     expect(go, contains('applyThreshold bool'),
         reason: 'runLatencyStage 必须有阈值开关');
-    expect(go, contains('runLatencyStage(ctx, targets, false)'),
+    // 延迟阶段多了一个 clientPool 参数：延迟与速度必须共用同一套
+    // 「真的能用」的判定（见下一个 test），池子是这条链路的前提。
+    expect(go, contains('runLatencyStage(ctx, targets, clientPool, false)'),
         reason: '只延迟模式必须传 false（否则默认 200ms 阈值会误杀大批候选）');
-    expect(go, contains('runLatencyStage(ctx, ipsToTest, true)'),
+    expect(go, contains('runLatencyStage(ctx, ipsToTest, clientPool, true)'),
         reason: '速度/一键模式保留阈值筛选');
     expect(go, contains('case applyThreshold && cfg.MaxLatency > 0'),
         reason: '阈值判定必须受开关控制');
+  });
+
+  // 真实事故（v1.0.19）：延迟阶段只做 TCP 直连握手，速度阶段却要求
+  // TLS + HTTP 全通。于是「TCP 通但 TLS/SNI 不通」的候选在延迟阶段算"可用"，
+  // 到速度阶段整批失败 —— 用户看到「延迟有数、一测速全挂」或「全部失败」。
+  // 现在两个阶段共用 ClientPool 的 client，口径统一：响应头没拿到就不算可用。
+  test('延迟测试走 HTTP 客户端：TCP + TLS + 响应头全通才算可用', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+
+    expect(go, contains('func measureClientLatency('),
+        reason: '延迟测量必须经 ClientPool 的 client 发真实请求');
+    expect(go, isNot(contains('func measureTCPLatency(')),
+        reason: '裸 TCP 握手判定已废弃，别悄悄复活');
+    expect(go, contains('clientPool.NewClient(result.IP, port)'),
+        reason: '每条候选都要绑定自己的 ip:port 建 client');
+    expect(go, contains('measureClientLatency(ctx, client, probeURL)'),
+        reason: 'runLatencyStage 必须调用新测量函数');
+    expect(go, contains('http.MethodHead'),
+        reason: '优先 HEAD：测延迟不该把测速文件拉下来');
+    expect(go, contains('func describeLatencyError('),
+        reason: '失败必须给可读 Reason（超时 / SNI 不匹配 / TLS 不受信任…）');
+    // 只延迟模式只是「不按阈值淘汰」，跑不通的仍要失败。
+    expect(go, contains('case out.Latency < 0:'),
+        reason: '只延迟模式仍需把跑不通的判为失败');
+  });
+
+  // 真实事故：用户报「三个按钮全部失败」，根因是配了测速代理但代理没起来 ——
+  // 所有目标一律超时，用户从结果里完全看不出是代理的锅。
+  // 所以：开测前必须先探一次代理端口，探不通立刻 exit 2，不许伪装成「所有节点都失败」。
+  test('测速代理不可用时：开测前探测并以 exit 2 明确报错', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+
+    expect(go, contains('func probeProxy('),
+        reason: '缺了开测前的代理可达性探测');
+    final mainIdx = go.indexOf('func main() {');
+    expect(mainIdx, greaterThan(-1));
+    final body = go.substring(mainIdx);
+    final probeAt = body.indexOf('probeProxy(ctx, proxyURL.Host)');
+    expect(probeAt, greaterThan(-1), reason: 'main 里必须先探代理');
+    // 探测失败 → 说人话 + exit 2，且发生在任何模式分支之前。
+    final tail = body.substring(probeAt);
+    final failBlock = tail.substring(0, 400);
+    expect(failBlock, contains('测速代理不可用'));
+    expect(failBlock, contains('os.Exit(2)'),
+        reason: '环境问题用 exit 2，别和「无可用结果 = exit 1」混在一起');
+    final firstMode = body.indexOf('if *onlySpeed {');
+    expect(firstMode, greaterThan(probeAt), reason: '代理探测必须早于所有模式分支');
+
+    // 代理链路上的失败要能分级写进 Reason，而不是一句「i/o timeout」。
+    expect(go, contains('type proxyDialError struct'),
+        reason: '代理侧失败要单独包一层，才能区分「代理挂了」和「节点挂了」');
+    expect(go, contains('func describeProxyReason('));
+    expect(go, contains('代理隧道失败'));
+  });
+
+  // 用户报「全部失败」时，第一件事是看生效配置对不对（是不是走了代理、
+  // 测速地址是不是空的、超时是不是太短）。所以启动必须打一行紧凑摘要。
+  test('启动打印生效配置摘要（代理 / 测速地址 / 三个超时）', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+
+    expect(go, contains('func logEffectiveConfig()'));
+    expect(go, contains('生效配置'));
+    final idx = go.indexOf('func logEffectiveConfig()');
+    final tail = go.substring(idx);
+    final nextFunc = tail.indexOf('\nfunc ');
+    final body = nextFunc < 0 ? tail : tail.substring(0, nextFunc);
+    for (final key in [
+      '测速代理=',
+      '测速地址=',
+      'dialTimeout=',
+      'downloadTimeout=',
+      'maxLatency=',
+    ]) {
+      expect(body, contains(key), reason: '配置摘要缺少 $key');
+    }
+    // 摘要必须在 main 里被调用，否则等于没写。
+    final mainIdx = go.indexOf('func main() {');
+    final mainBody = go.substring(mainIdx);
+    final callAt = mainBody.indexOf('logEffectiveConfig()');
+    expect(callAt, greaterThan(-1));
+    expect(callAt, lessThan(mainBody.indexOf('if *onlySpeed {')));
+  });
+
+  // 测速地址空着时两个阶段都没法判「能不能用」，必须当配置错误报出来（exit 2），
+  // 而不是让全部目标静默失败、最后只剩一句「没有 IP 通过延迟测试」。
+  test('测速地址为空时以 exit 2 明确报错', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+    final idx = go.indexOf('strings.TrimSpace(cfg.SpeedTestURL) == ""');
+    expect(idx, greaterThan(-1), reason: '缺少 speedTestURL 的空值校验');
+    final block = go.substring(idx, idx + 400);
+    expect(block, contains('speedTestURL'));
+    expect(block, contains('os.Exit(2)'));
+  });
+
+  // 默认阈值改 0（不限）之后，一键测试会把所有能连通的目标都送进测速。
+  // 候选一多（>10 条）用户会以为卡死，所以进入速度阶段时要给个耗时预期。
+  test('进入速度阶段的候选偏多时给出「可先筛一遍」的耗时提示', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+
+    expect(go, contains('func logfSpeedQueueHint('));
+    expect(go, contains('可先用「延迟测试」筛一遍再测速'));
+
+    final start = go.indexOf('func runSpeedTest(');
+    expect(start, greaterThan(-1));
+    final tail = go.substring(start);
+    final nextFunc = tail.indexOf('\nfunc ');
+    final body = nextFunc < 0 ? tail : tail.substring(0, nextFunc);
+    expect(body, contains('logfSpeedQueueHint(len(passedList))'),
+        reason: '提示要挂在 runSpeedTest 真正进入速度阶段的位置');
+  });
+
+  // 0 = 不限：引擎侧不能再拿 0 去和延迟比（0 会把所有候选都判成「超过阈值」）。
+  test('maxLatency=0 时阈值不生效（不限）', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+    final idx = go.indexOf('case applyThreshold && cfg.MaxLatency > 0');
+    expect(idx, greaterThan(-1),
+        reason: '阈值判定必须带 cfg.MaxLatency > 0，否则 0 会变成「全部超过阈值」');
+  });
+
+  // 真实缺陷（QA 实测）：reqCtx 的截止时间会被 http.Client.Timeout
+  // （ClientPool 里设的 downloadTimeout）盖住，有效超时 = 两者的 min。
+  // 用户想把测速调快点、把「下载超时」填成 3~5s 时，延迟探测被静默截断，
+  // 日志/Reason 里声明的秒数成了假数字，而且「慢但真能用」的候选又被误杀。
+  test('延迟探测超时不被 downloadTimeout 截断（浅拷贝 client）', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+
+    expect(go, contains('probeClient := *client'),
+        reason: '浅拷贝 client：Transport 共享，不额外建连');
+    expect(go, contains('probeClient.Timeout = timeout'),
+        reason: '探测超时必须用延迟自己的声明值，不能沿用 downloadTimeout');
+    expect(go, contains('probeClient.Do(req)'));
+    // 速度阶段必须仍用池子里的原 client，别被这次改动带跑。
+    expect(go, contains('measureDownload(ctx, client, cfg.SpeedTestURL)'),
+        reason: '测速阶段的行为与超时口径不能变');
+  });
+
+  // 两条「日志/Reason 说的和实际不一致」的修正（QA 实测提出）：
+  // 1) 拨号阶段超时（TCP 都没连上）用的预算是 dialTimeout，不是总预算；
+  // 2) 桌面端读不到 Android 证书目录是正常分支，不该报「没有根证书」。
+  test('失败原因的秒数与真实生效的阶段一致', () {
+    final go = File('engine/pipeline.go').readAsStringSync();
+
+    expect(go, contains('func dialTimeoutReason('));
+    expect(go, contains('opErr.Op == "dial"'),
+        reason: '要靠 net.OpError 的 Op 区分「拨号阶段」与「已连上等响应」');
+    expect(go, contains('拨号阶段'));
+
+    expect(go, isNot(contains('系统目录里没读到证书')),
+        reason: '桌面端每轮打这行是误导：HTTPS 其实是好的');
+    expect(go, contains('sawCertDir'),
+        reason: '只有「证书目录存在但没读到证书」才值得提醒');
   });
 }
 

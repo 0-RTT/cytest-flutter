@@ -115,4 +115,39 @@ void main() {
       expect(state.settings.githubRepo, isEmpty);
     });
   });
+
+  // 真实事故：用户看到「延迟 800ms」以为节点废了，就去设置里填 200ms，
+  // 结果一键测试把所有能用的候选都筛掉，看起来像「全部失败」。
+  // 所以这一项必须自解释：0 = 不限，且只影响测速前的筛选。
+  group('SettingsPage · 延迟上限', () {
+    testWidgets('hint 写明 0 = 不限（推荐）', (tester) async {
+      _tallViewport(tester);
+      await tester.pumpWidget(_host(AppState()));
+      await tester.pumpAndSettle();
+
+      final field = tester.widget<TextField>(_fieldByLabel('延迟上限（ms）'));
+      expect(field.decoration?.hintText, '0 = 不限（推荐）');
+    });
+
+    testWidgets('helper 点明只用于省测速时间、不代表节点不可用', (tester) async {
+      _tallViewport(tester);
+      await tester.pumpWidget(_host(AppState()));
+      await tester.pumpAndSettle();
+
+      final field = tester.widget<TextField>(_fieldByLabel('延迟上限（ms）'));
+      final helper = field.decoration?.helperText ?? '';
+      expect(helper, contains('不代表节点不可用'));
+      expect(helper, contains('延迟测试'),
+          reason: '要说明「延迟测试」不受此项影响，否则用户不敢调');
+    });
+
+    testWidgets('默认值读出来就是 0（不限）', (tester) async {
+      _tallViewport(tester);
+      await tester.pumpWidget(_host(AppState()));
+      await tester.pumpAndSettle();
+
+      final field = tester.widget<TextField>(_fieldByLabel('延迟上限（ms）'));
+      expect(field.controller?.text, '0');
+    });
+  });
 }

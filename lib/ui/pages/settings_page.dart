@@ -213,7 +213,16 @@ class _SettingsPageState extends State<SettingsPage> {
                 _num('指纹筛选并发', _sha1, hint: '默认 30'),
                 _num('延迟测试并发', _latency, hint: '默认 100'),
                 _num('速度测试并发', _speed, hint: '默认 2，建议 4-6'),
-                _num('延迟上限（ms）', _maxLatency, hint: '0 表示不限'),
+                // 阈值只用来省测速时间，不负责判定可用。
+                // 这条 helper 是刻意的：用户看到「延迟 800ms」就以为节点废了，
+                // 于是在设置里填 200，结果一键测试全被筛掉。
+                _num(
+                  '延迟上限（ms）',
+                  _maxLatency,
+                  hint: '0 = 不限（推荐）',
+                  helper: '只用于「一键测试」时跳过太慢的候选以节省测速时间，'
+                      '不代表节点不可用；「延迟测试」不受此项影响。',
+                ),
               ]),
               _section(theme, '超时', '网络抖动大时适当放宽', [
                 _num('连接超时（秒）', _dial, hint: '默认 5'),
@@ -316,7 +325,13 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _num(String label, TextEditingController c, {String? hint}) => Padding(
+  Widget _num(
+    String label,
+    TextEditingController c, {
+    String? hint,
+    String? helper,
+  }) =>
+      Padding(
         padding: const EdgeInsets.only(top: 8),
         child: TextField(
           controller: c,
@@ -324,6 +339,8 @@ class _SettingsPageState extends State<SettingsPage> {
           decoration: InputDecoration(
             labelText: label,
             hintText: hint,
+            helperText: helper,
+            helperMaxLines: 2,
             border: const OutlineInputBorder(),
             isDense: true,
           ),
