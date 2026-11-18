@@ -20,10 +20,17 @@ import 'result_page.dart';
 ///
 /// 不再提供自由粘贴/编辑大段文本的入口 —— 主页面永远只留一行摘要，日志不被挤走。
 class TestPage extends StatefulWidget {
-  const TestPage({super.key, this.initialInput});
+  const TestPage({super.key, this.initialInput, this.autoStart = true});
 
   /// 兼容旧调用：传入 Censys JSON 时直接提取候选，标记「来自抓取结果」。
   final String? initialInput;
+
+  /// 带 [initialInput] 进页时是否立刻开跑。
+  ///
+  /// 默认 true —— `initialInput` 只由「获取数据 → 导入到本地测试」这条路径传，
+  /// 用户点那一下就是「开始」。留成参数是为了让 widget 测试能只验布局、
+  /// 不真的去起引擎进程。
+  final bool autoStart;
 
   @override
   State<TestPage> createState() => _TestPageState();
@@ -48,6 +55,12 @@ class _TestPageState extends State<TestPage> {
     if (raw != null && raw.trim().isNotEmpty) {
       _targets = extractTargets(raw);
       _sourceLabel = '来自抓取结果';
+      // 从「获取数据」直接带进来时不再要求用户再点一次按钮：进页即开跑。
+      if (widget.autoStart && _targets.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _start();
+        });
+      }
     }
     _logScroll.addListener(() {
       if (!_logScroll.hasClients) return;
@@ -84,6 +97,8 @@ class _TestPageState extends State<TestPage> {
       _targets = picked.targets;
       _sourceLabel = picked.label;
     });
+    // 选完记录直接开跑：页面上已经没有「开始」按钮，选择本身就是开始。
+    if (_targets.isNotEmpty) await _start();
   }
 
   void _clearTargets() {
@@ -93,10 +108,14 @@ class _TestPageState extends State<TestPage> {
     });
   }
 
-  Future<void> _start(String mode) async {
+  /// 唯一的测试入口：一键测试 = 指纹筛选 → 延迟 → 速度（引擎 -targets -sha1）。
+  ///
+  /// 页面上不再有「只延迟 / 只测速 / 一键」三个按钮：用户要的就是完整一遍，
+  /// 三个按钮只会制造「点了哪个」的选择成本，也让首屏多出一整行。
+  Future<void> _start() async {
     if (_targets.isEmpty) return;
     final state = context.read<AppState>();
-    final ok = await state.runLocal(mode: mode, input: _targets.join('\n'));
+    final ok = await state.runLocal(mode: 'both', input: _targets.join('\n'));
     if (!mounted) return;
     if (ok && state.rows.isNotEmpty) {
       await Navigator.of(context).push(
@@ -163,39 +182,11 @@ class _TestPageState extends State<TestPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 顶部三卡固定，不参与滚动。
+            // 只留「候选」一块：统计卡片（候选总量 / 当前阶段 / 可用）已移除，
+            // 那三项在日志里本来就逐行可见，占着首屏只会挤压日志。
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
-              child: Row(
-                children: [
-                  _stat(
-                      theme,
-                      '候选总量',
-                      state.progressTotal > 0
-                          ? '${state.progressTotal}'
-                          : (hasTargets ? '${_targets.length}' : '—')),
-                  const SizedBox(width: 10),
-                  _stat(
-                      theme,
-                      '当前阶段',
-                      state.progressStage.isEmpty
-                          ? '待开始'
-                          : _trim(state.progressStage)),
-                  const SizedBox(width: 10),
-                  _stat(theme, '可用',
-                      state.rows.isEmpty ? '—' : '${state.usableCount}'),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
               child: _inputCard(theme, state, hasTargets),
-            ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: _progressCard(theme, state, pct),
             ),
             const SizedBox(height: 10),
             // 日志模块：吃掉剩余空间、独立滚动，永远在首屏。
@@ -215,6 +206,11 @@ class _TestPageState extends State<TestPage> {
                         scrollController: _logScroll,
                         onJumpToLatest: _jumpToLatest,
                         onCopy: _copyLogs,
+                        // 进度条并入日志卡片：进度与明细是同一件事的两种表达。
+                        progress: pct,
+                        progressLabel: state.progressTotal > 0
+                            ? '${state.progressCur} / ${state.progressTotal}'
+                            : null,
                       ),
                     ),
                     if (state.lastError != null) ...[
@@ -297,106 +293,11 @@ class _TestPageState extends State<TestPage> {
                 ),
               ),
               const SizedBox(height: 10),
-              // 三个动作按钮取代旧的「模式切换 + 开始测试」：
-              // 用户点哪个就跑哪个，语义自解释，省掉一次二次选择。
-              // 窄屏下 3 个按钮并排仍需放得下，所以不带图标、用紧凑内边距。
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: state.running || !hasTargets
-                          ? null
-                          : () => _start('latency'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      child: const Text('延迟测试'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: state.running || !hasTargets
-                          ? null
-                          : () => _start('speed'),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      child: const Text('速度测试'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: state.running || !hasTargets
-                          ? null
-                          : () => _start('both'),
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      child: Text(state.running ? '运行中…' : '一键测试'),
-                    ),
-                  ),
-                ],
-              ),
             ],
           ),
         ),
       );
 
-  Widget _progressCard(ThemeData theme, AppState state, double pct) => Card(
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text('进度', style: theme.textTheme.titleSmall),
-                  const Spacer(),
-                  Text(
-                    state.progressTotal > 0
-                        ? '${state.progressCur} / ${state.progressTotal}'
-                        : '等待开始',
-                    style: theme.textTheme.labelSmall,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(value: pct, minHeight: 5),
-              ),
-            ],
-          ),
-        ),
-      );
-
-  String _trim(String s) {
-    final t = s.replaceAll(RegExp(r'^[=\-\s]+|[=\-\s]+$'), '');
-    return t.length > 10 ? t.substring(0, 10) : t;
-  }
-
-  Widget _stat(ThemeData theme, String label, String value) => Expanded(
-        child: Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: theme.textTheme.labelSmall),
-                const SizedBox(height: 2),
-                Text(value, style: theme.textTheme.titleMedium),
-              ],
-            ),
-          ),
-        ),
-      );
 }
 
 /// 记录选择结果。

@@ -19,6 +19,8 @@ class LogPanel extends StatelessWidget {
     this.emptyText = '暂无输出',
     this.showJumpToLatest = true,
     this.copyTooltip = '复制日志',
+    this.progress,
+    this.progressLabel,
   });
 
   final String title;
@@ -28,6 +30,15 @@ class LogPanel extends StatelessWidget {
   final Future<void> Function() onCopy;
   final bool running;
   final String emptyText;
+
+  /// 非空时在标题下方画一条进度条（0~1）。
+  ///
+  /// 为什么放在日志卡片内部：进度和日志讲的是同一件事的两种表达（数字 / 明细），
+  /// 拆成两张卡会多占一块首屏高度，而长任务真正要看的是日志。
+  final double? progress;
+
+  /// 进度条右侧的紧凑读数（如 `12 / 553`），为空则只画条。
+  final String? progressLabel;
 
   /// 静态内容（如推送预览）不需要「跳到最新」，设 false 隐藏。
   final bool showJumpToLatest;
@@ -98,6 +109,27 @@ class LogPanel extends StatelessWidget {
               ],
             ),
           ),
+          if (progress != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: progress!.clamp(0.0, 1.0),
+                        minHeight: 4,
+                      ),
+                    ),
+                  ),
+                  if (progressLabel != null && progressLabel!.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Text(progressLabel!, style: theme.textTheme.labelSmall),
+                  ],
+                ],
+              ),
+            ),
           Expanded(
             child: Container(
               width: double.infinity,

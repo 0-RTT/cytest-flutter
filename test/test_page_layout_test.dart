@@ -22,10 +22,16 @@ Widget _host(Widget child, {AppState? state}) => MaterialApp(
       ),
     );
 
+/// 布局测试统一关掉 autoStart：验的是页面结构，不该真的去起引擎进程。
+Widget _page({AppState? state}) => _host(
+      const TestPage(initialInput: _bigJson, autoStart: false),
+      state: state,
+    );
+
 void main() {
   group('TestPage · 本地记录选择', () {
     testWidgets('抓取 JSON 只显示摘要，不铺在输入区', (tester) async {
-      await tester.pumpWidget(_host(const TestPage(initialInput: _bigJson)));
+      await tester.pumpWidget(_page());
       await tester.pump();
 
       // 核心诉求：页面上看不到抓取内容本身
@@ -35,76 +41,59 @@ void main() {
       // 一行摘要：来源 + 候选数
       expect(find.textContaining('来自抓取结果'), findsOneWidget);
       expect(find.textContaining('3 个候选'), findsOneWidget);
-
-      // 三个测试入口都在，且可用
-      expect(find.text('延迟测试'), findsOneWidget);
-      expect(find.text('速度测试'), findsOneWidget);
-      expect(
-        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '一键测试'))
-            .onPressed,
-        isNotNull,
-      );
     });
 
-    testWidgets('没有数据时提示「选择记录」，三个按钮全部禁用', (tester) async {
+    testWidgets('页面不再有三个测试按钮：选择即开始', (tester) async {
+      await tester.pumpWidget(_page());
+      await tester.pump();
+
+      expect(find.text('延迟测试'), findsNothing);
+      expect(find.text('速度测试'), findsNothing);
+      expect(find.text('一键测试'), findsNothing);
+      expect(find.text('运行中…'), findsNothing);
+
+      // 源码层：`_start` 已无 mode 参数，只剩唯一入口
+      final src = File('lib/ui/pages/test_page.dart').readAsStringSync();
+      expect(src, isNot(contains("_start('latency')")));
+      expect(src, isNot(contains("_start('speed')")));
+      expect(src, isNot(contains("_start('both')")));
+      expect(src, contains("runLocal(mode: 'both'"),
+          reason: '唯一的入口必须是一键测试（指纹→延迟→速度）');
+    });
+
+    testWidgets('头部统计卡已移除：没有「候选总量 / 当前阶段 / 可用」', (tester) async {
+      await tester.pumpWidget(_page());
+      await tester.pump();
+
+      expect(find.text('候选总量'), findsNothing);
+      expect(find.text('当前阶段'), findsNothing);
+      expect(find.text('可用'), findsNothing);
+      expect(find.text('进度'), findsNothing, reason: '进度卡已并入日志卡片');
+    });
+
+    testWidgets('没有数据时提示「选择记录」', (tester) async {
       await tester.pumpWidget(_host(const TestPage()));
       await tester.pump();
 
       expect(find.text('选择记录'), findsOneWidget);
-
-      final latency = tester.widget<OutlinedButton>(
-        find.widgetWithText(OutlinedButton, '延迟测试'),
-      );
-      final speed = tester.widget<OutlinedButton>(
-        find.widgetWithText(OutlinedButton, '速度测试'),
-      );
-      final both = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, '一键测试'),
-      );
-      expect(latency.onPressed, isNull);
-      expect(speed.onPressed, isNull);
-      expect(both.onPressed, isNull);
     });
 
     testWidgets('清空后回到未选择状态', (tester) async {
-      await tester.pumpWidget(_host(const TestPage(initialInput: _bigJson)));
+      await tester.pumpWidget(_page());
       await tester.pump();
 
       await tester.tap(find.text('清空'));
       await tester.pump();
 
       expect(find.text('选择记录'), findsOneWidget);
-      expect(
-        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '一键测试'))
-            .onPressed,
-        isNull,
-      );
     });
 
-    testWidgets('运行中三个测试按钮全部禁用，主按钮文案改为「运行中…」', (tester) async {
+    testWidgets('运行中禁止换记录与清空', (tester) async {
       final state = AppState()..running = true;
-      await tester.pumpWidget(
-        _host(const TestPage(initialInput: _bigJson), state: state),
-      );
+      await tester.pumpWidget(_page(state: state));
       await tester.pump();
 
-      // 运行中主按钮文案变化，但仍必须是禁用态
-      expect(find.text('运行中…'), findsOneWidget);
-
-      final latency = tester.widget<OutlinedButton>(
-        find.widgetWithText(OutlinedButton, '延迟测试'),
-      );
-      final speed = tester.widget<OutlinedButton>(
-        find.widgetWithText(OutlinedButton, '速度测试'),
-      );
-      final both = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, '运行中…'),
-      );
-      expect(latency.onPressed, isNull, reason: '运行中不允许再点延迟测试');
-      expect(speed.onPressed, isNull, reason: '运行中不允许再点速度测试');
-      expect(both.onPressed, isNull, reason: '运行中不允许再点一键测试');
-
-      // 换记录 / 清空同样要锁住，否则中途换输入会让进度和结果对不上
+      // 换记录 / 清空要锁住，否则中途换输入会让进度和结果对不上
       final picker = find.ancestor(
         of: find.textContaining('来自抓取结果'),
         matching: find.byType(InkWell),
@@ -117,7 +106,7 @@ void main() {
     });
 
     testWidgets('不再提供「粘贴候选数据」入口：整页没有任何可编辑输入框', (tester) async {
-      await tester.pumpWidget(_host(const TestPage(initialInput: _bigJson)));
+      await tester.pumpWidget(_page());
       await tester.pump();
 
       expect(find.byType(TextField), findsNothing);
@@ -133,10 +122,8 @@ void main() {
       expect(src, isNot(contains('_InputEditorSheet')));
       expect(src, isNot(contains('完整三阶段')));
       expect(src, isNot(contains('粘贴候选数据')));
-      // 三个模式的实参必须与 pipeline 的 mode 映射一一对应
-      expect(src, contains("_start('latency')"));
-      expect(src, contains("_start('speed')"));
-      expect(src, contains("_start('both')"));
+      expect(src, isNot(contains('_progressCard')),
+          reason: '进度卡整体已删除，进度条改由 LogPanel 画');
     });
 
     testWidgets('日志有内容时渲染在页面上', (tester) async {
@@ -154,6 +141,24 @@ void main() {
       expect(find.byTooltip('复制日志'), findsOneWidget);
     });
 
+    testWidgets('进度条画在日志卡片内部，并显示计数', (tester) async {
+      final state = AppState()
+        ..progressCur = 12
+        ..progressTotal = 553;
+      await tester.pumpWidget(_host(const TestPage(), state: state));
+      await tester.pump();
+
+      final card = find.byKey(const ValueKey('test_page_log_card'));
+      final bar = find.descendant(
+        of: card,
+        matching: find.byType(LinearProgressIndicator),
+      );
+      expect(bar, findsOneWidget, reason: '进度条必须是日志卡片的后代');
+      expect(find.text('12 / 553'), findsOneWidget);
+      // 页面上不能有第二根进度条（旧进度卡已删）
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    });
+
     testWidgets('小屏 + 满载输入时日志区仍占屏高四分之一以上且不越屏', (tester) async {
       tester.view.physicalSize = const Size(1080, 1920);
       tester.view.devicePixelRatio = 3.0;
@@ -161,9 +166,7 @@ void main() {
 
       final state = AppState();
       state.logs.addAll(List.generate(40, (i) => '[速度 ${i + 1}/40] 失败'));
-      await tester.pumpWidget(
-        _host(const TestPage(initialInput: _bigJson), state: state),
-      );
+      await tester.pumpWidget(_page(state: state));
       await tester.pump();
 
       final card = find.byKey(const ValueKey('test_page_log_card'));
