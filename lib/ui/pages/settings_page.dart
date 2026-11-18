@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/file_pick.dart';
 import '../../data/github.dart';
 import '../../state/app_state.dart';
 
@@ -30,6 +31,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _remoteUser;
   late TextEditingController _remotePassword;
   late TextEditingController _remoteKey;
+  late TextEditingController _vless;
 
   bool _loaded = false;
 
@@ -57,6 +59,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _remoteUser = TextEditingController(text: s.remoteUser);
     _remotePassword = TextEditingController(text: s.remotePassword);
     _remoteKey = TextEditingController(text: s.remoteKeyPath);
+    _vless = TextEditingController(text: s.vlessLinks.join('\n'));
     _loaded = true;
   }
 
@@ -66,6 +69,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _sha1, _latency, _speed, _maxLatency, _dial, _download,
       _speedUrl, _httpProxy, _fetchProxy, _ghRepo, _ghToken,
       _remoteHost, _remotePort, _remoteUser, _remotePassword, _remoteKey,
+      _vless,
     ]) {
       c.dispose();
     }
@@ -108,6 +112,7 @@ class _SettingsPageState extends State<SettingsPage> {
     s.remoteUser = _remoteUser.text.trim();
     s.remotePassword = _remotePassword.text;
     s.remoteKeyPath = _remoteKey.text.trim();
+    s.vlessLinks = _lines(_vless.text);
     // 回填规范化结果，让用户看到实际生效的 owner/repo。
     _ghRepo.text = repoSlug;
     await state.saveSettings();
@@ -120,6 +125,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final lineProxyCount = context.watch<AppState>().settings.proxyIps.length;
     if (!_loaded) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(_bind);
@@ -147,6 +153,62 @@ class _SettingsPageState extends State<SettingsPage> {
             // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
             children: [
+              _section(theme, '线路与代理', '抓取与测速的出入口', [
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: TextField(
+                    controller: _vless,
+                    maxLines: 4,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontFamilyFallback: <String>['sans-serif'],
+                      fontSize: 11.5,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'VLESS 链接',
+                      hintText:
+                          'vless://uuid@host:443?type=xhttp&security=tls&...',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text('每行一条，取第一条可解析的',
+                    style: theme.textTheme.labelSmall),
+                const SizedBox(height: 10),
+                // 标题与按钮分两行：360dp 下放进同一行会溢出 40px。
+                Row(
+                  children: [
+                    Text('proxyip', style: theme.textTheme.bodySmall),
+                    const SizedBox(width: 8),
+                    Text('已加载 $lineProxyCount 条',
+                        style: theme.textTheme.labelSmall),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _importProxyIps,
+                      icon: const Icon(Icons.file_open_outlined, size: 16),
+                      label: const Text('加载文件'),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    TextButton(
+                      onPressed: lineProxyCount == 0 ? null : _clearProxyIps,
+                      child: const Text('清空'),
+                    ),
+                  ],
+                ),
+                Text(
+                  '从文件加载，不在此展示内容；使用时自动替换 VLESS 路径里的回源 ip:port。',
+                  style: theme.textTheme.labelSmall,
+                ),
+              ]),
               _section(theme, '并发', '测速并发过高会互相抢带宽，单条读数偏低', [
                 _num('指纹筛选并发', _sha1, hint: '默认 30'),
                 _num('延迟测试并发', _latency, hint: '默认 100'),
@@ -188,6 +250,40 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ),
     );
+  }
+
+  List<String> _lines(String text) =>
+      text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+
+  /// 导入 proxyip 文件（4 列 CSV 或每行 ip:port），只显示条目数、不展示内容。
+  Future<void> _importProxyIps() async {
+    final state = context.read<AppState>();
+    try {
+      final text = await pickTextFile();
+      if (text == null) return; // 用户取消
+      final count = await state.importProxyIps(text);
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已导入 $count 条 proxyip')),
+      );
+    } on FilePickException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入失败：$e')),
+      );
+    } on Object catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入失败：$e')),
+      );
+    }
+  }
+
+  Future<void> _clearProxyIps() async {
+    await context.read<AppState>().clearProxyIps();
+    if (!mounted) return;
+    setState(() {});
   }
 
   Widget _section(ThemeData theme, String title, String hint, List<Widget> children) {
