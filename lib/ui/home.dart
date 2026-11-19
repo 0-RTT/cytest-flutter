@@ -238,10 +238,12 @@ class _HomeTab extends StatelessWidget {
 
 /// 图标方块：主色微光底 + 主色图标，是每一行左侧的视觉锚点。
 class _IconTile extends StatelessWidget {
-  const _IconTile({required this.icon, this.size = 40});
+  const _IconTile({required this.icon});
 
   final IconData icon;
-  final double size;
+
+  /// 尺寸写死 40：主流程行与工具行同高，视觉才对得齐。
+  static const double size = 40;
 
   @override
   Widget build(BuildContext context) {
