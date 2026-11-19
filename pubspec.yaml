@@ -22,6 +22,24 @@ dependency_overrides:
   flutter_inappwebview_android:
     path: packages/flutter_inappwebview_android
 
+  # path_provider_android 2.3.0 起把实现从 MethodChannel 换成 **JNI 直连**
+  # （`androidApplicationContext.as(Context.type)`）。在本项目的 release 包里，
+  # 这套 JNI 在真机上直接抛：
+  #   Exception in Java: java.lang.ClassNotFoundException:
+  #   Didn't find class "Landroid/content/Context;"
+  # 后果是 getApplicationSupportDirectory() 失败 → Paths 全挂 →
+  # 记录页/存档/运行目录都读不出来。
+  #
+  # 2.2.23 是 JNI 迁移前的最后一个版本（Pigeon/MethodChannel，纯 Kotlin 实现），
+  # 行为稳定且不再把 jni / jni_flutter / jni_util 带进构建。
+  # 升级前必须在真机上验证「记录页能列出历史」再放开。
+  path_provider_android: 2.2.23
+
+  # shared_preferences_android 2.5.0 起同样迁到了 JNI（同一个 jni 依赖）。
+  # 2.4.28 是迁移前最后一个版本，钉住它才能真正把 jni 从 APK 里去掉——
+  # 只钉 path_provider 的话 jni 仍会被这条依赖拉回来。
+  shared_preferences_android: 2.4.28
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

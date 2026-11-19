@@ -73,8 +73,14 @@ jobs:
               https://api.github.com/repos/XTLS/Xray-core/releases/latest \
               | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])")
             GO=stable
-            PUB=upgrade
-            echo "模式=latest（解析上游最新稳定版）"
+            # Dart 包永远按 pubspec.lock 安装，**不再 upgrade**。
+            # 2026-11-19 事故：upgrade 把 path_provider_android 拉到 2.3.x
+            # （实现改为 JNI 直连），真机上 FindClass 失败 →
+            # getApplicationSupportDirectory() 抛 ClassNotFoundException →
+            # 记录页一直转圈。CI 的 analyze/test 都发现不了这种「只在真机炸」的问题，
+            # 所以运行时依赖必须是可复现的；升级走「本地 pub upgrade + 真机验证 + 提交 lock」。
+            PUB=get
+            echo "模式=latest（工具链取最新，Dart 包按 lock）"
           fi
           {
             echo "FLUTTER_VERSION=$FL"
@@ -171,8 +177,10 @@ jobs:
           fi
           echo "BUILD_NUMBER=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
-      # latest 模式用 upgrade（在 ^ 约束内取最新），pinned 模式用 get（严格按 lock）
-      - name: Flutter pub (get / upgrade)
+      # 一律按 pubspec.lock 安装（PUB_CMD 在 Resolve 步骤里固定为 get）。
+      # 曾经用 upgrade 追最新，结果把带 JNI 实现的插件装进 release 包、
+      # 真机上路径 API 直接抛异常；analyze/test 无法覆盖这类运行时问题。
+      - name: Flutter pub get
         shell: bash
         run: flutter pub "${PUB_CMD}"
 
