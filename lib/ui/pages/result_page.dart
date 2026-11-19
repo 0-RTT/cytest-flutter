@@ -56,7 +56,7 @@ class _ResultPageState extends State<ResultPage> {
         ? state.settings.vlessLinks.first
         : '';
     Navigator.of(context).push(
-      MaterialPageRoute(
+      GlassRoute(
         builder: (_) => VlessTestPage(
           targets: targets,
           template: template,

@@ -120,7 +120,7 @@ class _TestPageState extends State<TestPage> {
     if (!mounted) return;
     if (ok && state.rows.isNotEmpty) {
       await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const ResultPage()),
+        GlassRoute(builder: (_) => const ResultPage()),
       );
     }
   }

@@ -23,21 +23,20 @@ class CytestApp extends StatelessWidget {
       // 所有 Scaffold 透明：背景统一由 MaterialApp.builder 里的
       // GlassBackground 提供，玻璃卡片才有东西可透。
       scaffoldBackgroundColor: Colors.transparent,
-      // 普通卡片统一走「磨砂」材质：半透明 + 顶部高光描边 + 18 圆角。
-      // 需要实时模糊的静态卡片请显式用 GlassCard(blur: true)。
+      // 普通卡片统一走实心材质：近白填充 + 细描边 + 18 圆角。
+      // 刻意不用毛玻璃：BackdropFilter 每帧 saveLayer，转场时逐帧重算，
+      // 是「点进子页卡顿 + 闪烁」的根源（见 ui/widgets/glass.dart 顶部说明）。
       cardTheme: CardThemeData(
         margin: EdgeInsets.zero,
         elevation: 0,
-        color: light
-            ? Colors.white.withValues(alpha: 0.66)
-            : Colors.white.withValues(alpha: 0.07),
+        color: light ? const Color(0xFFFDFDFB) : const Color(0xFF1D1F1A),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
           side: BorderSide(
             color: light
-                ? Colors.white.withValues(alpha: 0.7)
-                : Colors.white.withValues(alpha: 0.12),
-            width: 0.6,
+                ? const Color(0xFF000000).withValues(alpha: 0.07)
+                : Colors.white.withValues(alpha: 0.08),
+            width: 0.8,
           ),
         ),
       ),
@@ -51,6 +50,20 @@ class CytestApp extends StatelessWidget {
         color: scheme.outlineVariant.withValues(alpha: 0.45),
         thickness: 0.5,
         space: 0.5,
+      ),
+      // 转场：自定义轻量淡入（260ms）。系统默认的 Zoom 会整页缩放并加阴影，
+      // 玻璃层每帧被重采样，是「点进子页卡顿 + 闪烁」的主要来源。
+      // 本 App 只发 Android（arm64），所以四个平台统一走同一套转场，
+      // 不引 cupertino 依赖，也就不存在"两套转场代码各养一套"的问题。
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: GlassPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: GlassPageTransitionsBuilder(),
+          TargetPlatform.linux: GlassPageTransitionsBuilder(),
+          TargetPlatform.windows: GlassPageTransitionsBuilder(),
+          TargetPlatform.iOS: GlassPageTransitionsBuilder(),
+          TargetPlatform.macOS: GlassPageTransitionsBuilder(),
+        },
       ),
       // 输入框：半透填充 + 聚焦时主色描边，去掉默认的重边框。
       inputDecorationTheme: InputDecorationTheme(

@@ -137,7 +137,7 @@ class _VlessTestPageState extends State<VlessTestPage> {
       return;
     }
     Navigator.of(context).push(
-      MaterialPageRoute(
+      GlassRoute(
         builder: (_) => PublishPage(
           targets: targets,
           template: widget.template,

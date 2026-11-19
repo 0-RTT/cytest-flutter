@@ -31,31 +31,35 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _index,
-        children: const [
-          _HomeTab(),
-          SettingsPage(),
-        ],
-      ),
-      // 底部导航也是一块玻璃：磨砂 + 顶部高光线，页面内容可透上来。
-      bottomNavigationBar: GlassBar(
-        child: NavigationBar(
-          selectedIndex: _index,
-          onDestinationSelected: (i) => setState(() => _index = i),
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.home_outlined),
-              selectedIcon: Icon(Icons.home_rounded),
-              label: '首页',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.tune_outlined),
-              selectedIcon: Icon(Icons.tune_rounded),
-              label: '设置',
-            ),
+    // 根路由不走 GlassRoute，这里自己铺一层同样的渐变底：
+    // 底部导航栏也落在这一层之上，导航栏的磨砂才有东西可透。
+    return GlassBackground(
+      child: Scaffold(
+        body: IndexedStack(
+          index: _index,
+          children: const [
+            _HomeTab(),
+            SettingsPage(),
           ],
+        ),
+        // 底部导航也是一块玻璃：磨砂 + 顶部高光线，页面内容可透上来。
+        bottomNavigationBar: GlassBar(
+          child: NavigationBar(
+            selectedIndex: _index,
+            onDestinationSelected: (i) => setState(() => _index = i),
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home_rounded),
+                label: '首页',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.tune_outlined),
+                selectedIcon: Icon(Icons.tune_rounded),
+                label: '设置',
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -106,7 +110,6 @@ class _HomeTab extends StatelessWidget {
                     _label(theme, '主流程'),
                     const SizedBox(height: 8),
                     GlassCard(
-                      blur: true,
                       padding: EdgeInsets.zero,
                       child: Column(
                         children: [
@@ -142,7 +145,6 @@ class _HomeTab extends StatelessWidget {
                     _label(theme, '工具'),
                     const SizedBox(height: 8),
                     GlassCard(
-                      blur: true,
                       padding: EdgeInsets.zero,
                       child: Column(
                         children: [
@@ -232,7 +234,7 @@ class _HomeTab extends StatelessWidget {
       );
 
   void _push(BuildContext context, Widget page) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+    Navigator.of(context).push(GlassRoute(builder: (_) => page));
   }
 }
 

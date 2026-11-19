@@ -218,7 +218,7 @@ class _FetchPageState extends State<FetchPage> {
     final body = _payload;
     if (body == null) return;
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => TestPage(initialInput: body)),
+      GlassRoute(builder: (_) => TestPage(initialInput: body)),
     );
   }
 
@@ -454,7 +454,7 @@ class _FetchPageState extends State<FetchPage> {
                           ),
                           TextButton(
                             onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute(
+                              GlassRoute(
                                 builder: (_) => const TestPage(),
                               ),
                             ),

@@ -76,7 +76,7 @@ class _HistoryPageState extends State<HistoryPage> {
       if (!mounted) return;
       // 载入的是该次测试的 rows，直接看结果页；TestPage 是重新跑测试的地方。
       Navigator.of(context)
-          .push(MaterialPageRoute(builder: (_) => const ResultPage()))
+          .push(GlassRoute(builder: (_) => const ResultPage()))
           .then((_) => _reload());
     } catch (e) {
       if (mounted) {
@@ -91,7 +91,7 @@ class _HistoryPageState extends State<HistoryPage> {
       final body = await History.readArchive(rec.id);
       if (!mounted) return;
       await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => TestPage(initialInput: body)),
+        GlassRoute(builder: (_) => TestPage(initialInput: body)),
       );
       await _reload();
     } catch (e) {
