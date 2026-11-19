@@ -12,9 +12,13 @@ import 'widgets/glass.dart';
 
 /// 底部两 Tab：首页 / 设置。
 ///
-/// 首页内容保持原样：主流程 3 步 + 工具 2 项，文案与跳转一字不改。
-/// 换的只是材质——液态玻璃：渐变底上浮着半透明卡片，
-/// 按下有缩放反馈，顶栏 / 底栏是磨砂玻璃。
+/// 首页内容与之前完全一致：主流程 3 步 + 工具 2 项，文案与跳转不改。
+///
+/// 排布换了思路：不再「三张小卡并排 + Spacer 硬撑」，而是两组**整宽玻璃卡**，
+/// 每行 = 图标 + 标题 / 说明 + 箭头，主流程行额外带序号。
+/// - 行式排布没有横向挤压，360dp 窄屏也不必压缩副标题；
+/// - 内容整体在可用高度里垂直居中，屏幕再高也不会「上挤下空」；
+/// - 与设置页同一套分组语言，两个 Tab 的视觉是连续的。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -83,89 +87,100 @@ class _HomeTab extends StatelessWidget {
       ),
       body: SafeArea(
         top: false,
-        child: Padding(
-          // bottom 14 = 包底：卡片圆角与底部导航之间留出呼吸。
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _label(theme, '主流程'),
-              const SizedBox(height: 8),
-              // 小模块：固定高度，不随屏高拉伸（拉成细长条很难看）。
-              // 首页是静止页面，这里开实时模糊；列表页请用默认 blur: false。
-              SizedBox(
-                height: 120,
-                child: Row(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // 内容少（5 行）但屏幕高度差异大：
+            // - 高屏：整块内容垂直居中，上下留白均等，不再"上挤下空"；
+            // - 矮屏 / 横屏：内容超过可用高度时自动变成可滚动，不会溢出。
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: (constraints.maxHeight - 24).clamp(0, 9999),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
-                      child: _FlowStep(
-                        step: 1,
-                        icon: Icons.cloud_download_outlined,
-                        title: '获取数据',
-                        subtitle: 'Censys 拉候选',
-                        onTap: () => _push(context, const FetchPage()),
+                    const SizedBox(height: 4),
+                    _label(theme, '主流程'),
+                    const SizedBox(height: 8),
+                    GlassCard(
+                      blur: true,
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          _StepRow(
+                            step: 1,
+                            icon: Icons.cloud_download_outlined,
+                            title: '获取数据',
+                            subtitle: 'Censys 拉候选',
+                            onTap: () => _push(context, const FetchPage()),
+                          ),
+                          _divider(theme),
+                          _StepRow(
+                            step: 2,
+                            icon: Icons.science_outlined,
+                            title: '本地测试',
+                            subtitle: '延迟 / 速度',
+                            onTap: () => _push(context, const TestPage()),
+                          ),
+                          _divider(theme),
+                          _StepRow(
+                            step: 3,
+                            icon: Icons.bar_chart_outlined,
+                            title: '结果',
+                            subtitle: state.rows.isEmpty
+                                ? '暂无数据'
+                                : '${state.usableCount} 条可用',
+                            onTap: () => _push(context, const ResultPage()),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _FlowStep(
-                        step: 2,
-                        icon: Icons.science_outlined,
-                        title: '本地测试',
-                        subtitle: '延迟 / 速度',
-                        onTap: () => _push(context, const TestPage()),
+                    const SizedBox(height: 20),
+                    _label(theme, '工具'),
+                    const SizedBox(height: 8),
+                    GlassCard(
+                      blur: true,
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          _ToolRow(
+                            icon: Icons.history,
+                            title: '记录',
+                            subtitle: '历史与存档',
+                            onTap: () => _push(context, const HistoryPage()),
+                          ),
+                          _divider(theme),
+                          _ToolRow(
+                            icon: Icons.dns_outlined,
+                            title: '远程执行',
+                            subtitle: '服务器跑三阶段',
+                            onTap: () => _push(context, const RemotePage()),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _FlowStep(
-                        step: 3,
-                        icon: Icons.bar_chart_outlined,
-                        title: '结果',
-                        subtitle: state.rows.isEmpty
-                            ? '暂无数据'
-                            : '${state.usableCount} 条可用',
-                        onTap: () => _push(context, const ResultPage()),
-                      ),
-                    ),
+                    const SizedBox(height: 4),
                   ],
                 ),
               ),
-              // 两块内容之间靠弹性留白分配剩余高度，而不是把卡片拉长。
-              const Spacer(flex: 2),
-              _label(theme, '工具'),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 96,
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _ToolTile(
-                        icon: Icons.history,
-                        title: '记录',
-                        subtitle: '历史与存档',
-                        onTap: () => _push(context, const HistoryPage()),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _ToolTile(
-                        icon: Icons.dns_outlined,
-                        title: '远程执行',
-                        subtitle: '服务器跑三阶段',
-                        onTap: () => _push(context, const RemotePage()),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const Spacer(flex: 3),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
   }
+
+  /// 行间分割线：从图标右侧起画，不切断左侧图标列。
+  Widget _divider(ThemeData theme) => Divider(
+        height: 0.5,
+        thickness: 0.5,
+        indent: 64,
+        endIndent: 14,
+        color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+      );
 
   Widget _lineStatus(ThemeData theme, AppState state) {
     final running = state.xray.running;
@@ -206,7 +221,7 @@ class _HomeTab extends StatelessWidget {
   }
 
   Widget _label(ThemeData theme, String text) => Padding(
-        padding: const EdgeInsets.only(top: 2, left: 2),
+        padding: const EdgeInsets.only(left: 4),
         child: Text(
           text,
           style: theme.textTheme.labelMedium?.copyWith(
@@ -221,10 +236,35 @@ class _HomeTab extends StatelessWidget {
   }
 }
 
-/// 主流程步骤卡：左上角序号 + 右上角图标，底部标题与副标题。
-/// 玻璃材质 + 按下缩放（blur 只在首页这种静止页面开）。
-class _FlowStep extends StatelessWidget {
-  const _FlowStep({
+/// 图标方块：主色微光底 + 主色图标，是每一行左侧的视觉锚点。
+class _IconTile extends StatelessWidget {
+  const _IconTile({required this.icon, this.size = 40});
+
+  final IconData icon;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(size * 0.3),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.10),
+          width: 0.5,
+        ),
+      ),
+      child: Icon(icon, size: size * 0.48, color: theme.colorScheme.primary),
+    );
+  }
+}
+
+/// 主流程行：序号徽标 + 图标 + 标题 / 说明 + 箭头。
+class _StepRow extends StatelessWidget {
+  const _StepRow({
     required this.step,
     required this.icon,
     required this.title,
@@ -241,62 +281,77 @@ class _FlowStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GlassCard(
-      blur: true,
+    return InkWell(
       onTap: onTap,
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 18,
-                height: 18,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: theme.colorScheme.primary,
-                ),
-                child: Text(
-                  '$step',
-                  style: TextStyle(
-                    fontSize: 11,
-                    height: 1,
-                    fontWeight: FontWeight.w500,
-                    color: theme.colorScheme.onPrimary,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
+        child: Row(
+          children: [
+            _IconTile(icon: icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      // 序号用小程序徽标，和标题同一行：一眼看出步骤顺序，
+                      // 又不像「大数字」那样抢走标题的份量。
+                      Container(
+                        width: 16,
+                        height: 16,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: theme.colorScheme.primary,
+                        ),
+                        child: Text(
+                          '$step',
+                          style: TextStyle(
+                            fontSize: 10,
+                            height: 1,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 7),
+                      Flexible(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ),
-              const Spacer(),
-              Icon(icon, size: 20, color: theme.colorScheme.primary),
-            ],
-          ),
-          const Spacer(),
-          Text(title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall),
-          const SizedBox(height: 2),
-          Flexible(
-            child: Text(
-              subtitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right,
+                size: 20, color: theme.colorScheme.outline),
+          ],
+        ),
       ),
     );
   }
 }
 
-/// 工具小卡：图标方块 + 标题 + 说明，与步骤卡同一体量。
-class _ToolTile extends StatelessWidget {
-  const _ToolTile({
+/// 工具行：与主流程行同构，只是没有序号。
+class _ToolRow extends StatelessWidget {
+  const _ToolRow({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -311,40 +366,40 @@ class _ToolTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return GlassCard(
-      blur: true,
+    return InkWell(
       onTap: onTap,
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child:
-                Icon(icon, size: 17, color: theme.colorScheme.primary),
-          ),
-          const Spacer(),
-          Text(title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall),
-          const SizedBox(height: 1),
-          Flexible(
-            child: Text(
-              subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
+        child: Row(
+          children: [
+            _IconTile(icon: icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right,
+                size: 20, color: theme.colorScheme.outline),
+          ],
+        ),
       ),
     );
   }

@@ -47,6 +47,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('首页高屏垂直居中：上下留白均等，不再上挤下空', (tester) async {
+    tester.view.physicalSize = const Size(360, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_host(const HomeShell()));
+    await tester.pump();
+
+    // 内容块上沿 = 「主流程」标签，下沿 = 最后一行「远程执行」
+    final top = tester.getRect(find.text('主流程')).top;
+    final bottom = tester.getRect(find.text('远程执行')).bottom;
+    // 可用区域：AppBar 下沿 ~ 底部导航上沿
+    final appBarBottom = tester.getRect(find.byType(AppBar)).bottom;
+    final navTop = tester.getRect(find.byType(NavigationBar)).top;
+
+    final gapTop = top - appBarBottom;
+    final gapBottom = navTop - bottom;
+
+    // 居中意味着两侧留白接近（含标签/内边距的固有偏差，给 40px 容差）。
+    expect((gapTop - gapBottom).abs(), lessThan(40),
+        reason: '上下留白应接近：上 $gapTop / 下 $gapBottom');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('设置页包含线路与 proxyip 配置，且不展示 proxyip 内容', (tester) async {
     tester.view.physicalSize = const Size(360, 900);
     tester.view.devicePixelRatio = 1.0;
