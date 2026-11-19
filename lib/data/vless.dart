@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../core/idna.dart';
+
 /// 与 Android VlessParser / 桌面端 parseVless 对齐。
 class Vless {
   final String uuid;
@@ -173,6 +175,13 @@ List<ProxyIp> parseProxyCsv(String text) {
   return out;
 }
 
+/// 出站真正会用的 SNI（已归一到 ASCII）：sni 参数 → ws host → 空。
+///
+/// 单独抽出来是为了「测速日志里打印实际 SNI」——排查「全部 TLS 握手失败」
+/// 时，第一眼要看的就是内核到底拿哪个域名去握的手。
+String effectiveSni(Vless v) =>
+    asciiHostLenient(v.sni.isNotEmpty ? v.sni : v.wsHost);
+
 /// 构造 Xray 配置，字段与桌面端 buildXrayConfig 逐项对齐。
 Map<String, dynamic> buildXrayConfig(Vless v, int localPort, {ProxyIp? proxy}) {
   var path = v.wsPath;
@@ -186,7 +195,10 @@ Map<String, dynamic> buildXrayConfig(Vless v, int localPort, {ProxyIp? proxy}) {
   };
 
   if (v.security == 'tls') {
-    final sni = v.sni.isNotEmpty ? v.sni : v.wsHost;
+    // SNI 必须是 ASCII：Go 的 crypto/tls 不做 IDNA 转换，把 `е.eu.org`
+    // （西里尔 е）原样发出去会被 CDN 当成非法 SNI 拒绝，整条链路
+    // TLS 握手失败（用户看到的就是「所有节点 TLS 握手失败」）。
+    final sni = effectiveSni(v);
     final tls = <String, dynamic>{};
     if (sni.isNotEmpty) tls['serverName'] = sni;
     if (v.alpn.isNotEmpty) {
@@ -203,8 +215,10 @@ Map<String, dynamic> buildXrayConfig(Vless v, int localPort, {ProxyIp? proxy}) {
   switch (v.network) {
     case 'ws':
       final ws = <String, dynamic>{'path': path};
-      if (v.wsHost.isNotEmpty) {
-        ws['headers'] = {'Host': v.wsHost};
+      // Host 头同样只允许 ASCII（RFC 7230）。
+      final wsHost = asciiHostLenient(v.wsHost);
+      if (wsHost.isNotEmpty) {
+        ws['headers'] = {'Host': wsHost};
       }
       stream['wsSettings'] = ws;
       break;
@@ -238,7 +252,7 @@ Map<String, dynamic> buildXrayConfig(Vless v, int localPort, {ProxyIp? proxy}) {
         'settings': {
           'vnext': [
             {
-              'address': v.host,
+              'address': asciiHostLenient(v.host),
               'port': v.port,
               'users': [
                 {'id': v.uuid, 'encryption': 'none'}

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../data/link_result_sort.dart';
 import '../../data/link_test.dart';
 import '../../data/node_template.dart';
+import '../../data/vless.dart';
 import '../../state/app_state.dart';
 import '../widgets/glass.dart';
 import '../widgets/log_panel.dart';
@@ -81,9 +82,25 @@ class _VlessTestPageState extends State<VlessTestPage> {
       return;
     }
     final state = context.read<AppState>();
+    // 把出站参数写进日志：排查「全部 TLS 握手失败」时，第一眼要看的就是
+    // 内核到底拿哪个 SNI、哪种传输去握的手（IDN 会被自动转成 punycode）。
+    final first = Vless.tryParse(links.first);
+    if (first != null) {
+      final sni = effectiveSni(first);
+      state.pushLog('▶ 出站：${first.network} · ${first.security} · '
+          'SNI=${sni.isEmpty ? '（空，内核用节点地址）' : sni} · '
+          '节点 ${first.host}:${first.port}');
+    }
     setState(() => _selectionReady = false);
     final ok = await state.runLinkTest(links, mode: LinkTestMode.auto);
     if (!mounted) return;
+    final fails = state.linkResults
+        .where((r) => (r.error ?? '').startsWith('TLS 握手失败'))
+        .length;
+    if (fails > 0 && fails == state.linkResults.length) {
+      state.pushLog('✗ 全部 TLS 握手失败：节点端口不是 TLS、或模板的 sni/host '
+          '与该节点不匹配。上面那行「出站」标了本次实际使用的 SNI。');
+    }
     setState(() {
       _applyDefaultSelection(state.linkResults);
       _selectionReady = true;

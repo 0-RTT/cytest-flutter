@@ -67,6 +67,38 @@ bool _isAllowedUnicode(int codePoint) {
 
 /// 把主机名（可含多个 label）转成全 ASCII 形式。
 ///
+/// 宽松版：尽力把主机名转 ASCII，转换不了就原样返回。
+///
+/// 用在「给第三方内核写配置」的边界（Xray 的 `serverName` / WS 的 `Host` 头、
+/// mihomo 的 `servername`）：
+/// - Go 的 `crypto/tls` **不做 IDNA 转换**，`е.eu.org`（西里尔 е）会被当作
+///   SNI 原样发出去，CDN 直接拒绝 → 整条链路 TLS 握手失败；
+/// - HTTP 的 Host 头同样只允许 ASCII（RFC 7230）。
+///
+/// 所以「能转就转」比「抛异常拒绝」更合适：转不了（Emoji 之类）说明这条链接
+/// 本来就不合法，留给内核报错即可，不要在这里中断整批测试。
+String asciiHostLenient(String host) {
+  var h = host.trim();
+  if (h.isEmpty) return h;
+  // Dart 的 `Uri.parse` 会把非 ASCII 主机百分号编码（`е.eu.org` →
+  // `%D0%B5.eu.org`）。链接里读出来的 host / sni / host 参数就是这种形态，
+  // 必须先解码，否则 SNI 里会带 `%`，同样是非法主机名。
+  if (h.contains('%')) {
+    try {
+      h = Uri.decodeComponent(h);
+    } on Object {
+      // 非法百分号序列：保持原样，交给内核报错。
+    }
+  }
+  // 全 ASCII（含 IP 字面量）原样返回，省一次转换，也不改大小写。
+  if (h.codeUnits.every((c) => c < 128)) return h;
+  try {
+    return idnaToAscii(h);
+  } on Object {
+    return h;
+  }
+}
+
 /// 规则（对齐 IDNA2008 的常用子集）：
 /// - 已经是 ASCII 的 label **原样返回，不改变大小写**（K1：全 ASCII 原样返回）；
 /// - 非 ASCII label 先做最小 nameprep（小写折叠），再 punycode 编码并加 `xn--` 前缀；

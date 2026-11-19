@@ -7,6 +7,7 @@
 /// （例如中文名必须加引号、空 Map 必须整段省略）。这里照搬同一套规则。
 library;
 
+import '../core/idna.dart';
 import 'vless.dart';
 
 /// 生成选项，默认值与生成器 HTML 的勾选状态一致（全部开启）。
@@ -231,7 +232,9 @@ Map<String, Object> _parseLink(String line, int index, MihomoOptions options) {
   final fingerprint = (q['fp'] ?? q['client-fingerprint'] ?? '').isNotEmpty
       ? (q['fp'] ?? q['client-fingerprint'])!
       : (security == 'reality' ? 'chrome' : '');
-  final hostHeader = hostParam.isNotEmpty ? hostParam : sni;
+  // Host 头与 SNI 都必须是 ASCII：客户端内核不会替我们做 IDNA 转换，
+  // 把 `е.eu.org`（西里尔 е）写进配置会被 CDN 拒绝（TLS 握手失败）。
+  final hostHeader = asciiHostLenient(hostParam.isNotEmpty ? hostParam : sni);
   final insecure = _truthy(q['allowinsecure']) ||
       _truthy(q['insecure']) ||
       _truthy(q['skip-cert-verify']);
@@ -239,7 +242,7 @@ Map<String, Object> _parseLink(String line, int index, MihomoOptions options) {
   final p = <String, Object>{
     'name': v.name.isNotEmpty ? v.name : '节点-$index',
     'type': 'vless',
-    'server': v.host,
+    'server': asciiHostLenient(v.host),
     'port': _toPort('${v.port}', 443),
     'uuid': v.uuid,
   };
@@ -249,7 +252,8 @@ Map<String, Object> _parseLink(String line, int index, MihomoOptions options) {
   p['tls'] = tls;
 
   if (tls) {
-    if (sni.isNotEmpty) p['servername'] = sni;
+    final asciiSni = asciiHostLenient(sni);
+    if (asciiSni.isNotEmpty) p['servername'] = asciiSni;
     if (fingerprint.isNotEmpty) p['client-fingerprint'] = fingerprint;
     // WS over TLS 未指定 alpn 时默认 http/1.1：h2 会阻断 WS 的 Upgrade
     final alpn = _splitCsv(q['alpn']);
