@@ -9,6 +9,7 @@ import '../../core/paths.dart';
 import '../../data/candidates.dart';
 import '../../data/history.dart';
 import '../../state/app_state.dart';
+import '../widgets/glass.dart';
 import '../widgets/log_panel.dart';
 import 'result_page.dart';
 
@@ -163,8 +164,8 @@ class _TestPageState extends State<TestPage> {
         : 0.0;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('本地测试'),
+      appBar: GlassAppBar(
+        title: '本地测试',
         actions: [
           if (state.running)
             TextButton(
@@ -229,11 +230,10 @@ class _TestPageState extends State<TestPage> {
     );
   }
 
-  Widget _inputCard(ThemeData theme, AppState state, bool hasTargets) => Card(
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-          child: Column(
+  Widget _inputCard(ThemeData theme, AppState state, bool hasTargets) =>
+      GlassCard(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
@@ -294,7 +294,6 @@ class _TestPageState extends State<TestPage> {
               ),
               const SizedBox(height: 10),
             ],
-          ),
         ),
       );
 

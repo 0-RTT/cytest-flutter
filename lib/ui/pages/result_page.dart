@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/app_state.dart';
+import '../widgets/glass.dart';
 import 'vless_test_page.dart';
 
 class ResultPage extends StatefulWidget {
@@ -71,7 +72,7 @@ class _ResultPageState extends State<ResultPage> {
 
     if (state.rows.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: const Text('结果')),
+        appBar: const GlassAppBar(title: '结果'),
         // 底部 SafeArea：Scaffold 的 body 不避让系统手势条 / 三键导航。
         body: SafeArea(
           top: false,
@@ -86,8 +87,8 @@ class _ResultPageState extends State<ResultPage> {
     final picked = _targets(state).length;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('结果 · ${state.rows.length} 条'),
+      appBar: GlassAppBar(
+        titleWidget: Text('结果 · ${state.rows.length} 条'),
         actions: [
           TextButton.icon(
             onPressed: picked == 0 ? null : _openTest,
@@ -149,9 +150,14 @@ class _ResultPageState extends State<ResultPage> {
               ),
             ),
             Expanded(
-              child: ListView.separated(
-                // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
-                padding: const EdgeInsets.only(bottom: 24),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+                child: GlassCard(
+                  shadow: false,
+                  padding: EdgeInsets.zero,
+                  child: ListView.separated(
+                    // 底部 12 让最后一行远离卡片圆角。
+                    padding: const EdgeInsets.only(bottom: 12),
                 itemCount: state.rows.length,
                 separatorBuilder: (_, __) => const Divider(height: 1),
                 itemBuilder: (_, i) {
@@ -225,6 +231,8 @@ class _ResultPageState extends State<ResultPage> {
                         : const SizedBox.shrink(),
                   );
                 },
+              ),
+                ),
               ),
             ),
           ],

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'glass.dart';
+
 /// 通用日志/输出面板：标题栏 + 独立滚动的内容区。
 ///
 /// 这是页面底部的**独立模块**，调用方负责两件事：
@@ -7,6 +9,9 @@ import 'package:flutter/material.dart';
 ///    否则会形成内外双重滚动，日志区还会被挤到首屏外。
 /// 2. 外层 `Padding` 必须给 `bottom` 留白（一般 14）——否则卡片底边贴着
 ///    屏幕物理边缘，圆角和最后一行会糊在屏幕上，看着像"没包底"。
+///
+/// 材质：磨砂玻璃（半透明 + 高光描边），**不开** BackdropFilter——
+/// 日志是高频重绘表面，实时模糊是白烧电。
 class LogPanel extends StatelessWidget {
   const LogPanel({
     super.key,
@@ -49,16 +54,11 @@ class LogPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: EdgeInsets.zero,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-          width: 0.5,
-        ),
-      ),
+    final light = theme.brightness == Brightness.light;
+    return GlassCard(
+      radius: Glass.smallRadius,
+      shadow: false,
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -133,7 +133,12 @@ class LogPanel extends StatelessWidget {
           Expanded(
             child: Container(
               width: double.infinity,
-              color: theme.colorScheme.surfaceContainerHighest,
+              // 日志区：比卡片更深一层的半透明底，滚动的文字在玻璃里
+              // 有自己的「内腔」，不会和卡面文字糊在一起。
+              color: light
+                  ? theme.colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.55)
+                  : Colors.black.withValues(alpha: 0.28),
               child: lines.isEmpty
                   ? Center(
                       child: Text(emptyText,

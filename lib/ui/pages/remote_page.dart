@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/remote.dart';
 import '../../state/app_state.dart';
+import '../widgets/glass.dart';
 import '../widgets/log_panel.dart';
 
 class RemotePage extends StatefulWidget {
@@ -97,8 +98,8 @@ class _RemotePageState extends State<RemotePage> {
     final s = context.watch<AppState>().settings;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('远程执行'),
+      appBar: GlassAppBar(
+        title: '远程执行',
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 10),

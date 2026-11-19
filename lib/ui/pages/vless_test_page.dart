@@ -6,6 +6,7 @@ import '../../data/link_result_sort.dart';
 import '../../data/link_test.dart';
 import '../../data/node_template.dart';
 import '../../state/app_state.dart';
+import '../widgets/glass.dart';
 import '../widgets/log_panel.dart';
 import 'publish_page.dart';
 
@@ -186,8 +187,8 @@ class _VlessTestPageState extends State<VlessTestPage> {
     final selectedCount = _selectedTargets(state.linkResults).length;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('测试'),
+      appBar: GlassAppBar(
+        title: '测试',
         actions: [
           if (running)
             TextButton(
@@ -253,17 +254,19 @@ class _VlessTestPageState extends State<VlessTestPage> {
           ],
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
-          child: FilledButton.icon(
-            key: const ValueKey('vless_test_push'),
-            onPressed: running || _invalid || selectedCount == 0
-                ? null
-                : () => _push(state.linkResults),
-            icon: const Icon(Icons.send_outlined, size: 18),
-            label: Text('推送 ($selectedCount)'),
+      bottomNavigationBar: GlassBar(
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+            child: FilledButton.icon(
+              key: const ValueKey('vless_test_push'),
+              onPressed: running || _invalid || selectedCount == 0
+                  ? null
+                  : () => _push(state.linkResults),
+              icon: const Icon(Icons.send_outlined, size: 18),
+              label: Text('推送 ($selectedCount)'),
+            ),
           ),
         ),
       ),
@@ -277,16 +280,14 @@ class _VlessTestPageState extends State<VlessTestPage> {
             r.state == ProbeState.failed ||
             r.state == ProbeState.cancelled)
         .length;
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.science_outlined,
+    return GlassCard(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.science_outlined,
                     size: 17, color: theme.colorScheme.primary),
                 const SizedBox(width: 6),
                 Text('VLESS 测试', style: theme.textTheme.titleSmall),
@@ -338,8 +339,7 @@ class _VlessTestPageState extends State<VlessTestPage> {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 
   Widget _toolbar(
@@ -389,9 +389,9 @@ class _VlessTestPageState extends State<VlessTestPage> {
             style: TextStyle(color: theme.hintColor)),
       );
     }
-    return Card(
-      margin: EdgeInsets.zero,
-      clipBehavior: Clip.antiAlias,
+    return GlassCard(
+      shadow: false,
+      padding: EdgeInsets.zero,
       child: ListView.separated(
         // 底部 12 让最后一行远离卡片圆角，不再像被切掉。
         padding: const EdgeInsets.only(bottom: 12),

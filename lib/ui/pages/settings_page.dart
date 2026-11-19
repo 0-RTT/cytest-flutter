@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/file_pick.dart';
 import '../../data/github.dart';
 import '../../state/app_state.dart';
+import '../widgets/glass.dart';
 
 /// 设置页：参考系统「更多」页的分组列表形态。
 ///
@@ -138,7 +139,10 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('设置')),
+      appBar: const GlassAppBar(
+        title: '设置',
+        automaticallyImplyLeading: false,
+      ),
       body: SafeArea(
         top: false,
         child: Form(
@@ -309,10 +313,13 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       );
 
-  /// 卡片统一走 Card（白底、18 圆角、无阴影），与首页同一套材质。
-  Widget _card(List<Widget> rows) => Card(
-        clipBehavior: Clip.antiAlias,
-        child: Column(children: rows),
+  /// 分组卡：玻璃材质。列表页会滚动，不开实时模糊，
+  /// 半透明填充在渐变底上已经足够「玻璃」。
+  Widget _card(List<Widget> rows) => GlassCard(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(Glass.cardRadius - 1),
+          child: Column(children: rows),
+        ),
       );
 
   Widget _row(
@@ -367,23 +374,16 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _saveBar(ThemeData theme) => Container(
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          border: Border(
-            top: BorderSide(
-              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-              width: 0.5,
+  Widget _saveBar(ThemeData theme) => GlassBar(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          child: SizedBox(
+            height: 46,
+            child: FilledButton.icon(
+              onPressed: _save,
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: const Text('保存'),
             ),
-          ),
-        ),
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-        child: SizedBox(
-          height: 46,
-          child: FilledButton.icon(
-            onPressed: _save,
-            icon: const Icon(Icons.check_rounded, size: 18),
-            label: const Text('保存'),
           ),
         ),
       );

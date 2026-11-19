@@ -8,12 +8,13 @@ import 'pages/remote_page.dart';
 import 'pages/result_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/test_page.dart';
+import 'widgets/glass.dart';
 
 /// 底部两 Tab：首页 / 设置。
 ///
-/// 首页内容保持原样：主流程 3 步 + 工具 2 项。
-/// 只借用参考页的视觉语言——暖灰底、纯白圆角卡片、无描边无阴影、深青点缀——
-/// 并让两块内容按屏高弹性铺满，不再全挤在页面上半段。
+/// 首页内容保持原样：主流程 3 步 + 工具 2 项，文案与跳转一字不改。
+/// 换的只是材质——液态玻璃：渐变底上浮着半透明卡片，
+/// 按下有缩放反馈，顶栏 / 底栏是磨砂玻璃。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -29,26 +30,29 @@ class _HomeShellState extends State<HomeShell> {
     return Scaffold(
       body: IndexedStack(
         index: _index,
-        children: [
-          const _HomeTab(),
-          const SettingsPage(),
+        children: const [
+          _HomeTab(),
+          SettingsPage(),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: '首页',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.tune_outlined),
-            selectedIcon: Icon(Icons.tune_rounded),
-            label: '设置',
-          ),
-        ],
+      // 底部导航也是一块玻璃：磨砂 + 顶部高光线，页面内容可透上来。
+      bottomNavigationBar: GlassBar(
+        child: NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: (i) => setState(() => _index = i),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home_rounded),
+              label: '首页',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.tune_outlined),
+              selectedIcon: Icon(Icons.tune_rounded),
+              label: '设置',
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -63,8 +67,9 @@ class _HomeTab extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('cytest'),
+      appBar: GlassAppBar(
+        title: 'cytest',
+        automaticallyImplyLeading: false,
         actions: [
           _lineStatus(theme, state),
           IconButton(
@@ -86,9 +91,10 @@ class _HomeTab extends StatelessWidget {
             children: [
               _label(theme, '主流程'),
               const SizedBox(height: 8),
-              // 主流程与工具按屏高 5:3 分配，卡片高度跟屏幕走，不留半屏空白。
-              Expanded(
-                flex: 5,
+              // 小模块：固定高度，不随屏高拉伸（拉成细长条很难看）。
+              // 首页是静止页面，这里开实时模糊；列表页请用默认 blur: false。
+              SizedBox(
+                height: 120,
                 child: Row(
                   children: [
                     Expanded(
@@ -125,24 +131,25 @@ class _HomeTab extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
+              // 两块内容之间靠弹性留白分配剩余高度，而不是把卡片拉长。
+              const Spacer(flex: 2),
               _label(theme, '工具'),
               const SizedBox(height: 8),
-              Expanded(
-                flex: 3,
-                child: Column(
+              SizedBox(
+                height: 96,
+                child: Row(
                   children: [
                     Expanded(
-                      child: _ToolRow(
+                      child: _ToolTile(
                         icon: Icons.history,
                         title: '记录',
                         subtitle: '历史与存档',
                         onTap: () => _push(context, const HistoryPage()),
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: _ToolRow(
+                      child: _ToolTile(
                         icon: Icons.dns_outlined,
                         title: '远程执行',
                         subtitle: '服务器跑三阶段',
@@ -152,6 +159,7 @@ class _HomeTab extends StatelessWidget {
                   ],
                 ),
               ),
+              const Spacer(flex: 3),
             ],
           ),
         ),
@@ -166,8 +174,8 @@ class _HomeTab extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
         decoration: BoxDecoration(
           color: running
-              ? theme.colorScheme.primaryContainer
-              : theme.colorScheme.surfaceContainerHighest,
+              ? theme.colorScheme.primary.withValues(alpha: 0.14)
+              : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(20),
         ),
         child: Row(
@@ -187,7 +195,7 @@ class _HomeTab extends StatelessWidget {
               running ? '线路已连接' : '线路未启动',
               style: theme.textTheme.labelSmall?.copyWith(
                 color: running
-                    ? theme.colorScheme.onPrimaryContainer
+                    ? theme.colorScheme.primary
                     : theme.colorScheme.onSurfaceVariant,
               ),
             ),
@@ -214,6 +222,7 @@ class _HomeTab extends StatelessWidget {
 }
 
 /// 主流程步骤卡：左上角序号 + 右上角图标，底部标题与副标题。
+/// 玻璃材质 + 按下缩放（blur 只在首页这种静止页面开）。
 class _FlowStep extends StatelessWidget {
   const _FlowStep({
     required this.step,
@@ -232,66 +241,62 @@ class _FlowStep extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return GlassCard(
+      blur: true,
+      onTap: onTap,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 18,
-                    height: 18,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: theme.colorScheme.primary,
-                    ),
-                    child: Text(
-                      '$step',
-                      style: TextStyle(
-                        fontSize: 11,
-                        height: 1,
-                        fontWeight: FontWeight.w500,
-                        color: theme.colorScheme.onPrimary,
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  Icon(icon, size: 20, color: theme.colorScheme.primary),
-                ],
-              ),
-              const Spacer(),
-              Text(title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleSmall),
-              const SizedBox(height: 2),
-              Flexible(
+              Container(
+                width: 18,
+                height: 18,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: theme.colorScheme.primary,
+                ),
                 child: Text(
-                  subtitle,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+                  '$step',
+                  style: TextStyle(
+                    fontSize: 11,
+                    height: 1,
+                    fontWeight: FontWeight.w500,
+                    color: theme.colorScheme.onPrimary,
                   ),
                 ),
               ),
+              const Spacer(),
+              Icon(icon, size: 20, color: theme.colorScheme.primary),
             ],
           ),
-        ),
+          const Spacer(),
+          Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleSmall),
+          const SizedBox(height: 2),
+          Flexible(
+            child: Text(
+              subtitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-/// 工具行卡：图标方块 + 标题/副标题 + 箭头。
-class _ToolRow extends StatelessWidget {
-  const _ToolRow({
+/// 工具小卡：图标方块 + 标题 + 说明，与步骤卡同一体量。
+class _ToolTile extends StatelessWidget {
+  const _ToolTile({
     required this.icon,
     required this.title,
     required this.subtitle,
@@ -306,51 +311,40 @@ class _ToolRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Icon(icon,
-                    size: 20, color: theme.colorScheme.onPrimaryContainer),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(Icons.chevron_right,
-                  size: 20, color: theme.colorScheme.outline),
-            ],
+    return GlassCard(
+      blur: true,
+      onTap: onTap,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child:
+                Icon(icon, size: 17, color: theme.colorScheme.primary),
           ),
-        ),
+          const Spacer(),
+          Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleSmall),
+          const SizedBox(height: 1),
+          Flexible(
+            child: Text(
+              subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

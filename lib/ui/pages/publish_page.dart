@@ -6,6 +6,7 @@ import '../../data/github.dart';
 import '../../data/mihomo.dart';
 import '../../data/publish.dart';
 import '../../state/app_state.dart';
+import '../widgets/glass.dart';
 import '../widgets/log_panel.dart';
 
 /// 推送页：一条 vless 模板链接 + 从结果页选中的 ip:port，
@@ -251,7 +252,7 @@ class _PublishPageState extends State<PublishPage> {
         : '';
 
     return Scaffold(
-      appBar: AppBar(title: const Text('推送')),
+      appBar: const GlassAppBar(title: '推送'),
       body: SafeArea(
         top: false,
         // 整页可滚：模板/产物/高级选项内容较多，键盘弹出时 Column 会把

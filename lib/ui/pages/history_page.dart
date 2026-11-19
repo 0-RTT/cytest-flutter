@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/history.dart';
 import '../../state/app_state.dart';
+import '../widgets/glass.dart';
 import 'result_page.dart';
 import 'test_page.dart';
 
@@ -106,8 +107,8 @@ class _HistoryPageState extends State<HistoryPage> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('记录'),
+      appBar: GlassAppBar(
+        title: '记录',
         actions: [
           IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
         ],
@@ -125,8 +126,9 @@ class _HistoryPageState extends State<HistoryPage> {
                   // 底部 24 是纯视觉呼吸：系统手势条已由外层 SafeArea 避让。
                   padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
                   children: [
-                    Card(
-                      margin: EdgeInsets.zero,
+                    GlassCard(
+                      shadow: false,
+                      padding: EdgeInsets.zero,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -176,8 +178,9 @@ class _HistoryPageState extends State<HistoryPage> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Card(
-                      margin: EdgeInsets.zero,
+                    GlassCard(
+                      shadow: false,
+                      padding: EdgeInsets.zero,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [

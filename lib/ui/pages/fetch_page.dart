@@ -11,6 +11,7 @@ import '../../data/censys_diag.dart';
 import '../../data/censys_native.dart';
 import '../../data/vless.dart';
 import '../../state/app_state.dart';
+import '../widgets/glass.dart';
 import 'test_page.dart';
 
 /// 获取数据：调用**原生 WebView** 抓 Censys 搜索结果（全自动，无需用户操作）。
@@ -323,8 +324,8 @@ class _FetchPageState extends State<FetchPage> {
     final hasLine = context.watch<AppState>().settings.vlessLinks.isNotEmpty;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('获取数据'),
+      appBar: GlassAppBar(
+        title: '获取数据',
         actions: [
           TextButton(
             onPressed: _fetching ? null : _copyApiUrl,
