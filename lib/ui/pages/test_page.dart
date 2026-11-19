@@ -329,9 +329,16 @@ class _RecordPickerSheetState extends State<_RecordPickerSheet> {
   String? _loadingId;
 
   static Future<(List<RecordInfo>, List<RecordInfo>)> _load() async {
-    final archives = await History.listArchives();
-    final runs = await History.listRuns();
-    return (archives, runs);
+    try {
+      // 与「记录」页同一口径：读盘必须有上限，否则弹层会一直转圈。
+      final archives =
+          await History.listArchives().timeout(const Duration(seconds: 10));
+      final runs =
+          await History.listRuns().timeout(const Duration(seconds: 10));
+      return (archives, runs);
+    } on TimeoutException {
+      throw Exception('读取记录超时（10s），存储目录没有响应');
+    }
   }
 
   Future<String> _readRunContent(String id) async {

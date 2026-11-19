@@ -118,11 +118,19 @@ class _SettingsPageState extends State<SettingsPage> {
     s.vlessLinks = _lines(_vless.text);
     // 回填规范化结果，让用户看到实际生效的 owner/repo。
     _ghRepo.text = repoSlug;
-    await state.saveSettings();
-    if (mounted) {
-      setState(() {});
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('设置已保存')));
+    try {
+      await state.saveSettings();
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('设置已保存')));
+      }
+    } catch (e) {
+      // 落盘失败必须让用户知道：过去没有 try/catch，点了保存什么反应都没有。
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存失败：$e')),
+      );
     }
   }
 

@@ -38,30 +38,43 @@ class History {
       if (entity is! Directory) continue;
       final id = entity.path.split(Platform.pathSeparator).last;
       final csv = File('${entity.path}/result.csv');
-      if (!await csv.exists()) continue;
+      // 单条记录坏掉（半截 CSV / 编码异常）只跳过这一条，
+      // 不能让一次 IO 异常把整个列表打成「一直转圈」。
+      try {
+        if (!await csv.exists()) continue;
+        final rows = parseCsv(await csv.readAsString());
+        if (rows.isEmpty) continue;
 
-      final rows = parseCsv(await csv.readAsString());
-      if (rows.isEmpty) continue;
-
-      var usable = 0;
-      var fastest = 0.0;
-      for (final r in rows) {
-        if ((r['Reason'] ?? '').isNotEmpty) continue;
-        usable++;
-        final v = double.tryParse(r['Speed (MiB/s)'] ?? '') ?? 0;
-        if (v > fastest) fastest = v;
+        var usable = 0;
+        var fastest = 0.0;
+        for (final r in rows) {
+          if ((r['Reason'] ?? '').isNotEmpty) continue;
+          usable++;
+          final v = double.tryParse(r['Speed (MiB/s)'] ?? '') ?? 0;
+          if (v > fastest) fastest = v;
+        }
+        out.add(RecordInfo(
+          id: id,
+          at: _formatId(id),
+          total: rows.length,
+          usable: usable,
+          fastest: fastest,
+        ));
+      } catch (_) {
+        continue;
       }
-      out.add(RecordInfo(
-        id: id,
-        at: _formatId(id),
-        total: rows.length,
-        usable: usable,
-        fastest: fastest,
-      ));
     }
     out.sort((a, b) => b.id.compareTo(a.id));
     return out;
   }
+
+  /// 存档列表。
+  ///
+  /// **只读文件头 [_archiveHeadBytes]，不再整份读入 + jsonDecode**：
+  /// 一次 Censys 抓取的 JSON 可能有几十 MB，过去每个存档都全量解析，
+  /// 打开「记录」页会把 UI 线程卡住几十秒，表现就是无限转圈。
+  /// `total_hits` 在响应体开头几百字节内，读 16KB 足够。
+  static const int _archiveHeadBytes = 16 * 1024;
 
   static Future<List<RecordInfo>> listArchives() async {
     final dir = await Paths.archive();
@@ -70,24 +83,36 @@ class History {
     final out = <RecordInfo>[];
     await for (final entity in dir.list()) {
       if (entity is! File || !entity.path.endsWith('.json')) continue;
-      final stat = await entity.stat();
-      final id = entity.path.split(Platform.pathSeparator).last.replaceAll('.json', '');
-
-      var hits = 0;
       try {
-        final raw = await entity.readAsString();
-        final obj = jsonDecode(raw) as Map<String, dynamic>;
-        final results = obj['results'] as Map<String, dynamic>?;
-        hits = (results?['total_hits'] as num?)?.toInt() ?? 0;
-      } catch (_) {}
+        final stat = await entity.stat();
+        final id = entity.path
+            .split(Platform.pathSeparator)
+            .last
+            .replaceAll('.json', '');
 
-      out.add(RecordInfo(
-        id: id,
-        at: _formatTimestamp(stat.modified),
-        total: hits,
-        bytes: stat.size,
-        isArchive: true,
-      ));
+        var hits = 0;
+        final raf = await entity.open();
+        try {
+          final head = await raf.read(_archiveHeadBytes);
+          final text = utf8.decode(head, allowMalformed: true);
+          final m =
+              RegExp(r'"total_hits"\s*:\s*(\d+)').firstMatch(text);
+          if (m != null) hits = int.tryParse(m.group(1)!) ?? 0;
+        } finally {
+          await raf.close();
+        }
+
+        out.add(RecordInfo(
+          id: id,
+          at: _formatTimestamp(stat.modified),
+          total: hits,
+          bytes: stat.size,
+          isArchive: true,
+        ));
+      } catch (_) {
+        // 单个存档读不出来就跳过，不影响其它条目。
+        continue;
+      }
     }
     out.sort((a, b) => b.id.compareTo(a.id));
     return out;

@@ -110,9 +110,18 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> boot() async {
-    settings = await AppSettings.load();
-    booting = false;
-    notifyListeners();
+    // 启动是「必须成功」的路径：任何一步抛异常都不能让 App 停在半初始化状态
+    // （过去没有 try/catch，SharedPreferences 异常会让 booting 永远是 true，
+    // 界面上没有任何提示，用户只看到「设置没生效」）。
+    try {
+      settings = await AppSettings.load();
+    } catch (e) {
+      lastError = '读取设置失败：$e（已使用默认值）';
+      pushLog('✗ 读取设置失败：$e');
+    } finally {
+      booting = false;
+      notifyListeners();
+    }
     unawaited(_warmBinaries());
     unawaited(_loadProxyIps());
   }
