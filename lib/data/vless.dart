@@ -223,10 +223,15 @@ Map<String, dynamic> buildXrayConfig(Vless v, int localPort, {ProxyIp? proxy}) {
       stream['wsSettings'] = ws;
       break;
     case 'xhttp':
-      stream['xhttpSettings'] = {
+      final xhttp = <String, dynamic>{
         'path': path,
         'mode': v.mode.isEmpty ? 'auto' : v.mode,
       };
+      // 其它客户端（v2rayN / NekoBox）都会把 host 一起写进 xhttpSettings；
+      // 不写时内核用 serverName 兜底，遇到按 Host 分流的反代会 403。
+      final xhost = asciiHostLenient(v.wsHost);
+      if (xhost.isNotEmpty) xhttp['host'] = xhost;
+      stream['xhttpSettings'] = xhttp;
       break;
   }
 

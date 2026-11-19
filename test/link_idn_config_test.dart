@@ -47,6 +47,22 @@ void main() {
         reason: '生成的 YAML 里不允许残留非 ASCII 主机名');
   });
 
+  test('xhttp：settings 里带 path / mode / host（缺 host 会被按 Host 分流的反代拒绝）', () {
+    final v = Vless.tryParse(
+      'vless://$uuid@101.34.32.230:22304?type=xhttp&security=tls'
+      '&sni=$cyrillic&host=$cyrillic&path=%2F&mode=auto',
+    )!;
+    final cfg = buildXrayConfig(v, 20001);
+    final outbound = (cfg['outbounds'] as List).first as Map;
+    final stream = outbound['streamSettings'] as Map;
+    final xhttp = stream['xhttpSettings'] as Map;
+
+    expect(stream['network'], 'xhttp');
+    expect(xhttp['path'], '/');
+    expect(xhttp['mode'], 'auto');
+    expect(xhttp['host'], 'xn--e1a.eu.org');
+  });
+
   test('纯 ASCII / IP 原样保留，不被改写', () {
     final v = Vless.tryParse(
       'vless://$uuid@104.16.1.1:443?security=tls&sni=example.com&type=ws'

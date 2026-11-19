@@ -384,6 +384,20 @@ class AppState extends ChangeNotifier {
       );
       linkResults = run.results;
       linkStage = linkTestRunner.cancelled ? '已取消' : '完成';
+      // 有失败就把 Xray 侧的最后几行原始输出带进日志：
+      // 链路失败时 Dart 只能看到「TLS 握手失败 / 连接被重置」，
+      // 真正原因（比如 splithttp: bad status code 403）只在 Xray stderr 里。
+      final failed = run.results.where((r) => r.error != null).length;
+      if (failed > 0) {
+        final tail = xray.lastOutput
+            .where((l) => l.trim().isNotEmpty)
+            .toList(growable: false);
+        final from = tail.length > 8 ? tail.length - 8 : 0;
+        if (tail.isNotEmpty) pushLog('— Xray 输出（最后 ${tail.length - from} 行）—');
+        for (var i = from; i < tail.length; i++) {
+          pushLog('  ${tail[i]}');
+        }
+      }
       // K4：只提示、不自动恢复代理（R12 = A：代理是否恢复由用户下一次显式动作决定）
       if (linkTestRunner.stoppedUserProxy) {
         _proxyStopNotice = kProxyStoppedByTestMessage;
