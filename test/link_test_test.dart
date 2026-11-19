@@ -556,8 +556,6 @@ void main() {
       final saved = <LinkTestRun>[];
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: xray,
         pool: _FixedPool(<int>[server.port]),
         saver: (run) async => saved.add(run),
@@ -584,8 +582,6 @@ void main() {
       addTearDown(() => server.close(force: true));
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
       );
@@ -608,8 +604,6 @@ void main() {
       var probeCalls = 0;
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[deadPort]),
         probeFactory: (url, port) {
@@ -635,7 +629,6 @@ void main() {
       var probeCalls = 0;
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        liveness: () async => null,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
         probeFactory: (url, port) {
@@ -661,8 +654,6 @@ void main() {
       final saved = <LinkTestRun>[];
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: _FakeXray(startError: tail),
         pool: _FixedPool(<int>[20000, 20001]),
         saver: (run) async => saved.add(run),
@@ -692,8 +683,6 @@ void main() {
       final xray = _FakeXray(initialMode: XrayMode.line);
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: xray,
         pool: _FixedPool(<int>[server.port]),
       );
@@ -710,8 +699,6 @@ void main() {
       addTearDown(() => server.close(force: true));
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
       );
@@ -726,8 +713,6 @@ void main() {
       final xray = _FakeXray();
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: xray,
         pool: _FixedPool(<int>[20000]), // 2 个节点只给 1 个端口
       );
@@ -745,27 +730,34 @@ void main() {
       expect(xray.startCalls, 0);
     });
 
-    test('K3：测速源探活失败 → 拒绝开测、不启动进程、不落盘', () async {
+    test('开测不依赖「直连测速源」：直连不可达也照常起进程并探测', () async {
+      // 回归：旧实现会在开测前直连 speedUrl 探活，失败就整批拒绝；
+      // 而测速流量本来就全走线路，直连不通是常态。这里把 speedUrl 指向
+      // 死端口，验证仍然启动批量进程并真的发起探测。
+      final server = await _serve(delayMs: 10);
+      addTearDown(() => server.close(force: true));
+
+      var probeCalls = 0;
       final xray = _FakeXray();
-      final saved = <LinkTestRun>[];
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: 'http://127.0.0.1:1/300.zip',
         xray: xray,
-        pool: _FixedPool(<int>[20000]),
-        saver: (run) async => saved.add(run),
-        // K3：把探活置为失败，验证「只阻止开测」
-        liveness: () async => '连接失败：Connection refused',
+        pool: _FixedPool(<int>[server.port]),
+        probeFactory: (url, port) {
+          probeCalls++;
+          return LinkProbe(speedUrl: 'http://127.0.0.1:${server.port}/300.zip',
+              localPort: port);
+        },
       );
 
-      await expectLater(
-        runner.run(<String>[_link('a.example', 443)]),
-        throwsA(
-          isA<LinkTestException>()
-              .having((e) => e.message, 'message', contains('测速源不可用')),
-        ),
+      final run = await runner.run(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
       );
-      expect(xray.startCalls, 0, reason: '探活失败不许起批量进程');
-      expect(saved, isEmpty, reason: '不计入历史');
+
+      expect(xray.startCalls, 1, reason: '不允许因为直连不通就拒绝开测');
+      expect(probeCalls, 1, reason: '必须真的发起探测');
+      expect(run.results.length, 1);
     });
 
     test('非法链接单独失败、其余照测（D1：不整批拒绝）', () async {
@@ -773,8 +765,6 @@ void main() {
       addTearDown(() => server.close(force: true));
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
       );
@@ -797,8 +787,6 @@ void main() {
       final xray = _FakeXray();
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: xray,
         pool: _FixedPool(<int>[server.port, server.port]),
         probeFactory: (url, port) => LinkProbe(
@@ -830,8 +818,6 @@ void main() {
       addTearDown(() => server.close(force: true));
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        // 单测不走真网络：探活默认放行（K3 的用例单独注入失败）
-        liveness: () async => null,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
         saver: (run) async => throw const FileSystemException('磁盘满'),
@@ -876,7 +862,6 @@ void main() {
       );
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        liveness: () async => null,
         xray: xray,
         pool: _FixedPool(<int>[20000]),
       );
@@ -898,7 +883,6 @@ void main() {
     test('本来就没有代理时，失败路径也不该误报（不误提示）', () async {
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        liveness: () async => null,
         xray: _FakeXray(startError: 'boom'),
         pool: _FixedPool(<int>[20000]),
       );
@@ -916,7 +900,6 @@ void main() {
       var probeCalls = 0;
       final runner = LinkTestRunner(
         speedUrl: 'http://speed.test/300.zip',
-        liveness: () async => null,
         xray: _FakeXray(),
         // 8 个节点共用同一个「接了不回包」的端口 → 6 个在跑、2 个排队
         pool: _FixedPool(List<int>.filled(8, server.port)),
@@ -959,8 +942,7 @@ void main() {
       final state = AppState(
         runner: LinkTestRunner(
           speedUrl: 'http://speed.test/300.zip',
-          liveness: () async => null,
-          xray: _FakeXray(),
+            xray: _FakeXray(),
           pool: _FixedPool(<int>[server.port]),
           probeFactory: (url, port) => LinkProbe(
             speedUrl: url,

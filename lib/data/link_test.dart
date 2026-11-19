@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import '../core/idna.dart';
 import '../core/semaphore.dart';
 import 'link_probe.dart';
 import 'vless.dart';
@@ -298,7 +297,7 @@ List<(Vless, int)> bindPortsToNodes(List<Vless> nodes, List<int> ports) {
 // 编排器
 // ---------------------------------------------------------------------------
 
-/// 测速编排：预检 → 端口 → 批量启动 → 延迟波 → AUTO 过滤 → 速度波 → 落盘 → 停进程。
+/// 测速编排：端口 → 批量启动 → 延迟波 → AUTO 过滤 → 速度波 → 落盘 → 停进程。
 ///
 /// 与 UI 完全解耦：依赖 [BatchXray]（可注入 fake）、[PortPool]、[LinkProbe] 工厂，
 /// 因此全部分支都能在桌面单测覆盖（真机只负责验「xray 进程真的能起来」）。
@@ -309,21 +308,18 @@ class LinkTestRunner {
     PortPool pool = const PortPool(),
     RunSaver? saver,
     LinkProbe Function(String speedUrl, int port)? probeFactory,
-    Future<String?> Function()? liveness,
   })  : _speedUrl = speedUrl,
         _xray = xray,
         _pool = pool,
         _saver = saver,
         _probeFactory = probeFactory ??
-            ((url, port) => LinkProbe(speedUrl: url, localPort: port)),
-        _liveness = liveness;
+            ((url, port) => LinkProbe(speedUrl: url, localPort: port));
 
   final String _speedUrl;
   final BatchXray _xray;
   final PortPool _pool;
   final RunSaver? _saver;
   final LinkProbe Function(String speedUrl, int port) _probeFactory;
-  final Future<String?> Function()? _liveness;
 
   final Semaphore _latGate = Semaphore(kLatencyParallel, name: 'latency');
   final Semaphore _speedGate = Semaphore(kSpeedParallel, name: 'speed');
@@ -407,13 +403,12 @@ class LinkTestRunner {
 
     var started = false;
     try {
-      // 2) K3 探活：失败只阻止开测，不碰已有结果、不写历史
-      final liveError = await _checkSource();
-      if (liveError != null) {
-        throw LinkTestException(
-          '测速源不可用（$liveError），已取消本次测试（不影响已有结果）',
-        );
-      }
+      // 2) 不再做「直连测速地址」的探活。
+      //
+      // 旧实现要求**手机自己**能直连 https://е.eu.org/300.zip，否则整批拒绝开测。
+      // 但这条测速的流量本来就全走 VLESS 线路，国内网络直连多半不通 ——
+      // 结果就是点了「开始测试」永远停在「准备中」。
+      // Kotlin 原版同样没有这一步（见 LinkTestController），此处对齐。
 
       if (nodes.isNotEmpty) {
         // 3) 端口池
@@ -670,27 +665,6 @@ class LinkTestRunner {
         i,
         results[i].copyWith(error: error, state: ProbeState.failed),
       );
-    }
-  }
-
-  /// K3：开测前直连测速地址探活（1 次、8s 超时）。null = 可用，字符串 = 失败原因。
-  Future<String?> _checkSource() async {
-    final injected = _liveness;
-    if (injected != null) return injected();
-    HttpClient? client;
-    try {
-      final uri = probeUri(_speedUrl); // IDN 不支持会在这里抛，直接拒绝开测
-      client = HttpClient()..connectionTimeout = kConnectTimeout;
-      final request = await client.getUrl(uri);
-      final response = await request.close().timeout(kConnectTimeout);
-      await response.drain<void>().catchError((Object _) {});
-      return null;
-    } on UnsupportedIdnException catch (e) {
-      return '测速地址含不支持的字符：${e.message}';
-    } on Object catch (e) {
-      return humanizeProbeError(e);
-    } finally {
-      client?.close(force: true);
     }
   }
 

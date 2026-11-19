@@ -385,7 +385,27 @@ class LinkProbe {
   }
 
   /// 测吞吐（TTFB 兼作延迟，与 Kotlin `LinkProbe.speed` 一致）。
+  ///
+  /// 会做**一次**连接级重试：XHTTP 这类多路复用传输，服务端常把建链后的
+  /// 第一条连接直接关掉（实测 `run0` 必失败、`run1` 正常）。判据很窄——
+  /// 只有「一个字节都没读到」且不是超时 / HTTP 状态错误才重试，
+  /// 避免把死链的等待时间翻倍、也不干扰正常测速的读数。
   Future<LinkProbeOutcome> speed() async {
+    final first = await _speedOnce();
+    if (_shouldRetrySpeed(first)) return _speedOnce();
+    return first;
+  }
+
+  bool _shouldRetrySpeed(LinkProbeOutcome o) {
+    if (o.cancelled || o.error == null) return false;
+    if (o.latencyKnown) return false; // 已经读到数据，属于真实结果/预热不足
+    final e = o.error!;
+    if (e.startsWith('HTTP ')) return false; // 服务端明确回了状态码
+    if (e == '超时') return false; // 别把超时翻倍
+    return true;
+  }
+
+  Future<LinkProbeOutcome> _speedOnce() async {
     final sw = Stopwatch()..start();
     final meter = SpeedMeter();
     final client = _newClient();
