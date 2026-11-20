@@ -25,6 +25,13 @@ class Paths {
   static Future<Directory> archive() async =>
       _ensure('${(await root()).path}/archive');
 
+  /// 远程执行结果（`cytest/remote/<id>/`，结构与 runs 一致：input.txt + result.csv）。
+  ///
+  /// 单独一个目录：来源不同（服务器上跑出来的），记录页要单独分组，
+  /// 混进 runs 会让人分不清是本地还是远端测的。
+  static Future<Directory> remote() async =>
+      _ensure('${(await root()).path}/remote');
+
   static Future<Directory> xray() async =>
       _ensure('${(await root()).path}/xray');
 

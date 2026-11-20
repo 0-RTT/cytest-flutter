@@ -48,6 +48,23 @@ class KeyFileCandidate {
   final String uri;
 }
 
+/// 把文本另存为文件（SAF「新建文档」，用户自己选位置）。
+///
+/// 返回 `null` = 用户取消；返回字符串 = 目标 URI（只用于提示，别当路径用）。
+/// 为什么不用写外部存储：Android 10+ 需要 Media/MANAGE 权限，SAF 一次授权就够。
+Future<String?> saveTextFile({required String name, required String content}) async {
+  try {
+    return await _channel.invokeMethod<String>('saveTextFile', {
+      'name': name,
+      'content': content,
+    });
+  } on PlatformException catch (e) {
+    throw FilePickException(_humanize(e));
+  } on MissingPluginException {
+    throw const FilePickException('当前平台没有实现文件保存（仅 Android 支持）');
+  }
+}
+
 /// 选一个 SSH 私钥**文件夹**，返回里面的文件列表（用户取消返回 null）。
 ///
 /// 为什么不是「直接选文件」：Android 17 的文件选择器按 MIME 过滤，无后缀的
@@ -109,6 +126,7 @@ String _humanize(PlatformException e) {
   return switch (e.code) {
     'too_large' => '文件过大（上限 5MB）',
     'read_failed' => '读取文件失败',
+    'write_failed' => '写入文件失败',
     'no_picker' => '无法打开系统文件选择器',
     'busy' => '已有一个文件选择器打开，请先完成它',
     _ => '选择文件失败（${e.code}）',

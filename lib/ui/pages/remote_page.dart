@@ -12,6 +12,7 @@ import '../../data/remote.dart';
 import '../../state/app_state.dart';
 import '../widgets/glass.dart';
 import '../widgets/log_panel.dart';
+import 'result_page.dart';
 
 class RemotePage extends StatefulWidget {
   const RemotePage({super.key, this.initialInput});
@@ -118,9 +119,18 @@ class _RemotePageState extends State<RemotePage> {
         },
       );
       if (!mounted) return;
+      // 落盘到 cytest/remote/：记录页有单独分组，结果页也能从历史重新打开。
+      final dir = await state.saveRemoteRun(input: input, rows: rows);
+      final savedId = dir.path.split(Platform.pathSeparator).last;
       state.rows = rows;
-      state.pushLog('远程完成：${rows.length} 条');
+      state.lastRunDir = dir;
+      state.pushLog('远程完成：${rows.length} 条（已保存 $savedId）');
       _toast('完成：${rows.length} 条结果');
+      if (mounted) {
+        // 直接进结果页：远程跑完最想看的就是结果，不该让用户自己找。
+        await Navigator.of(context)
+            .push(GlassRoute(builder: (_) => const ResultPage()));
+      }
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {

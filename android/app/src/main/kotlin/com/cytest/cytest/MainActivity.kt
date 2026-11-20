@@ -47,6 +47,9 @@ class MainActivity : FlutterActivity() {
     /** 文件选择的回调（同一时刻只允许一个选择器）。 */
     private var pendingPick: MethodChannel.Result? = null
 
+    /** 等用户选完保存位置再写的内容（与 [pendingPick] 同生命周期）。 */
+    private var pendingSaveText: String? = null
+
     /** 同一时刻只允许一个 Censys 抓取（WebView 很重，并发没有收益）。 */
     private var censysBusy = false
 
@@ -71,6 +74,11 @@ class MainActivity : FlutterActivity() {
                     "pickTextFile" -> startPickTextFile(result)
                     "pickKeyFile" -> startPickKeyFile(result)
                     "pickKeyFolder" -> startPickKeyFolder(result)
+                    "saveTextFile" -> {
+                        val name = call.argument<String>("name") ?: "export.txt"
+                        val content = call.argument<String>("content").orEmpty()
+                        startSaveTextFile(name, content, result)
+                    }
                     "importKeyUri" -> {
                         val uri = call.argument<String>("uri")
                         if (uri == null) {
@@ -172,6 +180,61 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             pendingPick = null
             result.error("no_picker", "无法打开系统文件选择器：${e.message}", null)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 另存为文本（导出 CSV / data.txt）
+    // ------------------------------------------------------------------
+
+    /**
+     * 用 SAF 的「新建文档」让用户选保存位置，然后把内容写进去。
+     *
+     * 为什么不用写外部存储：Android 10+ 要 MEDIA/MANAGE 权限或 MediaStore，
+     * 而 SAF 一次授权就够、还不占权限声明。返回绝对路径（拿不到就返回 null），
+     * 调用方只用来提示「存到哪」。
+     */
+    private fun startSaveTextFile(name: String, content: String, result: MethodChannel.Result) {
+        if (pendingPick != null) {
+            result.error("busy", "已有一个文件选择器打开，请先完成它", null)
+            return
+        }
+        pendingPick = result
+        pendingSaveText = content
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TITLE, name)
+        }
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_SAVE_TEXT)
+        } catch (e: Exception) {
+            pendingPick = null
+            pendingSaveText = null
+            result.error("no_picker", "无法打开保存对话框：${e.message}", null)
+        }
+    }
+
+    private fun handleSaveText(resultCode: Int, data: Intent?) {
+        val result = pendingPick
+        val content = pendingSaveText
+        pendingPick = null
+        pendingSaveText = null
+        if (result == null) return
+        val uri: Uri? = if (resultCode == Activity.RESULT_OK) data?.data else null
+        if (uri == null) {
+            result.success(null) // 用户取消
+            return
+        }
+        try {
+            contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                out.write((content ?: "").toByteArray(Charsets.UTF_8))
+                out.flush()
+            } ?: throw IllegalStateException("无法写入所选文件")
+            result.success(uri.toString())
+        } catch (e: Exception) {
+            result.error("write_failed", "写入失败：${e.message}", null)
         }
     }
 
@@ -339,6 +402,10 @@ class MainActivity : FlutterActivity() {
             }
             REQUEST_PICK_KEY_DIR -> {
                 handlePickKeyFolder(resultCode, data)
+                return
+            }
+            REQUEST_SAVE_TEXT -> {
+                handleSaveText(resultCode, data)
                 return
             }
             REQUEST_PICK_TEXT -> Unit
@@ -663,6 +730,7 @@ class MainActivity : FlutterActivity() {
         private const val REQUEST_PICK_TEXT = 4321
         private const val REQUEST_PICK_KEY = 4322
         private const val REQUEST_PICK_KEY_DIR = 4323
+        private const val REQUEST_SAVE_TEXT = 4324
 
         /** 列目录时最多返回多少个文件：私钥目录通常只有几个，200 足够且不会卡 UI。 */
         private const val MAX_KEY_FILES = 200

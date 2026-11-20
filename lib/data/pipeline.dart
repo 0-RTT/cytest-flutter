@@ -389,3 +389,25 @@ List<List<String>> _splitCsv(String text) {
   }
   return rows;
 }
+
+/// 把结果行序列化成 CSV 文本（供导出用；引擎自己写的那份在 result.csv）。
+///
+/// 列顺序取首行的 key 顺序；含逗号/引号/换行的字段加引号并把 `"` 转义成 `""`
+/// （RFC 4180）。空行直接跳过。
+String toCsv(List<Map<String, String>> rows) {
+  if (rows.isEmpty) return '';
+  final header = rows.first.keys.toList();
+  final buf = StringBuffer()..writeln(header.map(_csvCell).join(','));
+  for (final row in rows) {
+    buf.write(header.map((k) => _csvCell(row[k] ?? '')).join(','));
+    buf.write('\n');
+  }
+  return buf.toString();
+}
+
+String _csvCell(String v) {
+  if (v.contains(',') || v.contains('"') || v.contains('\n') || v.contains('\r')) {
+    return '"${v.replaceAll('"', '""')}"';
+  }
+  return v;
+}

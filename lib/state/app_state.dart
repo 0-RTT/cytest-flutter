@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../core/bin.dart';
 import '../core/paths.dart';
 import '../core/settings.dart';
+import '../data/censys_json.dart';
 import '../data/history.dart';
 import '../data/link_test.dart';
 import '../data/link_test_store.dart';
@@ -553,6 +554,34 @@ class AppState extends ChangeNotifier {
     final loaded = await Pipeline.readRunResult(id);
     if (loaded.isEmpty) throw Exception('该记录没有结果');
     rows = loaded;
+    notifyListeners();
+  }
+
+  /// 远程执行结果落盘，口径与本地 runs 一致（input.txt + result.csv），
+  /// 只是目录在 `cytest/remote/`，记录页单独分组。
+  ///
+  /// 目录名带 ASN：与存档命名同一套约定，一眼看出这批是哪个网段的。
+  Future<Directory> saveRemoteRun({
+    required String input,
+    required List<Map<String, String>> rows,
+  }) async {
+    final root = await Paths.remote();
+    final now = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final stamp = '${now.year}${two(now.month)}${two(now.day)}-'
+        '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+    final asn = dominantAsn(input) ?? 'unknown';
+    final dir = Directory('${root.path}/$asn-$stamp-remote');
+    await dir.create(recursive: true);
+    await File('${dir.path}/input.txt').writeAsString(input, flush: true);
+    await File('${dir.path}/result.csv').writeAsString(toCsv(rows), flush: true);
+    return dir;
+  }
+
+  /// 载入一条远程结果到 [rows]（结果页直接可看）。
+  Future<void> loadRemoteRun(String id) async {
+    final text = await History.readCsv(id, remote: true);
+    rows = parseCsv(text);
     notifyListeners();
   }
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/file_pick.dart';
 import '../../data/history.dart';
 import '../../data/link_test.dart';
 import '../../data/link_test_store.dart';
@@ -18,6 +19,7 @@ class HistoryPage extends StatefulWidget {
     this.loadRuns,
     this.loadArchives,
     this.loadLinkRuns,
+    this.loadRemote,
     this.selectAllOnLoad = false,
   });
 
@@ -26,6 +28,7 @@ class HistoryPage extends StatefulWidget {
   final Future<List<RecordInfo>> Function()? loadRuns;
   final Future<List<RecordInfo>> Function()? loadArchives;
   final Future<List<LinkTestRun>> Function()? loadLinkRuns;
+  final Future<List<RecordInfo>> Function()? loadRemote;
 
   /// 仅供截图/测试：加载完成后直接进入多选态并全选，用来预览删除条。
   final bool selectAllOnLoad;
@@ -36,7 +39,7 @@ class HistoryPage extends StatefulWidget {
 
 /// 一条可被选中的记录。三种来源的 id 可能撞车（三阶段是时间戳目录、
 /// 链路测速是时间戳文件名），所以选中集合里必须带种类前缀。
-enum _Kind { run, archive, link }
+enum _Kind { run, archive, link, remote }
 
 class _Pick {
   const _Pick(this.kind, this.id);
@@ -54,6 +57,9 @@ class _Pick {
 
 class _HistoryPageState extends State<HistoryPage> {
   List<RecordInfo> _runs = const [];
+
+  /// 远程执行（服务器上跑）的结果，与本地 runs 分开显示。
+  List<RecordInfo> _remote = const [];
   List<RecordInfo> _archives = const [];
 
   /// 链路测速（VLESS）历史。落盘在 `cytest/linktest/`，与三阶段的 `runs/` 分开。
@@ -90,12 +96,15 @@ class _HistoryPageState extends State<HistoryPage> {
           .timeout(_loadTimeout);
       final archives = await (widget.loadArchives?.call() ?? History.listArchives())
           .timeout(_loadTimeout);
+      final remote = await (widget.loadRemote?.call() ?? History.listRemote())
+          .timeout(_loadTimeout);
       final linkRuns = await (widget.loadLinkRuns?.call() ?? LinkTestStore().list())
           .timeout(_loadTimeout);
       if (!mounted) return;
       setState(() {
         _runs = runs;
         _archives = archives;
+        _remote = remote;
         _linkRuns = linkRuns;
         // 刷新后清空选中：已删掉的条目不能留在选中集合里（否则底部会显示
         // 「已选 3 项」但列表里一条勾都没有）。
@@ -139,17 +148,24 @@ class _HistoryPageState extends State<HistoryPage> {
           for (final r in _runs) _Pick(_Kind.run, r.id),
           for (final a in _archives) _Pick(_Kind.archive, a.id),
           for (final l in _linkRuns) _Pick(_Kind.link, l.id),
+          for (final r in _remote) _Pick(_Kind.remote, r.id),
         ]);
     });
   }
 
   Future<void> _delete(RecordInfo rec) async {
-    final label = rec.isArchive ? '这份存档' : '这条测试记录';
+    final label = rec.isArchive
+        ? '这份存档'
+        : rec.isRemote
+            ? '这条服务器记录'
+            : '这条测试记录';
     final ok = await _confirm('删除$label？\n${rec.id}\n\n删除后不可恢复');
     if (!ok) return;
     try {
       if (rec.isArchive) {
         await History.deleteArchive(rec.id);
+      } else if (rec.isRemote) {
+        await History.deleteRemote(rec.id);
       } else {
         await History.deleteRun(rec.id);
       }
@@ -184,6 +200,8 @@ class _HistoryPageState extends State<HistoryPage> {
             await History.deleteArchive(p.id);
           case _Kind.link:
             linkIds.add(p.id);
+          case _Kind.remote:
+            await History.deleteRemote(p.id);
         }
       } on Object {
         failed++;
@@ -223,6 +241,18 @@ class _HistoryPageState extends State<HistoryPage> {
   void _toast(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _openRemote(RecordInfo rec) async {
+    try {
+      await context.read<AppState>().loadRemoteRun(rec.id);
+      if (!mounted) return;
+      Navigator.of(context)
+          .push(GlassRoute(builder: (_) => const ResultPage()))
+          .then((_) => _reload());
+    } catch (e) {
+      _toast('载入失败：$e');
+    }
   }
 
   Future<void> _openRun(RecordInfo rec) async {
@@ -410,6 +440,17 @@ class _HistoryPageState extends State<HistoryPage> {
                         const SizedBox(height: 12),
                         _section(
                           theme: theme,
+                          title: '服务器测速结果',
+                          count: _remote.length,
+                          isEmpty: _remote.isEmpty,
+                          emptyText: '暂无结果，去「远程执行」跑一轮',
+                          rows: [
+                            for (final r in _remote) _remoteTile(theme, r),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        _section(
+                          theme: theme,
                           title: 'Censys 抓取存档',
                           count: _archives.length,
                           isEmpty: _archives.isEmpty,
@@ -483,12 +524,80 @@ class _HistoryPageState extends State<HistoryPage> {
                 ),
                 IconButton(
                   iconSize: 18,
+                  tooltip: '导出 CSV',
+                  onPressed: () => _exportCsv(r),
+                  icon: const Icon(Icons.save_alt),
+                ),
+                IconButton(
+                  iconSize: 18,
                   onPressed: () => _delete(r),
                   icon: Icon(Icons.close, color: theme.hintColor),
                 ),
               ],
             ),
     );
+  }
+
+  Widget _remoteTile(ThemeData theme, RecordInfo r) {
+    final pick = _Pick(_Kind.remote, r.id);
+    return ListTile(
+      dense: true,
+      leading: _leading(pick),
+      onTap: () => _selecting ? _togglePick(pick) : _openRemote(r),
+      title: Text(r.at, style: const TextStyle(fontSize: 13)),
+      subtitle: Text(
+        '服务器 · ${r.usable} / ${r.total} 可用',
+        style: const TextStyle(fontSize: 11.5),
+      ),
+      trailing: _selecting
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  r.fastest > 0 ? '${r.fastest.toStringAsFixed(2)} MiB/s' : '—',
+                  style: TextStyle(fontSize: 11.5, color: theme.colorScheme.primary),
+                ),
+                IconButton(
+                  iconSize: 18,
+                  tooltip: '导出 CSV',
+                  onPressed: () => _exportCsv(r, remote: true),
+                  icon: const Icon(Icons.save_alt),
+                ),
+                IconButton(
+                  iconSize: 18,
+                  onPressed: () => _delete(r),
+                  icon: Icon(Icons.close, color: theme.hintColor),
+                ),
+              ],
+            ),
+    );
+  }
+
+  /// 导出某条测试结果的 CSV（SAF 另存为，自己不申请存储权限）。
+  Future<void> _exportCsv(RecordInfo rec, {bool remote = false}) async {
+    try {
+      final csv = await History.readCsv(rec.id, remote: remote);
+      final name = '${rec.id}.csv';
+      final out = await saveTextFile(name: name, content: csv);
+      if (out == null) return; // 用户取消
+      _toast('已导出：$name');
+    } catch (e) {
+      _toast('导出失败：$e');
+    }
+  }
+
+  /// 存档导出成 data.txt（文件名沿用存档名：ASN + 时间）。
+  Future<void> _exportDataTxt(RecordInfo a) async {
+    try {
+      final body = await History.readArchive(a.id);
+      final name = History.dataTxtName(a.id);
+      final out = await saveTextFile(name: name, content: body);
+      if (out == null) return;
+      _toast('已导出：$name');
+    } catch (e) {
+      _toast('导出失败：$e');
+    }
   }
 
   Widget _archiveTile(ThemeData theme, RecordInfo a) {
@@ -507,16 +616,25 @@ class _HistoryPageState extends State<HistoryPage> {
       // 就写「存档」，不要显示「0 命中」这种误导。
       // 新存档的文件名带 ASN（`AS13335-20261120-223012`），顺手显示出来；
       // 老存档名是纯数字时间戳，取不到就只显示命中数。
+      // 大小并进副标题：右侧要放「导出 + 删除」两个图标，标题再长就被挤成省略号。
       subtitle: Text(
+        [
           a.total > 0 ? '${a.total} 命中' : '存档',
-          style: const TextStyle(fontSize: 11.5)),
+          '${(a.bytes / 1024).toStringAsFixed(0)} KB',
+        ].join(' · '),
+        style: const TextStyle(fontSize: 11.5),
+      ),
       trailing: _selecting
           ? null
           : Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('${(a.bytes / 1024).toStringAsFixed(0)} KB',
-                    style: TextStyle(fontSize: 11.5, color: theme.hintColor)),
+                IconButton(
+                  iconSize: 18,
+                  tooltip: '导出 data.txt',
+                  onPressed: () => _exportDataTxt(a),
+                  icon: const Icon(Icons.save_alt),
+                ),
                 IconButton(
                   iconSize: 18,
                   onPressed: () => _delete(a),
