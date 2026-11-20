@@ -140,6 +140,22 @@ class _FailOnceState extends AppState {
   }
 }
 
+/// 落盘「成功」但**只丢一个字段**（远程端口）。
+///
+/// 用来验自检是否真的逐字段比：只比 8 个关键字段的实现会漏掉 remotePort。
+class _DropsRemotePortState extends AppState {
+  @override
+  Future<void> saveSettings() async {
+    final keep = settings.remotePort;
+    settings.remotePort = 22; // 假装这个字段没写进去
+    try {
+      await super.saveSettings();
+    } finally {
+      settings.remotePort = keep; // 内存保持用户的值
+    }
+  }
+}
+
 /// 16 个可编辑字段的读值器：`_read` 从任意一份 settings 里取出该字段的
 /// 「可比较值」（列表类型统一拍平成字符串，避免 List 身份比较的坑）。
 class _FieldCase {
@@ -543,6 +559,16 @@ void main() {
       );
       await _closeSheet(tester);
 
+      // 列表型字段也要按「一行一条」正确回填（`_textOf` 的 List 分支）：
+      // 这里错了不会报错，只会把两条链接粘成一条垃圾链接。
+      await _openGroup(tester, 'VLESS 链接');
+      expect(
+        tester.widget<TextField>(_fieldByLabel('VLESS 链接')).controller?.text,
+        'vless://uuid@a.example:443?type=xhttp\n'
+        'vless://uuid@b.example:443?type=xhttp',
+        reason: '多行字段的回填必须按行拼接，否则两条链接会粘成一条',);
+      await _closeSheet(tester);
+
       // ……但「同步」本身不能被当成用户编辑而触发一次落盘。
       expect(state.saves, 0,
           reason: '程序化回填 controller 时若没有抑制，会被自己的监听器当成用户输入，'
@@ -657,6 +683,54 @@ void main() {
       expect(state.logs.any((l) => l.contains('保存失败')), isTrue);
     });
 
+    testWidgets('自检覆盖全部 16 个字段：只丢一个不常见的字段也要抓得到', (tester) async {
+      _tallViewport(tester);
+      // 写盘「成功」，但把远程端口偷偷写成旧值：这是插件级静默丢写的典型形态。
+      // 旧实现只比对 8 个关键字段，remotePort 不在其中 → 会静默通过。
+      final state = _DropsRemotePortState()..booting = false;
+      state.settings = _storedSettings();
+      await tester.pumpWidget(_host(state));
+      await tester.pumpAndSettle();
+
+      await _openGroup(tester, '远程执行');
+      await tester.enterText(_fieldByLabel('端口'), '2222');
+      await _closeSheet(tester);
+      await _tapSave(tester);
+
+      expect(find.textContaining('对不上'), findsWidgets,
+          reason: '端口没写进去必须当场报出来',);
+      expect(find.textContaining('远程端口'), findsWidgets,
+          reason: '提示要指名是哪个字段丢了，否则用户/排障者只能全表重填',);
+      expect(find.text('设置已保存'), findsNothing);
+    });
+
+    testWidgets('自检不许误报：用户主动把值设成「旧默认值」也要能正常存', (tester) async {
+      _tallViewport(tester);
+      // maxLatency=200、speedConcurrency=2 恰好是历史默认值，AppSettings.load()
+      // 里有一次性迁移。写入时 toJson 会打上「已迁移」标记，读回来就不该再被改成
+      // 0 / 3 —— 否则自检会把「用户自己填的 200」误判成「没写进去」，
+      // 用户每次保存都要看到一个根本不存在的问题。
+      final state = AppState()..booting = false;
+      state.settings = _storedSettings()
+        ..maxLatency = 200
+        ..speedConcurrency = 2;
+      await tester.pumpWidget(_host(state));
+      await tester.pumpAndSettle();
+
+      await _openGroup(tester, '并发');
+      await tester.enterText(_fieldByLabel('指纹筛选并发'), '33');
+      await _closeSheet(tester);
+      await _tapSave(tester);
+
+      expect(find.textContaining('对不上'), findsNothing,
+          reason: '这是误报：磁盘上的 200 / 2 与内存一致',);
+      final disk = await _readDisk(tester);
+      expect(disk.sha1Concurrency, 33,
+          reason: '前置条件：这次保存本身必须成功（否则 findsNothing 是空转）',);
+      expect(disk.maxLatency, 200, reason: '用户自己填的 200 不能被迁移改掉');
+      expect(disk.speedConcurrency, 2);
+    });
+
     // ---------------------------------------------------------------
     // R1 回归（曾是一个真实缺陷，已修，现在钉住不许回来）
     //
@@ -689,6 +763,11 @@ void main() {
       // 后面两步（再点保存 → 真的写盘成功）就是在验它不是空话。
       expect(find.textContaining('改动没丢'), findsWidgets,
           reason: '失败提示必须给出下一步动作，否则用户只能干等',);
+      // 失败后内存必须回到「磁盘上确认存活的值」：否则摘要行显示新值、
+      // 磁盘还是旧值，用户看到的是「已经存上了」的假象。
+      expect(state.settings.sha1Concurrency, 45,
+          reason: '写盘失败就不能让内存领先磁盘（乐观写入要退回），'
+              '否则摘要行在骗人',);
 
       // 用户看到「保存失败」后，再点一次「保存」重试。
       await _tapSave(tester);
