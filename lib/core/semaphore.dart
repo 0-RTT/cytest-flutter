@@ -24,7 +24,7 @@ class CancelledException implements Exception {
 ///
 /// 语义与「分批 `Future.wait`」的关键区别：这里的等待者是 FIFO 队列，
 /// 任何一路完成就立刻放行下一路。分批写法会等整批最慢的一条，
-/// 慢链会把后续批次拖到超时，尾部延迟剧烈抖动（见设计 §3）。
+/// 慢链会把后续批次拖到超时，尾部延迟剧烈抖动。
 ///
 /// 用法：
 /// ```dart
@@ -93,7 +93,7 @@ class Semaphore {
   /// 取消：唤醒所有等待者（以 [CancelledException] 失败），并让后续 acquire 立即失败。
   ///
   /// 幂等：重复调用无副作用。注意它**不会**打断已经在跑的任务——那由调用方
-  /// 通过关闭 HttpClient / kill 进程完成（设计 §2.3 取消链路三段）。
+  /// 通过关闭 HttpClient / kill 进程完成（取消链路三段）。
   void drain() {
     if (_drained) return;
     _drained = true;

@@ -21,7 +21,7 @@ void main() {
     expect(
       tester.widget<SegmentedButton<bool>>(segmented).selected,
       {true},
-      reason: '默认走代理，与 Kotlin useProxy=true 一致',
+      reason: '默认走代理',
     );
 
     await tester.tap(find.text('直连'));

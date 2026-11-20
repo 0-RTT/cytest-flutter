@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/link_test.dart';
 
-/// 结果排序维度（照搬 Kotlin `LinkSort`）。
+/// 结果排序维度。
 enum LinkSort { speed, latency }
 
 /// 结果行状态：「未测」永远排最后，不论按哪个维度排序。

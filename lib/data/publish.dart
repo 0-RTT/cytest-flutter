@@ -56,7 +56,7 @@ PublishBundle buildPublish({
   final links = expandTemplate(t, targets);
   if (links.isEmpty) throw const PublishException('没有生成任何链接');
 
-  // 与 Kotlin MihomoYaml.build 同构：逐条解析已展开的链接，
+  // 逐条解析已展开的链接，
   // 节点名取各自的 #备注，而不是用模板的序号拼 IP。
   final mihomo = buildMihomoConfig(links, options: options);
 

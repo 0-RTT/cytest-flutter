@@ -6,7 +6,7 @@ import 'link_test.dart';
 
 /// 测速历史落盘：`cytest/linktest/<createdAt>.json`，只保留最近 [maxKeep] 个。
 ///
-/// 为什么只写不读 UI：本次范围「做写入，不做浏览页」（设计 §1 #17）。
+/// 写入与浏览分开：这里只管落盘，浏览与删除在记录页（`history_page.dart`）。
 /// 落盘的价值是「测完刷新就丢」变成「还能捞回来」，浏览页另行迭代。
 class LinkTestStore {
   LinkTestStore({this.maxKeep = 20, Directory? dir}) : _dirOverride = dir;

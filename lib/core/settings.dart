@@ -89,7 +89,7 @@ class AppSettings {
   /// 老数据，迁到 3 之后打标记；用户此后手填 2 就是他自己的选择，不再被覆盖。
   bool speedConcurrencyMigrated;
 
-  /// 已停用：原版 Kotlin 没有「测速代理」这个概念，优选 IP 测速始终直连
+  /// 已停用：优选 IP 测速始终直连，这里不再提供代理开关
   /// （`LocalSpeedProtocol.configJson` 不含 httpProxy，`LocalSpeedRunner` 也不传 `-proxy`）。
   ///
   /// 字段保留只为兼容旧 `settings.json` / 备份文件的读写，**任何代码都不该再读它**；

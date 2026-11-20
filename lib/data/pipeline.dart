@@ -26,7 +26,7 @@ class RunOutput {
 ///
 /// 为什么必须有它：旧实现是「按进程名匹配去杀」（`Process.run` 跑一条 name-match
 /// 命令），而真实可执行文件是 `nativeLibraryDir/libpipeline.so` —— 名字匹配不到
-/// 这个路径，**取消是空操作**，只是给用户一个「已取消」的错觉（设计 §2.3）。
+/// 这个路径，**取消是空操作**，只是给用户一个「已取消」的错觉（取消链路三段）。
 /// 只有握着 `Process` 句柄去 kill 才是真的。
 class PipelineCancelToken {
   Process? _proc;
@@ -187,7 +187,7 @@ class Pipeline {
 
   /// 生成交给 Go 引擎的 config.json。
   ///
-  /// **绝不写 `httpProxy`**：这里与 Kotlin 版严格对齐 ——
+  /// **绝不写 `httpProxy`** ——
   /// 原版 `LocalSpeedProtocol.configJson()` 的字段集只有
   /// `speedTestURL / dialTimeout / downloadTimeout / maxSpeedConcurrency /
   /// maxLatency / maxLatencyConcurrency / MaxSha1Concurrency`，
@@ -224,7 +224,7 @@ class Pipeline {
   }
 }
 
-/// 测速结果 CSV 的一行（原版 Kotlin `TestResult` 的最小字段集）。
+/// 测速结果 CSV 的一行（只保留展示与导出需要的字段）。
 ///
 /// 这个类型存在的意义：**proxyip 文件就是测速结果 CSV**（原版
 /// `ProxyIpRepository.parseCsv` 直接委托 `SpeedResultCsv.parse`），

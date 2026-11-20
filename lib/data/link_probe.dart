@@ -4,75 +4,61 @@ import 'dart:io';
 import '../core/idna.dart';
 
 // ---------------------------------------------------------------------------
-// 全局常量（设计 §12：**全部集中在此文件顶部**，T03 的 PortPool / Runner 直接引用，
+// 全局常量（**全部集中在此文件顶部**，PortPool / Runner 直接引用，
 // 不允许在别处再定义一份同口径的常量）
 // ---------------------------------------------------------------------------
 
-/// 延迟探测并发数。
-/// Kotlin 出处：`LinkTestLimits.kt` → `LATENCY_PARALLEL = 6`
-/// （设计文档 §1 第 8 行引用；对照工程 `D:/cytest-app`）。
+/// 延迟探测并发数：6。
 ///
-/// 6 路 × 12s 上界是可接受的发热/带宽；再高会让死链把队列堵得更久。
+/// 6 路 × 单个探测的上界是可接受的发热/带宽；再高会让死链把队列堵得更久。
 const int kLatencyParallel = 6;
 
-/// 测速并发数。
-/// Kotlin 出处：`LinkTestLimits.kt` → `PARALLEL = 2`（设计 §1 第 9 行）。
+/// 测速并发数：2。
 ///
 /// 带宽是共享资源：并发 >2 测出来的是「总带宽被瓜分后的残值」，横比失真。
 const int kSpeedParallel = 2;
 
-/// 端口池基址。
-/// Kotlin 出处：`LinkTestLimits.kt` → `PORT_BASE`，分配算法见
-/// `LinkTestController.kt:296-308`（`ServerSocket.bind` 逐个验证空闲）。
+/// 端口池基址：从 20000 起逐个 `ServerSocket.bind` 验证空闲。
 const int kPortBase = 20000;
 
-/// 端口池跨度。
-/// Kotlin 出处：`LinkTestLimits.kt` → `PORT_SPAN`，同上 `LinkTestController.kt:296-308`。
+/// 端口池跨度：500 个候选端口。
 const int kPortSpan = 500;
 
-/// 批量启动后等待**全部**入站端口就绪的上限。
-/// Kotlin 出处：`XrayController.kt:91-136` 与 `:199-217`（`awaitPorts` 的 12s）。
+/// 批量启动后等待**全部**入站端口就绪的上限：12s。
 ///
 /// 单项 8s 不够：20 个入站要在同一进程里逐个 bind 并各自建立到节点的 outbound，
 /// 冷启动时最后几个端口常在 9~11s 才起。
 const Duration kPortReadyTimeout = Duration(seconds: 12);
 
-/// 结果每累积多少条刷新一次 UI。
-/// Kotlin 出处：`LinkTestLimits.kt` → `RESULT_FLUSH_EVERY = 8`（设计 §1 第 14 行）。
+/// 结果每累积多少条刷新一次 UI：8。
 ///
 /// 6 路并发下逐条 setState 会明显抖动。
 const int kResultFlushEvery = 8;
 
 /// 吞吐预热字节数（256 KiB）。
-/// Kotlin 出处：`LinkProbe.kt:110-119`（伴生对象常量块）→ `WARMUP_BYTES`。
 ///
 /// 不预热会被 TCP 慢启动严重低估 —— 测出来的是「握手速度」而不是线路速度。
 const int kWarmupBytes = 262144;
 
-/// 吞吐窗口时长（毫秒）。
-/// Kotlin 出处：`LinkProbe.kt:110-119` → `WINDOW_MS`。
+/// 吞吐窗口时长（毫秒）：3s。
 const int kBudgetMs = 3000;
 
 /// 吞吐窗口字节上限（64 MiB）。
-/// Kotlin 出处：`LinkProbe.kt:110-119` → `MAX_BYTES`。
 ///
 /// 防止一条极快线路在 3 秒里读几百 MB（移动网络限流 / 发热）。
 const int kMaxBytes = 67108864;
 
 /// 吞吐窗口时长下限（毫秒）。
-/// Kotlin 出处：`LinkProbe.kt:110-119` → `MIN_WINDOW_MS`。
 ///
 /// 窗口不足 1s 时按 1s 计，避免几十毫秒的窗口把结果放大几十倍。
 const int kMinWindowMs = 1000;
 
-/// 建连超时。
-/// Kotlin 出处：`LinkProbe.kt:117-119` → connectTimeout。
+/// 建连超时：8s。
 const Duration kConnectTimeout = Duration(seconds: 8);
 
 /// 延迟探测的整体死线（read + call）。
 ///
-/// **有意偏离原版**：Kotlin `LinkProbe` 这里是 `READ_TIMEOUT_MS = 12000`。
-/// 改成 5s 的依据与代价（改回去之前请先读完这段）：
+/// 取 5s 而不是更长的依据与代价（改之前请先读完这段）：
 /// - 跨境单程 RTT 200~300ms 时，「TLS 握手 + 一次请求」正常在 1s 内完成，
 ///   5s 已经是 5 倍余量，正常节点不会因此变红；
 /// - 而**端点不可达**（本功能会枚举多个候选端点）常常几百 ms 就建连失败，
@@ -86,8 +72,7 @@ const Duration kConnectTimeout = Duration(seconds: 8);
 /// 不会变成「连接被中断」这种看不懂的话）。
 const Duration kLatencyTimeout = Duration(seconds: 5);
 
-/// 速度探测的整体死线。
-/// Kotlin 出处：`LinkProbe.kt:117-119` → `SPEED_READ_TIMEOUT_MS = 25000`。
+/// 速度探测的整体死线：25s。
 ///
 /// 25s = 「3s 窗口 + 慢启动 + 建连」的合理上界。
 const Duration kSpeedTimeout = Duration(seconds: 25);
@@ -95,7 +80,7 @@ const Duration kSpeedTimeout = Duration(seconds: 25);
 /// 默认测速（**速度阶段**）地址：必须是「大文件」，否则 3s 窗口读不满。
 ///
 /// 注意 `е` 是**西里尔字母 U+0435**（不是拉丁 e），所以必须走 [probeUri] 做
-/// punycode 转换，否则 `HttpClient` 会发出错误主机名（设计 §9 R4）。
+/// punycode 转换，否则 `HttpClient` 会发出错误主机名（IDN 的典型故障）。
 const String kDefaultSpeedUrl = 'https://е.eu.org/300.zip';
 
 /// 默认**延迟阶段**地址：小端点、无 body、无跳转。
@@ -178,7 +163,7 @@ class ProbeTimings {
   String toString() => 'ProbeTimings($summary)';
 }
 
-/// 没读到任何字节时的固定文案（与 Kotlin `LinkProbe` 一致，UI 直接展示）。
+/// 没读到任何字节时的固定文案（UI 直接展示）。
 const String kProbeNoData = '没有读到数据';
 
 /// 超时的固定文案。
@@ -224,13 +209,13 @@ class SpeedSample {
   /// 窗口时长（毫秒，已按 `minWindowMs` 兜底）。
   final int windowMs;
 
-  /// MiB/s（1024² 字节为一 MiB，与 Kotlin 一致，不是 Mbps）。
+  /// MiB/s（1024² 字节为一 MiB，不是 Mbps）。
   double get mibPerSec => windowBytes / (1024 * 1024) / (windowMs / 1000);
 }
 
 /// 吞吐累加器：**纯计算，不碰网络**，因此可以用「喂字节 + 假时间」精确单测。
 ///
-/// 常量照搬 Kotlin `LinkProbe` 伴生对象：
+/// 探测默认值：
 /// - [warmupBytes] 256 KiB：不预热会被 TCP 慢启动严重低估，测出来的是「握手速度」；
 /// - [budgetMs] 3000：窗口过短噪声大；
 /// - [maxBytes] 64 MiB：防止一条极快线路把 3 秒读成几百 MB（移动网络限流/发热）；
@@ -447,7 +432,7 @@ class LinkProbeOutcome {
 
 /// 单节点探测：通过本机某个 Xray 入站口（[localPort]）发真实 HTTPS 请求。
 ///
-/// 与旧「测进程启动耗时」的实现完全不同（设计 §0）：
+/// 与旧「测进程启动耗时」的实现完全不同：
 /// - [latency] 测 **TTFB**（从发起请求到读到第一个字节），不是 ICMP、不是 TCP 握手；
 /// - [speed] 测 **首字节后 3s / 64MiB 窗口的吞吐**。
 ///
@@ -489,7 +474,7 @@ class LinkProbe {
   /// 本机入站端口（Xray 批量配置里 127.0.0.1:[localPort]）。
   final int localPort;
 
-  /// 建连超时（默认 [kConnectTimeout]，照搬 Kotlin 8s）。
+  /// 建连超时（默认 [kConnectTimeout]，8s）。
   ///
   /// 做成**实例参数**而不是 `static const`：否则「超时分支」的单测必须真的等
   /// 12 秒/25 秒，测试会被拖成分钟级；注入短值后语义与默认口径完全一致。
@@ -502,7 +487,7 @@ class LinkProbe {
   /// 见 `LinkTestRunner._runLatencyStage`。
   Duration latencyTimeout;
 
-  /// 速度探测的整体死线（默认 [kSpeedTimeout]，照搬 Kotlin 25s）。
+  /// 速度探测的整体死线（默认 [kSpeedTimeout]，25s）。
   final Duration speedTimeout;
 
   HttpClient? _client;
@@ -714,7 +699,7 @@ class LinkProbe {
     }
   }
 
-  /// 测吞吐（TTFB 兼作延迟，与 Kotlin `LinkProbe.speed` 一致）。
+  /// 测吞吐（TTFB 兼作延迟）。
   ///
   /// 与延迟阶段的差异是**故意的**：这里继续跟 [speedUrl]（大文件）并
   /// `followRedirects = true` —— 吞吐需要真的读到 body，很多大文件端点会
@@ -779,7 +764,7 @@ class LinkProbe {
         if (_cancelled) {
           return LinkProbeOutcome.cancelledAt(sw.elapsedMilliseconds);
         }
-        // 只累加长度，绝不缓存：3s 窗口可能读几十 MB（设计 §3 背压）
+        // 只累加长度，绝不缓存：3s 窗口可能读几十 MB（背压）
         meter.onChunk(chunk.length, sw.elapsedMilliseconds);
         if (meter.reachedBudget || meter.reachedMaxBytes) break;
       }

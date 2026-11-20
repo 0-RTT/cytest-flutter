@@ -4,7 +4,7 @@
 /// 默认测速地址 `https://е.eu.org/300.zip` 里的 `е` 是西里尔字母 U+0435，
 /// 直接交给 `HttpClient` 时会用 ISO-8859-1 编码主机名 → 要么抛错，
 /// 要么发出一个根本不存在的主机名。最坏的后果不是「速度测错」，而是
-/// **每个节点都失败，用户误以为线路全挂了**（设计 §9 R4）。
+/// **每个节点都失败，用户误以为线路全挂了**（IDN 的典型故障）。
 ///
 /// 决策 K1：自实现 RFC 3492 punycode，**零依赖**；不支持的字符显式抛
 /// [UnsupportedIdnException]，绝不静默产出错误结果。
@@ -176,7 +176,7 @@ bool _isAscii(String s) {
 ///
 /// 失败语义：
 /// - 不是 http/https：抛 [FormatException]（文案以「测速地址必须以 http」开头，
-///   与 Kotlin `LinkTestController` 的提示一致）；
+///   给的是可执行的处置建议）；
 /// - 主机名含不支持的字符：抛 [UnsupportedIdnException]，**不返回任何 URI**。
 Uri probeUri(String speedUrl) {
   final trimmed = speedUrl.trim();

@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:cytest/data/mihomo.dart';
 import 'package:cytest/data/node_template.dart';
 
-/// 与 Kotlin `MihomoYamlTest` 对齐的断言集：这份 YAML 要能直接被 mihomo 加载，
+/// 这份 YAML 要能直接被 mihomo 加载，
 /// 段落缺失或格式写错都不会报错，只会静默失效，所以必须逐段钉住。
 const _ws =
     'vless://11111111-2222-3333-4444-555555555555@1.2.3.4:443'
@@ -11,7 +11,7 @@ const _ws =
     '&sni=cf.example.com#A';
 
 void main() {
-  group('mihomo · 完整段落（对齐 Kotlin MihomoYaml）', () {
+  group('mihomo · 完整段落', () {
     test('基础段：mixed-port/profile/日志级别', () {
       final y = buildMihomoConfig(const [_ws]).yaml;
       expect(y, contains('mixed-port: 7890'));

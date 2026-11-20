@@ -83,7 +83,7 @@ class AppState extends ChangeNotifier {
 
   /// R12 预留：为什么代理被停了（一次性、读取即消费）。
   ///
-  /// **A 方案下不写值**，只为 B/C 方案预留接口（设计 §9.1）。
+  /// **A 方案下不写值**，只为 B/C 方案预留接口。
   /// 禁止用它参与任何判定——代理是否可用只看 `xray.mode`。
   String? proxyStopReason;
 
@@ -94,7 +94,7 @@ class AppState extends ChangeNotifier {
   ///
   /// 为什么必须一次性：T04 需要在用户切到「获取数据」时提示「测速已停止代理线路」。
   /// 用持久 bool 存「谁停的代理」会与 `xray.mode` 形成两份事实副本，
-  /// 用户改链接/杀进程重进后会永久僵死为 true（架构师 §9.1 明确否掉这种写法）。
+  /// 用户改链接/杀进程重进后会永久僵死为 true（两份事实副本必然打架）。
   /// 读完即清 → 提示只出现一次，且永远不会与真实状态打架。
   String? takeProxyStopNotice() {
     final notice = _proxyStopNotice;
@@ -156,7 +156,7 @@ class AppState extends ChangeNotifier {
 
   // --- proxyip 文件（与原版一致：cytest/xray/proxyip.csv） -------------------
 
-  /// proxyip 列表文件的路径。与原版 Kotlin `ProxyIpRepository.csvFile`
+  /// proxyip 列表文件的路径。与抓取/推送侧的 `xray/proxyip.csv`
   /// （`filesDir/xray/proxyip.csv`）保持同一相对位置，两端可互换。
   Future<File> _proxyIpFile() async {
     final dir = await Paths.xray();
@@ -383,7 +383,7 @@ class AppState extends ChangeNotifier {
   Future<void> cancel() async {
     // 三阶段取消：必须走 Process 句柄 kill。旧实现按进程名匹配去杀，
     // 匹配不到真实可执行文件（nativeLibraryDir/libpipeline.so），
-    // 是彻底的空操作 —— 用户以为取消了，进程还在跑（设计 §2.3）。
+    // 是彻底的空操作 —— 用户以为取消了，进程还在跑（取消链路三段）。
     final token = _runToken;
     if (token == null) {
       pushLog('没有正在运行的三阶段测试');

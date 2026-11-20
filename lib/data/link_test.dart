@@ -7,10 +7,10 @@ import 'vless.dart';
 import 'xray.dart';
 
 // ---------------------------------------------------------------------------
-// 模型（字段语义与 Kotlin LinkTestModels / LinkTestMode 一一对应）
+// 模型（一次运行的快照 + 单条结果）
 // ---------------------------------------------------------------------------
 
-/// 测速模式。出处：Kotlin `LinkTestMode`。
+/// 测速模式。
 ///
 /// - [latency]：只测 TTFB，最快；
 /// - [speed]：直接测速（速度探测的 TTFB 兼作延迟）；
@@ -31,7 +31,7 @@ enum ProbeState { pending, running, done, failed, cancelled }
 
 /// 单条结果。
 ///
-/// 与 Kotlin `LinkTestResult` 字段一一对应，**只有 [speedMib] 改成可空**（差异 D2）：
+/// 单条探测结果。**只有 [speedMib] 可空**（null = 未测，≠0）：
 /// `null` = 未测（预热未完成 / 未进速度阶段），与「测出 0 MiB/s」严格区分，
 /// 否则排序会把未测项当成「最慢」。
 class LinkTestResult {
@@ -101,7 +101,7 @@ class LinkTestResult {
   /// - 预检失败（[host] 为空）永远不是超时。
   bool get timedOut => failureKind == ProbeFailureKind.timeout;
 
-  /// 结果 key：`host:port`（照搬 Kotlin `withResult` 的 key 口径）。
+  /// 结果 key：`host:port`（节点按顺序入列时用它反查下标）。
   String get key => host.isEmpty ? link : '$host:$port';
 
   /// 是否可用：没有错误且不是取消态。
@@ -209,7 +209,7 @@ class LinkTestRun {
     required this.results,
   });
 
-  /// `createdAt` 的毫秒串（照搬 Kotlin 的 id 口径）。
+  /// `createdAt` 的毫秒串，用作文件名。
   final String id;
 
   /// 创建时刻（毫秒时间戳）。
@@ -275,12 +275,12 @@ typedef LinkTestProgress = void Function(
     List<LinkTestResult> results, String stage);
 
 // ---------------------------------------------------------------------------
-// 端口池（照搬 Kotlin LinkTestController.pick + 修掉「占用时返回 20000」的假成功）
+// 端口池（逐个 bind 探活；全占用时返回不足数，不伪造成功）
 // ---------------------------------------------------------------------------
 
 /// 端口池：从 [kPortBase] 起，在 [kPortSpan] 跨度内逐个 `bind` 验证空闲。
 ///
-/// 差异 D3：Kotlin 的 `freePort()` 在全占用时**兜底返回 20000**（假成功），
+/// 全占用时**绝不**兜底返回 20000（那会让第二个进程 bind 失败、整批报错），
 /// 会导致 xray 启动必失败且原因不可读。这里返回 `(ports, missing)`，
 /// 由调用方明确报「可用本地端口只剩 X 个」。
 class PortPool {
@@ -614,7 +614,7 @@ class LinkTestRunner {
       // 旧实现要求**手机自己**能直连 https://е.eu.org/300.zip，否则整批拒绝开测。
       // 但这条测速的流量本来就全走 VLESS 线路，国内网络直连多半不通 ——
       // 结果就是点了「开始测试」永远停在「准备中」。
-      // Kotlin 原版同样没有这一步（见 LinkTestController），此处对齐。
+      // 这里不做额外预筛：预检只判链接可解析，端口是否通由探测本身回答。
 
       if (nodes.isNotEmpty) {
         // 3) 端口池
@@ -657,7 +657,7 @@ class LinkTestRunner {
         started = true;
 
         // 5) 延迟阶段（6 路）
-        //    speed 模式跳过：速度探测的 TTFB 本身就兼作延迟（照搬 Kotlin），
+        //    speed 模式跳过：速度探测的 TTFB 本身就兼作延迟，
         //    多测一遍既慢又会覆盖掉真实的首字节时间。
         if (mode != LinkTestMode.speed) {
           await _runLatencyStage(
@@ -721,7 +721,7 @@ class LinkTestRunner {
 
   /// 取消：置位 → 关闭在途 HttpClient（在途 `await for` 立即结束）→ 杀进程。
   ///
-  /// 三段缺一不可（设计 §2.3）：只置位队列会继续派发；只关客户端进程还在跑、
+  /// 三段缺一不可（取消链路三段）：只置位队列会继续派发；只关客户端进程还在跑、
   /// 端口不释放；只杀进程则探测端会一直等到 12s 超时才收尾。
   ///
   /// 注意这里**只 drain、不 reopen**：取消后的闸门必须保持关闭，才能挡住本轮

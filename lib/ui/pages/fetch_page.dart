@@ -21,7 +21,7 @@ import 'test_page.dart';
 /// - 纯 HTTP 会被 TLS 指纹拦掉 —— 实测带齐 27 个浏览器头仍返回约 3KB 挑战页
 ///   （`/_fs-ch-*`、`fst-post-back`、`_fs_ch_st` cookie）；
 /// - 插件的 `HeadlessInAppWebView` 有指纹缺陷（零视口 / 无渲染），过不了挑战；
-/// - **原生 `WebView` 不 attach 到任何视图也能过挑战**（Kotlin 版
+/// - **原生 `WebView` 不 attach 到任何视图也能过挑战**（
 ///   `CensysWebFetcher` 就是这样，且它在用户手机上一直可用）。
 ///
 /// 所以本页**没有任何 WebView**：抓取与挑战处理全在原生侧完成（`cytest/censys`
@@ -42,7 +42,7 @@ class _FetchPageState extends State<FetchPage> {
 
   bool _fetching = false;
 
-  /// 抓取走本机 VLESS 代理还是直连。默认走代理（Kotlin 的 `useProxy=true`）。
+  /// 抓取走本机 VLESS 代理还是直连。默认走代理。
   ///
   /// 直连时完全不启动 Xray、也不设 WebView 代理覆盖；适合出口 IP 本来就干净、
   /// 或只是想验证「是不是代理把 Censys 带偏了」的场景。
@@ -114,7 +114,7 @@ class _FetchPageState extends State<FetchPage> {
 
     // 按 ordered 顺序轮换 proxyip；每条出口重启一次 Xray，把 proxyip
     // 替换进 vless 的回源 path，再让原生 WebView 走本地 Xray 端口。
-    // 与 Kotlin CensysFetcher.fetch(query, useProxy) 同构：
+    // 编排：有 Cookie 先走快路径，失败按状态码分流，必要时回退 WebView：
     // - 走代理 + 有线路：逐条出口轮换；
     // - 直连（或没配线路）：只试一次，完全不碰 Xray。
     final hasLine = _useProxy && state.settings.vlessLinks.isNotEmpty;
@@ -147,7 +147,7 @@ class _FetchPageState extends State<FetchPage> {
         lastError = e.message;
         final detail = e.details.isEmpty ? '' : '｜$e';
         // 出口诊断：失败时把「这次到底用哪条线路、回源 path 换成什么」打出来，
-        // 与 Kotlin CensysFetcher 的失败日志对齐 —— 否则只能看到「挑战未过」，
+        // 失败日志必须带上状态码/错误类别 —— 否则只能看到「挑战未过」，
         // 无从判断是出口 IP 脏、path 没换成功、还是 Host/SNI 配错。
         state.pushLog(
           '原生抓取失败（proxyip=${proxy?.key ?? "原样"}）：${e.message}$detail',

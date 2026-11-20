@@ -80,7 +80,7 @@ void main() {
     }
   });
 
-  // 跨端写盘：JSON 里 200.0 是合法写法（Python / Kotlin / 其它端可能这么写）。
+  // 跨端写盘：JSON 里 200.0 是合法写法（其它端可能这么写）。
   // 早期实现 `json['maxLatency'] as int?` 会抛类型错，被 load() 的 catch 吞掉后
   // 返回 AppSettings()，用户的整份设置静默恢复默认 —— 比迁移本身危险得多。
   test('落盘值是 double（200.0 / 1500.5）时不抛错、不被重置整份设置', () async {

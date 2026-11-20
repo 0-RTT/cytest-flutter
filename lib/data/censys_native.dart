@@ -22,7 +22,7 @@ const MethodChannel _channel = MethodChannel('cytest/censys');
 ///
 /// 为什么不是纯 HTTP / 插件 WebView：站点是 Fastly 分级放行，纯 HTTP 在 TLS 层
 /// 就被拒（实测带齐 27 个浏览器头仍返回挑战页）；插件的 headless 实现有指纹缺陷。
-/// 原生 `WebView` 不 attach 也能过挑战 —— 沿用 Kotlin 版 `CensysWebFetcher` 的做法。
+/// 原生 `WebView` 不 attach 也能过挑战 —— 用它代替纯 HTTP 抓取的根本原因。
 ///
 /// [proxyPort] 为 Xray 本地混合口；为空表示直连（大概率被挑战）。
 /// [timeout] 总超时，原生侧默认 25s。

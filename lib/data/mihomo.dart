@@ -1,8 +1,8 @@
-/// mihomo（Clash Meta）配置生成，与 Kotlin `MihomoYaml` / `mihomo配置生成器-v7`
+/// mihomo（Clash Meta）配置生成，字段集合与主流生成器对齐
 /// 逐段对齐：base → rule-providers → tun → sniffer → dns → proxies →
 /// proxy-groups → rules。
 ///
-/// 为什么不用 yaml 库序列化：原版（Kotlin / 生成器 HTML）是手写 emitter，
+/// 为什么不用 yaml 库序列化：手写 emitter 的输出更可控，
 /// 缩进、引号、空块省略都有既定规则，用通用库输出会与预期文本不同
 /// （例如中文名必须加引号、空 Map 必须整段省略）。这里照搬同一套规则。
 library;

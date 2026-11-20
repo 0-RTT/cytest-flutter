@@ -157,7 +157,7 @@ bad-line
       expect(yaml, contains('network: xhttp'));
       expect(yaml, contains('xhttp-opts:'));
       expect(yaml, contains('mode: stream-one'));
-      // 节点名取 #备注，重名追加 (2)（与 Kotlin MihomoYaml 对齐）
+      // 节点名取 #备注，重名追加 (2)
       expect(yaml, contains('name: "节点A"'));
       expect(yaml, contains('"节点A (2)"'));
       expect(yaml, contains('proxy-groups:'));
@@ -168,7 +168,7 @@ bad-line
     });
   });
 
-  group('mihomo · 节点命名（对齐 Kotlin MihomoYaml）', () {
+  group('mihomo · 节点命名', () {
     test('空备注回退 节点-N（带序号，天然不重名）', () {
       final links = expandTemplate(
         'vless://u@1.1.1.1:443?type=tcp',
@@ -179,7 +179,7 @@ bad-line
       expect(yaml, contains('  - name: "节点-2"\n'));
     });
 
-    test('备注含空格与中文时按 Kotlin SAFE_PLAIN 加引号', () {
+    test('备注含空格与中文时按 SAFE_PLAIN 规则加引号', () {
       final yaml = buildMihomoConfig(const [
         'vless://u@1.1.1.1:443?type=tcp#A',
         'vless://u@2.2.2.2:443?type=tcp#香港 01',

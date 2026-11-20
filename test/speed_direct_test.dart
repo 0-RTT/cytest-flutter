@@ -11,10 +11,10 @@ import 'package:flutter_test/flutter_test.dart';
 /// 根本不是 HTTP 代理），于是 553 条候选每一条都在 dialTunnelViaProxy 处
 /// 拿到 400，结果页 100% 显示「代理隧道失败」，一键测试彻底失效。
 ///
-/// 对照 Kotlin 版：`LocalSpeedProtocol.configJson()` 的字段集里没有 httpProxy，
+/// 引擎 config.json 的字段集里没有 httpProxy，
 /// `LocalSpeedRunner.startProcess()` 的参数只有
-/// `-only-speed -targets -config -result`，`app/src/main` 全量 grep `httpProxy`
-/// 零命中 —— 原版的优选 IP 测速是**无条件直连**的。
+/// `-only-speed -targets -config -result`，引擎侧全量 grep `httpProxy`
+/// 零命中 —— 优选 IP 测速是**无条件直连**的。
 ///
 /// 所以这里钉住三件事：
 /// 1. 交给引擎的 config.json 不含 httpProxy；
@@ -40,16 +40,16 @@ void main() {
     return pipelineSrc.substring(start, end);
   }
 
-  test('交给引擎的 config.json 不含 httpProxy（对齐 Kotlin：测速直连）', () {
+  test('交给引擎的 config.json 不含 httpProxy（测速直连）', () {
     final body = configJsonBody();
     expect(body, contains("'speedTestURL'"), reason: 'config 必须仍带测速地址');
     expect(body, isNot(contains('httpProxy')),
         reason: '一旦写回 httpProxy，非 HTTP 代理的地址会让全部候选报「代理隧道失败」');
   });
 
-  test('config.json 的字段集与 Kotlin LocalSpeedProtocol 对齐', () {
+  test('config.json 的字段集与引擎约定一致', () {
     final body = configJsonBody();
-    // Kotlin 版 configJson 的全部字段（口径来源见文件头注释）。
+    // 引擎 configJson 的全部字段（口径见文件头注释）。
     for (final key in [
       'speedTestURL',
       'dialTimeout',
@@ -59,7 +59,7 @@ void main() {
       'maxLatency',
       'MaxSha1Concurrency',
     ]) {
-      expect(body, contains("'$key'"), reason: '缺少 Kotlin 版同名字段 $key');
+      expect(body, contains("'$key'"), reason: '缺少同名字段 $key');
     }
   });
 

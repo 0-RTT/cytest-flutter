@@ -85,7 +85,7 @@ class GitHub {
     required String content,
 
     /// 非空时把请求走本机 VLESS 代理（`127.0.0.1:port`）；空 = 直连。
-    /// 与 Kotlin `GitHubClient.upload(config, ..., proxy)` 的 `proxy` 参数同义。
+    /// 走代理时传本机端口；null = 直连。
     int? proxyPort,
   }) async {
     if (token.trim().isEmpty) throw Exception('先在设置里填 GitHub token');

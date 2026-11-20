@@ -6,8 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:cytest/data/link_probe.dart';
 
 void main() {
-  group('SpeedMeter 预热与窗口（常量对齐 Kotlin LinkProbe）', () {
-    test('常量就是 Kotlin 的那四个：256KiB / 3000ms / 64MiB / 1000ms', () {
+  group('SpeedMeter 预热与窗口（常量口径）', () {
+    test('常量就是那四个：256KiB / 3000ms / 64MiB / 1000ms', () {
       final meter = SpeedMeter();
 
       expect(meter.warmupBytes, 262144);

@@ -13,12 +13,12 @@ const Duration _kPortTimeout = Duration(seconds: 8);
 /// 批量启动时等待**全部**端口就绪的上限。
 ///
 /// **不要在本文件重新定义一个 12s 常量**：口径唯一来源是 `link_probe.dart` 顶部的
-/// [kPortReadyTimeout]（设计 §12 要求常量集中）。同一口径两个名字，T03 一接
+/// [kPortReadyTimeout]（常量集中约定）。同一口径两个名字，T03 一接
 /// `PortPool` 就会出现两份 12s，改一处、漏一处。
 
 /// sigterm 之后等进程自行退出的宽限期；超时再 sigkill。
 ///
-/// 1.2s 的取值来自 Kotlin 侧经验：xray 收到 SIGTERM 后要关闭 20 条连接，
+/// 1.2s 来自实测：xray 收到 SIGTERM 后要关闭 20 条连接，
 /// 通常 100~400ms 内退出；给 1.2s 足够，又不至于让「停止」按钮看起来卡住。
 const Duration kStopGrace = Duration(milliseconds: 1200);
 

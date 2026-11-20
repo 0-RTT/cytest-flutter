@@ -20,7 +20,7 @@ class Vless {
   /// 原始 query 参数（键小写，值已解码）。
   ///
   /// mihomo 配置需要 alpn/flow/pbk/sid/spx/servicename/maxearlydata/xhttp-* 等
-  /// 二十来个参数，逐个建字段太散，保留整张表更贴合 Kotlin `LinkCodec.query`。
+  /// 二十来个参数，逐个建字段太散，保留整张表更直观。
   final Map<String, String> query;
 
   const Vless({
@@ -51,7 +51,7 @@ class Vless {
     if (uuid.isEmpty || host.isEmpty || port <= 0) return null;
 
     // 不用 `uri.queryParameters`：它按 form-urlencoded 语义把 `+` 解成空格，
-    // 而 vless 链接的 `+` 是字面量（Kotlin 的 LinkCodec.decode 也特意避开这点）。
+    // 而 vless 链接的 `+` 是字面量，不能走表单编码那套 `+ → 空格` 规则。
     final q = _parseQuery(uri.query);
     final network = (q['type'] ?? q['network'] ?? 'tcp').toLowerCase();
     final security = (q['security'] ?? 'none').toLowerCase();
@@ -91,7 +91,7 @@ class Vless {
       };
 }
 
-/// Dart 的 Uri.fragment 不会自动解码，这里显式解码以与 Kotlin 版行为一致。
+/// Dart 的 Uri.fragment 不会自动解码，这里显式解码。
 String _decodeFragment(String raw) {
   if (raw.isEmpty) return '';
   try {

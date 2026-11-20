@@ -38,11 +38,11 @@ class _PublishPageState extends State<PublishPage> {
   String _mode = 'sub';
 
   /// 推 GitHub 时是否走本机 VLESS 代理。默认直连（国内网络通常可达 API）。
-  /// 打开后临时起一条 Xray，推完立即关闭 —— 与 Kotlin `github.viaProxy` 一致。
+  /// 打开后临时起一条 Xray，推完立即关闭。
   bool _useProxy = false;
   bool _busy = false;
 
-  /// mihomo 高级选项（默认与 Kotlin MihomoOptions / 生成器一致，全开）。
+  /// mihomo 高级选项（默认全开，与主流生成器一致）。
   MihomoOptions _options = const MihomoOptions();
   bool _advanced = false;
   late final TextEditingController _lanDns = TextEditingController();
