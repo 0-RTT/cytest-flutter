@@ -478,9 +478,12 @@ class _VlessTestPageState extends State<VlessTestPage> {
                         : theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-                Text(
-                  r.latencyKnown ? '${r.latencyMs} ms' : '—',
-                  style: TextStyle(fontSize: 11, color: theme.hintColor),
+                Tooltip(
+                  message: '建连后一跳往返（与 v2rayN「真连接延迟」同口径）',
+                  child: Text(
+                    r.latencyKnown ? '${r.latencyMs} ms' : '—',
+                    style: TextStyle(fontSize: 11, color: theme.hintColor),
+                  ),
                 ),
               ],
             ),

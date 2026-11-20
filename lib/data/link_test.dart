@@ -394,6 +394,10 @@ class LinkTestRunner {
                   speedUrl: speed,
                   latencyUrl: latency,
                   localPort: port,
+                  // 生产路径开启预热：第一次请求含「建隧道 + CONNECT + 到目标
+                  // TLS」约 4~5 个 RTT，用它当延迟会出现「v2rayN 80ms / 我们
+                  // 1000ms」的不可比读数（两者量的不是同一段）。
+                  warmUp: true,
                 ));
 
   /// 速度阶段地址（大文件端点）。

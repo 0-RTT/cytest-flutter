@@ -148,7 +148,15 @@ class ProbeTimings {
     this.headerMs = -1,
     this.firstByteMs = -1,
     this.redirects = 0,
+    this.warmupMs = -1,
   });
+
+  /// 预热那一次的耗时（建隧道 + CONNECT + TLS + 一个往返），**不计入读数**。
+  ///
+  /// 它和 [connectMs] 的区别是「第一次」与「第二次」：第一次必然包含
+  /// 到节点的 TCP/TLS 以及 xray 建立 outbound 的成本，第二次在同一条
+  /// keep-alive 连接上只剩一跳往返。
+  final int warmupMs;
 
   /// 建连（CONNECT 隧道 + TLS 握手）完成时刻。
   final int connectMs;
@@ -164,7 +172,7 @@ class ProbeTimings {
 
   /// 一行可读的分项（直接进日志）。
   String get summary => '建连=$connectMs 响应头=$headerMs 首字节=$firstByteMs '
-      '跳转=$redirects';
+      '跳转=$redirects 预热=$warmupMs';
 
   @override
   String toString() => 'ProbeTimings($summary)';
@@ -448,6 +456,7 @@ class LinkProbe {
   LinkProbe({
     this.speedUrl = kDefaultSpeedUrl,
     this.latencyUrl = kDefaultLatencyUrl,
+    this.warmUp = false,
     required this.localPort,
     this.connectTimeout = kConnectTimeout,
     this.latencyTimeout = kLatencyTimeout,
@@ -463,6 +472,19 @@ class LinkProbe {
   /// [speedUrl]：大文件端点的首字节会被服务端缓冲推迟，且常带跨主机跳转，
   /// 两者叠加能让读数比 v2rayN 大一倍以上（Bug B）。
   final String latencyUrl;
+
+  /// 是否先预热一次再计时（生产链路测速用 true，单测默认 false）。
+  ///
+  /// 为什么需要这个开关：预热会把每个节点的请求数从 1 变成 2，而探测层的
+  /// 大量既有断言（「302 只发一次」「超时只发一次」…）都按 1 计数。
+  /// 默认 false 让这些语义保持原样，生产路径由 runner 显式打开。
+  ///
+  /// 为什么生产要预热：第一次请求必然包含「到节点 TCP/TLS + xray 建 outbound
+  /// + CONNECT + 到目标 TLS」约 4~5 个 RTT，那是**建连成本**不是延迟读数。
+  /// 拿它当延迟就会出现「v2rayN 80ms、我们 1000ms」——两者量的不是同一段。
+  /// 预热后计时的是同一条 keep-alive 连接上的第二次往返，与 v2rayN 的可比性
+  /// 才对得上。预热本身的耗时记在 [ProbeTimings.warmupMs] 里供诊断。
+  final bool warmUp;
 
   /// 本机入站端口（Xray 批量配置里 127.0.0.1:[localPort]）。
   final int localPort;
@@ -525,6 +547,9 @@ class LinkProbe {
 
   /// 挂看门狗：Dart 的 `HttpClient` 没有 callTimeout，到点必须自己 `close(force)`。
   Timer _armWatchdog(HttpClient client, Duration limit) {
+    // latency() 会挂两次（预热一次、计时一次），先撤旧的，否则预热那次的
+    // 定时器会在计时阶段中途开火，把正常的读数误判成超时。
+    _watchdog?.cancel();
     _timedOut = false;
     _watchdog = Timer(limit, () {
       // 置标记要在 close 之前：close 会同步/异步地让在途 future 失败，
@@ -559,15 +584,46 @@ class LinkProbe {
   /// 4xx/5xx 与「200 但一个字节都没有」仍是失败 —— 前者证明线路通不通，
   /// 后者证明端点有没有真的回数据，两件事不能混。
   Future<LinkProbeOutcome> latency() async {
-    final sw = Stopwatch()..start();
     final client = _newClient();
+    final totalSw = Stopwatch()..start();
     _armWatchdog(client, latencyTimeout);
     try {
-      // ① 建连：CONNECT 隧道 + TLS 握手（dart:io 不暴露分界，只能合并计时）
+      var warmupMs = -1;
+      if (warmUp) {
+        // ① 预热（**不计时**）：建隧道 → CONNECT → 到目标 TLS 握手 → 一个完整
+        //    往返。这一段证明「线路真的能通」，但它的耗时是**建连成本**，不是
+        //    延迟读数：里面含到节点的 TCP/TLS、xray 建 outbound、到目标的
+        //    CONNECT 与 TLS，通常 4~5 个 RTT。把它算进延迟，就会出现
+        //    「v2rayN 显示 80ms、我们显示 1000ms」——两者量的不是同一段。
+        final warmupSw = Stopwatch()..start();
+        final warm = await client.getUrl(latencyUri);
+        warm.followRedirects = false;
+        final warmResponse = await warm.close();
+        warmupMs = warmupSw.elapsedMilliseconds;
+        // 必须排空，否则连接回不到池里，下一次会重新建连（读数又变成含建连）。
+        await warmResponse.drain<void>().catchError((Object _) {});
+
+        if (_cancelled) return LinkProbeOutcome.cancelledAt(warmupMs);
+        if (warmResponse.statusCode >= 400) {
+          return LinkProbeOutcome.failure(
+            'HTTP ${warmResponse.statusCode}',
+            warmupMs,
+            timings: ProbeTimings(warmupMs: warmupMs),
+            kind: ProbeFailureKind.http,
+          );
+        }
+
+        // 计时那一段单独挂看门狗：预热已经花掉一个 latencyTimeout 的预算，
+        // 不能让它连带把计时阶段的正常往返误判成超时。
+        _armWatchdog(client, latencyTimeout);
+      }
+
+      // ② 计时：同一条 keep-alive 连接上的**第二次**往返（一跳 RTT）。
+      //    这是与 v2rayN「真连接延迟」同量级的口径：隧道已建好，只量一个来回。
+      final sw = Stopwatch()..start();
       final request = await client.getUrl(latencyUri);
       final connectMs = sw.elapsedMilliseconds;
       request.followRedirects = false;
-      // ② 一个完整 HTTP 往返（发请求 → 响应头）
       final response = await request.close();
       final headerMs = sw.elapsedMilliseconds;
       if (_cancelled) {
@@ -581,6 +637,7 @@ class LinkProbe {
         // 不跟随跳转，所以 redirects 恒为 0；记录下来是为了日后有人把它
         // 改回 true 时，日志里能立刻看出「跳转数 > 0」这个异常。
         redirects: response.redirects.length,
+        warmupMs: warmupMs,
       );
 
       if (code >= 400) {
@@ -632,23 +689,24 @@ class LinkProbe {
           headerMs: headerMs,
           firstByteMs: firstByteMs,
           redirects: timings.redirects,
+          warmupMs: warmupMs,
         ),
       );
     } on Object catch (e) {
       if (_cancelled) {
-        return LinkProbeOutcome.cancelledAt(sw.elapsedMilliseconds);
+        return LinkProbeOutcome.cancelledAt(totalSw.elapsedMilliseconds);
       }
       // 看门狗先开枪时 e 会是「连接被中断」这类看不懂的话，见 [_timedOut]。
       if (_timedOut) {
         return LinkProbeOutcome.failure(
           kProbeTimeout,
-          sw.elapsedMilliseconds,
+          totalSw.elapsedMilliseconds,
           kind: ProbeFailureKind.timeout,
         );
       }
       return LinkProbeOutcome.failure(
         humanizeProbeError(e),
-        sw.elapsedMilliseconds,
+        totalSw.elapsedMilliseconds,
         kind: classifyProbeFailure(e),
       );
     } finally {
