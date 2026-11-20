@@ -150,24 +150,6 @@ jobs:
       # （约 700MB，解压后 2.2GB，实测占 release 构建的大头）。
       # 直接缓存解压后的目录：命中时插件看到「已安装」就跳过下载与解压。
       # 放在这里而不是更早：PR 不构建 APK，不需要 NDK。
-      # Gradle **build cache 的持久后端**。
-      #
-      # 之前记录过「caching 开关无效」，原因不是开关，而是缓存目录每次都是空的：
-      # 一次性 runner 没有可复用的 build cache。现在把它也交给 actions/cache，
-      # 第二次起 R8 / dex / 资源处理这些可缓存任务才可能命中（日志里出现
-      # `FROM-CACHE`）。
-      #
-      # key 固定不带 hash —— 与 modules-2 同一条教训：hash 进 key 会为每次改动
-      # 生成新条目，把 10GB 配额顶满。真要整体失效，把 v1 改成 v2。
-      - name: Cache Gradle build cache
-        if: github.event_name != 'pull_request'
-        uses: actions/cache@v4
-        with:
-          path: ~/.gradle/caches/build-cache-1
-          key: gradle-build-cache-${{ runner.os }}-v1
-          restore-keys: |
-            gradle-build-cache-${{ runner.os }}-
-
       - name: Cache Android NDK
         if: github.event_name != 'pull_request'
         uses: actions/cache@v4
@@ -270,11 +252,6 @@ jobs:
             echo "本地 flutter build apk --release 验证通过后再发版。"
             exit 1
           fi
-          # 顺手统计缓存命中：命中数为 0 说明这套 build cache 对本项目无效，
-          # 下次别再花时间调它（写进 Job Summary，点开 run 就能看到）。
-          FROM_CACHE=$(grep -c "FROM-CACHE" /tmp/build.log || true)
-          echo "Gradle 任务 FROM-CACHE 数：$FROM_CACHE"
-          { echo "### 构建缓存"; echo "- Gradle \`FROM-CACHE\` 任务数：$FROM_CACHE"; } >> "$GITHUB_STEP_SUMMARY"
           ls -lh build/app/outputs/flutter-apk/
 
       # 把「这次到底用了什么版本」固化下来：构建不可复现，但必须可追溯。

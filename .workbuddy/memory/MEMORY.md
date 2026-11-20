@@ -65,6 +65,20 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 验证：`source .toolchain/env.sh && flutter build apk --debug` → 4 分钟出
 `build/app/outputs/flutter-apk/app-debug.apk`。
 
+
+### CI 构建耗时：什么有效、什么无效（2026-11-20 实测）
+
+| 改动 | 效果 |
+|---|---|
+| pub 缓存 | pub get 30~60s → **0~1s** |
+| Flutter SDK 缓存（钉死版本后） | setup 41s → **13~26s** |
+| xray 二进制缓存 | 下载 ~8s → **0s** |
+| NDK 28.2 缓存（解压目录） | Build APK −50s（原来每次都下 700MB） |
+| **Gradle build-cache 持久化** | **0 命中，无效，已撤**（日志 `FROM-CACHE 数：0`） |
+
+底线：`Build release APK` 189~261s 主要是 Dart AOT + R8/dex + 资源打包的 CPU 时间，
+以及 runner 机型波动（同代码 189/210/258/308s 都出现过）。**别再拿单次时长归因**。
+
 ## 4. UI 铁律
 
 - Scaffold body 包 `SafeArea(top: false, ...)`；有 bottomNavigationBar 时其 bottom padding 被清零。
