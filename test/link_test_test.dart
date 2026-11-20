@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,10 @@ import 'package:cytest/data/link_test_store.dart';
 import 'package:cytest/data/vless.dart';
 import 'package:cytest/data/xray.dart';
 import 'package:cytest/state/app_state.dart';
+
+/// 单测里延迟与速度都指向同一个本地服务：`http://` 目标走 absolute-form，
+/// fake 入站不需要 CONNECT/TLS 就能扮演「本机 xray 入站」。
+const String _testUrl = 'http://speed.test/300.zip';
 
 /// 造一条最小可用 vless（只填 runner/Vless.tryParse 会读的字段）。
 String _link(String host, int port, {String? name}) =>
@@ -91,6 +96,142 @@ Future<HttpServer> _hang() async {
   });
   return server;
 }
+
+/// 按「探测到的延迟端点 URL」决定结果的探测（模拟端点不可达 / 可通）。
+///
+/// 用它就能在不碰网络的前提下验「换端点重跑」：同一个探针类，换个 URL 就换个
+/// 行为，和真实世界里「cp.cloudflare.com 挂了但 gstatic 是通的」同构。
+class _UrlScriptedProbe extends LinkProbe {
+  _UrlScriptedProbe({
+    required super.speedUrl,
+    required super.latencyUrl,
+    required super.localPort,
+    required this.onLatency,
+    required this.inFlight,
+  });
+
+  /// 延迟结果由「这次打的是哪个 URL」决定。
+  final Future<LinkProbeOutcome> Function(String url) onLatency;
+
+  /// 在飞计数（验「重试路径也不许超过 6 路并发」）。
+  final void Function(int delta) inFlight;
+
+  @override
+  Future<LinkProbeOutcome> latency() async {
+    inFlight(1);
+    try {
+      return await onLatency(latencyUrl);
+    } finally {
+      inFlight(-1);
+    }
+  }
+
+  @override
+  Future<LinkProbeOutcome> speed() async =>
+      const LinkProbeOutcome(ttfbMs: 20, speedMib: 1.0, elapsedMs: 100);
+}
+
+/// 可精确卡住 `stop()` 的批量启动器。
+///
+/// 用途：`LinkTestRunner.cancel()` 最后一步是 `await _xray.stop()`，
+/// 把这一步挂住就能**确定地**制造「用户已点取消、收尾还没回来」这个窗口，
+/// 不必用 sleep 去赌时序。语义与真实现一致：`startBatch` 第一行就 `stop()`。
+class _GatedXray implements BatchXray {
+  @override
+  XrayMode mode = XrayMode.none;
+
+  /// 非 null 时，下一次 `stop()` 会等它完成（消费后自动置回 null）。
+  Completer<void>? gate;
+
+  int startCalls = 0;
+  int stopCalls = 0;
+
+  @override
+  Future<String?> startBatch(List<(Vless, int)> nodes) async {
+    startCalls++;
+    await stop();
+    mode = XrayMode.batch;
+    return null;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+    mode = XrayMode.none;
+    final pending = gate;
+    if (pending != null) {
+      gate = null;
+      await pending.future;
+    }
+  }
+}
+
+/// 只在 [release]（或被 [cancel]）之后才返回的探测。
+///
+/// 同样是为了去掉 sleep：测试可以确定「探测正在跑、还没出结果」。
+class _GatedProbe extends LinkProbe {
+  _GatedProbe({required super.localPort});
+
+  final Completer<void> _gate = Completer<void>();
+
+  int latencyCalls = 0;
+
+  /// 放行：让在途的 latency() 立刻返回。
+  void release() {
+    if (!_gate.isCompleted) _gate.complete();
+  }
+
+  @override
+  Future<LinkProbeOutcome> latency() async {
+    latencyCalls++;
+    await _gate.future;
+    return const LinkProbeOutcome(ttfbMs: 5, elapsedMs: 5);
+  }
+
+  @override
+  void cancel() {
+    super.cancel();
+    // 真实的 cancel() 会让在途请求立刻结束；这里等价成放行，避免测试挂死。
+    release();
+  }
+}
+
+/// 造一个「整批延迟失败」用的 runner：延迟端点固定为首选
+/// `http://first.test/generate_204`，每条探测的结果由 [onLatency] 按
+/// (端点 URL, 入站端口) 决定。
+///
+/// 为什么要把端口透给假件：同一条候选端点上，「a 超时、b 连接失败」这种混合
+/// 整批正是本次判定的关键场景，只按 URL 分派就表达不出来。
+LinkTestRunner _batchRunner({
+  required Future<LinkProbeOutcome> Function(String url, int port) onLatency,
+  required List<String> seen,
+  required List<int> ports,
+  void Function(String message)? onLog,
+}) =>
+    LinkTestRunner(
+      xray: _FakeXray(),
+      speedUrl: 'http://speed.test/300.zip',
+      latencyUrl: 'http://first.test/generate_204',
+      pool: _FixedPool(ports),
+      onLog: onLog,
+      probeFactory: (speedUrl, latencyUrl, port) {
+        seen.add(latencyUrl);
+        return _UrlScriptedProbe(
+          speedUrl: speedUrl,
+          latencyUrl: latencyUrl,
+          localPort: port,
+          inFlight: (_) {},
+          onLatency: (url) => onLatency(url, port),
+        );
+      },
+    );
+
+/// 「5s 死线到点」这种失败（结构化类别是 timeout，不是靠文案）。
+LinkProbeOutcome _timeoutOutcome() => LinkProbeOutcome.failure(
+      kProbeTimeout,
+      kLatencyTimeout.inMilliseconds,
+      kind: ProbeFailureKind.timeout,
+    );
 
 void main() {
   group('idnaToAscii · RFC 3492 官方样例（K1 硬要求 ≥5 条）', () {
@@ -480,6 +621,43 @@ void main() {
       expect(restored.latencyMs, 88);
       expect(restored.state, ProbeState.done);
     });
+
+    test('timedOut 标志随 JSON 往返保真，且不污染 ok / hasSpeed 语义', () {
+      final timedOutResult = LinkTestResult(
+        link: 'vless://t',
+        name: 't',
+        host: '1.1.1.1',
+        port: 443,
+        error: kProbeTimeout,
+        elapsedMs: kLatencyTimeout.inMilliseconds,
+        state: ProbeState.failed,
+        failureKind: ProbeFailureKind.timeout,
+      );
+
+      final restored = LinkTestResult.fromJson(timedOutResult.toJson());
+      expect(restored.timedOut, isTrue);
+      expect(restored.error, kProbeTimeout);
+      expect(restored.ok, isFalse, reason: '超时必然不可用（error 非 null）');
+      expect(restored.hasSpeed, isFalse);
+      expect(restored.speedMib, isNull, reason: '未测 ≠ 0');
+
+      // copyWith 可以用 `ProbeFailureKind.none` 显式复位（与 error 的 `??` 限制不同）。
+      expect(
+        restored.copyWith(failureKind: ProbeFailureKind.none).timedOut,
+        isFalse,
+      );
+      expect(restored.copyWith(elapsedMs: 1).timedOut, isTrue,
+          reason: '不改 timedOut 时必须原样保留');
+
+      // 旧历史文件两个键都没有 → 类别缺省 none，读盘不能抛。
+      final legacy = LinkTestResult.fromJson(
+        restored.toJson()
+          ..remove('timedOut')
+          ..remove('failureKind'),
+      );
+      expect(legacy.timedOut, isFalse);
+      expect(legacy.error, kProbeTimeout);
+    });
   });
 
   group('PortPool / bindPortsToNodes（D3：不再假成功）', () {
@@ -555,7 +733,8 @@ void main() {
       final xray = _FakeXray();
       final saved = <LinkTestRun>[];
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: xray,
         pool: _FixedPool(<int>[server.port]),
         saver: (run) async => saved.add(run),
@@ -581,7 +760,8 @@ void main() {
       final server = await _serve(bodyBytes: 2 * 1024 * 1024);
       addTearDown(() => server.close(force: true));
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
       );
@@ -595,6 +775,73 @@ void main() {
       expect(result.hasSpeed, isTrue);
     });
 
+    test('auto 模式：速度阶段不得覆盖延迟阶段的 TTFB（Bug B 第二条根因）', () async {
+      // 一个按路径分流的本地入站：
+      // - `generate_204` → 立刻 204（= 延迟端点，口径干净）
+      // - 其余（300.zip）→ 先压 400ms 再吐 body（= 大文件端点被服务端缓冲推迟，
+      //   真实线路里还会叠加一次跨主机跳转的建链）
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        final response = request.response;
+        if (request.uri.path.contains('generate_204')) {
+          response.statusCode = HttpStatus.noContent;
+          await response.close();
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        const total = kWarmupBytes + 2 * 1024 * 1024;
+        response.statusCode = 200;
+        response.contentLength = total;
+        response.add(List<int>.filled(total, 0x41));
+        await response.close();
+      });
+      addTearDown(() => server.close(force: true));
+
+      final runner = LinkTestRunner(
+        speedUrl: _testUrl,
+        latencyUrl: 'http://speed.test/generate_204',
+        xray: _FakeXray(),
+        pool: _FixedPool(<int>[server.port]),
+      );
+
+      final run = await runner.run(<String>[_link('a.example', 443)]);
+
+      final result = run.results.single;
+      expect(result.state, ProbeState.done);
+      expect(result.speedMib, isNotNull, reason: '速度阶段本身要能出数');
+      expect(
+        result.latencyMs,
+        lessThan(300),
+        reason: '延迟读数必须是延迟阶段（小端点）的数；'
+            '若被速度阶段的 TTFB（≥400ms，含服务端缓冲/跳转）覆盖，这里就会超 400',
+      );
+    });
+
+    test('speed 模式（没测过延迟）：速度阶段的 TTFB 兼作延迟', () async {
+      final server =
+          await _serve(delayMs: 10, bodyBytes: kWarmupBytes + 2 * 1024 * 1024);
+      addTearDown(() => server.close(force: true));
+      final runner = LinkTestRunner(
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
+        xray: _FakeXray(),
+        pool: _FixedPool(<int>[server.port]),
+      );
+
+      final run = await runner.run(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.speed,
+      );
+
+      final result = run.results.single;
+      expect(result.speedMib, isNotNull);
+      expect(
+        result.latencyKnown,
+        isTrue,
+        reason: 'speed-only 模式下延迟只能由速度阶段提供，不能因为「保留延迟」而变成未知',
+      );
+    });
+
     test('auto 模式：死链只有延迟阶段，不进速度阶段（省 3s 空转）', () async {
       // 拿一个「一定没人监听」的端口：bind 后立刻关掉
       final probe = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
@@ -603,13 +850,15 @@ void main() {
 
       var probeCalls = 0;
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[deadPort]),
-        probeFactory: (url, port) {
+        probeFactory: (speedUrl, latencyUrl, port) {
           probeCalls++;
           return LinkProbe(
-            speedUrl: url,
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
             localPort: port,
             latencyTimeout: const Duration(seconds: 2),
           );
@@ -620,7 +869,18 @@ void main() {
 
       expect(run.results.single.error, isNotNull);
       expect(run.results.single.state, ProbeState.failed);
-      expect(probeCalls, 1, reason: '死链只应被探测一次（不进速度阶段）');
+      expect(run.results.single.speedMib, isNull, reason: '死链不进速度阶段');
+      // 延迟阶段会按候选端点链重试，本用例 latencyUrl 与 speedUrl 相同，
+      // 去重后 = [speedUrl, cp.cloudflare.com, gstatic] → 上限 3 次。
+      //
+      // ⚠️ 这里**不能**断言「恰好 N 次」：连一个没人监听的回环端口，在本机实测
+      // 走的是看门狗死线而不是立即 ECONNREFUSED，也就是 `failureKind == timeout`
+      // 而非 connect —— 而超时触发几次切换取决于「首轮是否允许切一次」的口径
+      // （见 `LinkTestRunner._runLatencyStage` 的 timedOutCount 分支），口径一变
+      // 次数就变。这条用例真正要守的是「死链不许进速度阶段」：一旦跑进速度阶段，
+      // probeCalls 会变成 延迟尝试次数 + 1，用上界即可把它抓出来。
+      expect(probeCalls, lessThanOrEqualTo(kLatencyMaxAttempts),
+          reason: '死链最多在候选端点间重试到上限，但不该进速度阶段');
     });
 
     test('K5 正控制：门禁通过时探针**确实被调用**（证明计数器会动）', () async {
@@ -628,12 +888,14 @@ void main() {
       addTearDown(() => server.close(force: true));
       var probeCalls = 0;
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
-        probeFactory: (url, port) {
+        probeFactory: (speedUrl, latencyUrl, port) {
           probeCalls++;
-          return LinkProbe(speedUrl: url, localPort: port);
+          return LinkProbe(
+              speedUrl: speedUrl, latencyUrl: latencyUrl, localPort: port);
         },
       );
 
@@ -653,13 +915,15 @@ void main() {
       var probeCalls = 0;
       final saved = <LinkTestRun>[];
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: _FakeXray(startError: tail),
         pool: _FixedPool(<int>[20000, 20001]),
         saver: (run) async => saved.add(run),
-        probeFactory: (url, port) {
+        probeFactory: (speedUrl, latencyUrl, port) {
           probeCalls++;
-          return LinkProbe(speedUrl: url, localPort: port);
+          return LinkProbe(
+              speedUrl: speedUrl, latencyUrl: latencyUrl, localPort: port);
         },
       );
 
@@ -682,7 +946,8 @@ void main() {
       addTearDown(() => server.close(force: true));
       final xray = _FakeXray(initialMode: XrayMode.line);
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: xray,
         pool: _FixedPool(<int>[server.port]),
       );
@@ -698,7 +963,8 @@ void main() {
       final server = await _serve(delayMs: 10);
       addTearDown(() => server.close(force: true));
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
       );
@@ -712,7 +978,7 @@ void main() {
     test('端口不足：抛可读文案且不启动进程', () async {
       final xray = _FakeXray();
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl, latencyUrl: _testUrl,
         xray: xray,
         pool: _FixedPool(<int>[20000]), // 2 个节点只给 1 个端口
       );
@@ -741,12 +1007,19 @@ void main() {
       final xray = _FakeXray();
       final runner = LinkTestRunner(
         speedUrl: 'http://127.0.0.1:1/300.zip',
+        latencyUrl: 'http://127.0.0.1:1/300.zip',
         xray: xray,
         pool: _FixedPool(<int>[server.port]),
-        probeFactory: (url, port) {
+        probeFactory: (speedUrl, latencyUrl, port) {
           probeCalls++;
-          return LinkProbe(speedUrl: 'http://127.0.0.1:${server.port}/300.zip',
-              localPort: port);
+          // 两个地址都改指本地服务：这条用例要验的是「不做直连探活」，
+          // 不是「探测地址是否可达」。
+          final reachable = 'http://127.0.0.1:${server.port}/300.zip';
+          return LinkProbe(
+            speedUrl: reachable,
+            latencyUrl: reachable,
+            localPort: port,
+          );
         },
       );
 
@@ -764,7 +1037,8 @@ void main() {
       final server = await _serve(delayMs: 10);
       addTearDown(() => server.close(force: true));
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
       );
@@ -786,11 +1060,13 @@ void main() {
       addTearDown(() => server.close(force: true));
       final xray = _FakeXray();
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: xray,
         pool: _FixedPool(<int>[server.port, server.port]),
-        probeFactory: (url, port) => LinkProbe(
-          speedUrl: url,
+        probeFactory: (speedUrl, latencyUrl, port) => LinkProbe(
+          speedUrl: speedUrl,
+          latencyUrl: latencyUrl,
           localPort: port,
           latencyTimeout: const Duration(seconds: 10),
         ),
@@ -817,7 +1093,8 @@ void main() {
       final server = await _serve(delayMs: 10);
       addTearDown(() => server.close(force: true));
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: _FakeXray(),
         pool: _FixedPool(<int>[server.port]),
         saver: (run) async => throw const FileSystemException('磁盘满'),
@@ -829,6 +1106,726 @@ void main() {
       );
 
       expect(run.results.single.latencyKnown, isTrue);
+    });
+
+    // -----------------------------------------------------------------------
+    // 端点分离：延迟与速度是两条口径，runner 必须能分别持有、且「换地址」
+    // 只对下一轮生效（同一轮混用会得到不可比的读数）。
+    // -----------------------------------------------------------------------
+    test('构造时给空地址 → 回落默认端点（否则每条线路都报「地址非法」）', () {
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: '   ',
+        latencyUrl: '',
+      );
+
+      expect(runner.speedUrl, kDefaultSpeedUrl);
+      expect(runner.latencyUrl, kDefaultLatencyUrl);
+    });
+
+    test('configureUrls：下一轮打新端点；空串=**重置为默认**（不是忽略）', () async {
+      final server = await _serve(delayMs: 10);
+      addTearDown(() => server.close(force: true));
+      final seen = <(String, String)>[];
+
+      final runner = LinkTestRunner(
+        speedUrl: 'http://old.test/300.zip',
+        latencyUrl: 'http://old.test/generate_204',
+        xray: _FakeXray(),
+        pool: _FixedPool(<int>[server.port]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add((speedUrl, latencyUrl));
+          // 真正探测打本地服务，避免依赖外部网络；地址只用来记录「传了什么」。
+          return LinkProbe(
+            speedUrl: _testUrl,
+            latencyUrl: _testUrl,
+            localPort: port,
+          );
+        },
+      );
+
+      await runner
+          .run(<String>[_link('a.example', 443)], mode: LinkTestMode.latency);
+      expect(seen.last,
+          ('http://old.test/300.zip', 'http://old.test/generate_204'),
+          reason: '默认工厂的参数顺序不能串（速度在前、延迟在后）');
+
+      runner.configureUrls(
+        speedUrl: 'http://new.test/300.zip',
+        latencyUrl: '',
+      );
+      await runner
+          .run(<String>[_link('a.example', 443)], mode: LinkTestMode.latency);
+
+      expect(seen.last.$1, 'http://new.test/300.zip');
+      expect(
+        seen.last.$2,
+        kDefaultLatencyUrl,
+        reason: '空串 = 恢复默认（用户视角「清空输入框」就是「用默认」），'
+            '不能沿用上一轮的自定义值，也不能真的拿空串去探测',
+      );
+      expect(runner.latencyUrl, kDefaultLatencyUrl);
+      expect(
+        seen.last.$1,
+        isNot(isEmpty),
+        reason: '速度地址同样有兜底：不能变成空串',
+      );
+    });
+
+    test('configureUrls 传空格也算空：两个地址各自回落到自己的默认值', () {
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://custom.test/300.zip',
+        latencyUrl: 'http://custom.test/generate_204',
+      );
+
+      runner.configureUrls(speedUrl: '   ', latencyUrl: '  ');
+
+      expect(runner.speedUrl, kDefaultSpeedUrl);
+      expect(runner.latencyUrl, kDefaultLatencyUrl);
+    });
+
+    test('一轮被取消后同时发起两个 run：后到者被拒，且不能把先到者的登记清掉', () async {
+      // 可切换入站：hang=true 挂住（第一轮），false 立刻回 204（后续轮次）。
+      var hang = true;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        if (hang) return;
+        final response = request.response;
+        response.statusCode = HttpStatus.noContent;
+        await response.close();
+      });
+      addTearDown(() => server.close(force: true));
+
+      final runner = LinkTestRunner(
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
+        xray: _FakeXray(),
+        pool: _FixedPool(<int>[server.port]),
+        probeFactory: (speedUrl, latencyUrl, port) => LinkProbe(
+          speedUrl: speedUrl,
+          latencyUrl: latencyUrl,
+          localPort: port,
+          latencyTimeout: const Duration(seconds: 10),
+        ),
+      );
+
+      final first = runner.run(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+
+      final cancelling = runner.cancel();
+      hang = false;
+      // 两个调用同时等第一轮收尾：先到者登记新一轮，后到者必须被拒。
+      final winner = runner.run(
+        <String>[_link('b.example', 8443)],
+        mode: LinkTestMode.latency,
+      );
+      final loser = runner.run(
+        <String>[_link('c.example', 9443)],
+        mode: LinkTestMode.latency,
+      );
+
+      await expectLater(
+        loser,
+        throwsA(
+          isA<LinkTestException>().having(
+            (e) => e.message,
+            'message',
+            contains('还在进行'),
+          ),
+        ),
+        reason: '第二轮不能被两个调用同时开起来',
+      );
+
+      await cancelling;
+      await first;
+
+      // 关键回归：后到者被拒后，**先到者的登记必须还在**。
+      // 若登记被后到者清掉（修复前的行为：无条件赋值 + identical 判真清空），
+      // 这里取消先到者后立刻再开一轮就会命中「上一次测速还在进行」——
+      // 也就是 Bug A 换了个入口复发。
+      await runner.cancel();
+      final next = await runner.run(
+        <String>[_link('d.example', 10443)],
+        mode: LinkTestMode.latency,
+      );
+      expect(next.results.single.state, ProbeState.done);
+
+      // 被取消的那一轮正常收尾（不是抛异常，也不是永远挂着）。
+      final winnerRun = await winner;
+      expect(winnerRun.results.single.state, ProbeState.cancelled);
+    });
+
+    // -----------------------------------------------------------------------
+    // 候选端点自动切换（P1 / B 方案）：判定必须是**整批**层面的。
+    // -----------------------------------------------------------------------
+    test('候选链：首选 → 内置候选 → 速度端点，按字符串去重且保序', () {
+      final withDefault = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://s.test/300.zip',
+        latencyUrl: kDefaultLatencyUrl,
+      );
+      expect(
+        withDefault.latencyCandidates(),
+        <String>[
+          kDefaultLatencyUrl,
+          'https://www.gstatic.com/generate_204',
+          'http://s.test/300.zip',
+        ],
+        reason: '首选与内置候选重复时必须只出现一次，速度端点永远在末尾',
+      );
+
+      // 用户把首选填成速度端点：去重后仍只出现一次，且位置在首位。
+      final sameAsSpeed = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://s.test/300.zip',
+        latencyUrl: 'http://s.test/300.zip',
+      );
+      expect(
+        sameAsSpeed.latencyCandidates(),
+        <String>[
+          'http://s.test/300.zip',
+          kDefaultLatencyUrl,
+          'https://www.gstatic.com/generate_204',
+        ],
+      );
+    });
+
+    test('整批全失败 → 切到第二个候选（断言 probeFactory 收到的 URL）', () async {
+      final seen = <String>[];
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000, 20001]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add(latencyUrl);
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            onLatency: (url) async => LinkProbeOutcome.failure(
+              '连接失败：Connection refused',
+              5,
+              kind: ProbeFailureKind.connect,
+            ),
+            inFlight: (_) {},
+          );
+        },
+      );
+
+      final run = await runner.run(
+        <String>[_link('a.example', 443), _link('b.example', 8443)],
+        mode: LinkTestMode.latency,
+      );
+
+      expect(run.results.length, 2);
+      for (final result in run.results) {
+        expect(result.state, ProbeState.failed);
+        expect(result.latencyKnown, isFalse);
+      }
+      // 每一轮都用同一个端点探测整批，所以每个候选各出现 2 次。
+      expect(
+          seen.where((u) => u == 'http://first.test/generate_204').length, 2);
+      expect(seen.where((u) => u == kDefaultLatencyUrl).length, 2,
+          reason: '整批都没有延迟 → 必须换到第二个候选重跑');
+      expect(seen.first, 'http://first.test/generate_204', reason: '首选先跑');
+    });
+
+    test('只要有一条拿到延迟就不切换（失败的那些是真死链）', () async {
+      final seen = <String>[];
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000, 20001]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add(latencyUrl);
+          // a 通、b 死：端点本身没问题，b 是死链。
+          final ok =
+              latencyUrl == 'http://first.test/generate_204' && port == 20000;
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            onLatency: (_) async => ok
+                ? const LinkProbeOutcome(ttfbMs: 42, elapsedMs: 42)
+                : LinkProbeOutcome.failure(
+                    '连接失败：Connection refused',
+                    5,
+                    kind: ProbeFailureKind.connect,
+                  ),
+            inFlight: (_) {},
+          );
+        },
+      );
+
+      final run = await runner.run(
+        <String>[_link('a.example', 443), _link('b.example', 8443)],
+        mode: LinkTestMode.latency,
+      );
+
+      expect(seen.length, 2, reason: '只该跑一轮：有 1 条成功就不重试');
+      expect(seen.every((u) => u == 'http://first.test/generate_204'), isTrue,
+          reason: '第二个候选必须零调用');
+      final okResult = run.results.firstWhere((r) => r.latencyKnown);
+      expect(okResult.latencyMs, 42, reason: '成功条目的延迟不能被重跑覆盖');
+      expect(run.results.where((r) => r.error != null).length, 1,
+          reason: '死链仍是失败，但不会因为端点切换被洗白');
+    });
+
+    test('最多切 2 次：三端点全失败时第 4 个候选零调用', () async {
+      final seen = <String>[];
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://fourth.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add(latencyUrl);
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            // 建连类才会触发切换（超时不算端点坏，见 runner 的判定）。
+            onLatency: (_) async => LinkProbeOutcome.failure(
+              '连接失败：Connection refused',
+              5,
+              kind: ProbeFailureKind.connect,
+            ),
+            inFlight: (_) {},
+          );
+        },
+      );
+
+      await runner
+          .run(<String>[_link('a.example', 443)], mode: LinkTestMode.latency);
+
+      // 候选链有 4 个（首选 + 2 个内置 + 速度端点），但只允许试 3 个。
+      expect(runner.latencyCandidates().length, 4);
+      expect(seen.length, kLatencyMaxAttempts);
+      expect(seen.contains('http://fourth.test/300.zip'), isFalse,
+          reason: '速度端点作为兜底候选，超了上限就不该被试');
+    });
+
+    test('整批纯超时 → 只切一次（分辨端点坏/线路慢的上限），第二轮超时就停', () async {
+      final seen = <String>[];
+      final logs = <String>[];
+      final stageLabels = <String>[];
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add(latencyUrl);
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            onLatency: (_) async => LinkProbeOutcome.failure(
+              kProbeTimeout,
+              kLatencyTimeout.inMilliseconds,
+              kind: ProbeFailureKind.timeout,
+            ),
+            inFlight: (_) {},
+          );
+        },
+        onLog: logs.add,
+      );
+
+      final run = await runner.run(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
+        onProgress: (results, stage) {
+          if (stageLabels.isEmpty || stageLabels.last != stage) {
+            stageLabels.add(stage);
+          }
+        },
+      );
+
+      expect(
+        seen.length,
+        2,
+        reason: '纯超时既可能是端点被墙、也可能是节点慢：允许切一次去分辨；'
+            '第二个端点同样超时就停（不许切到第 3 个）',
+      );
+      expect(seen.first, 'http://first.test/generate_204');
+      expect(seen.last, kDefaultLatencyUrl, reason: '第二次用的是内置候选');
+      expect(run.results.single.state, ProbeState.failed);
+      expect(
+        logs.any((l) => l.contains('试下一个候选')),
+        isTrue,
+        reason: '首轮切换必须给出依据',
+      );
+      expect(
+        logs.any((l) => l.contains('判为线路慢，停止切换端点')),
+        isTrue,
+        reason: '第二轮仍超时要说明「为什么不再切」',
+      );
+      expect(
+        stageLabels.last,
+        contains('请更换「延迟测试地址」'),
+        reason: '全批没测出延迟时，结论要出现在**阶段文案**上（用户不一定看日志）',
+      );
+    });
+
+    test('超时 + 建连失败混合 → 保守不切换', () async {
+      final seen = <String>[];
+      var call = 0;
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000, 20001]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add(latencyUrl);
+          call++;
+          final kind =
+              call == 1 ? ProbeFailureKind.timeout : ProbeFailureKind.connect;
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            onLatency: (_) async => LinkProbeOutcome.failure(
+              kind == ProbeFailureKind.timeout ? kProbeTimeout : '连接失败',
+              kLatencyTimeout.inMilliseconds,
+              kind: kind,
+            ),
+            inFlight: (_) {},
+          );
+        },
+      );
+
+      await runner.run(
+        <String>[_link('a.example', 443), _link('b.example', 8443)],
+        mode: LinkTestMode.latency,
+      );
+
+      expect(
+        seen.every((u) => u == 'http://first.test/generate_204'),
+        isTrue,
+        reason: '有一条超时说明链路至少部分是活的，切端点救不了',
+      );
+      expect(seen.length, 2, reason: '只跑一轮（每条一次）');
+    });
+
+    test('整批都是建连类失败 → 才切换端点', () async {
+      final seen = <String>[];
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000, 20001]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add(latencyUrl);
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            onLatency: (_) async => LinkProbeOutcome.failure(
+              'TLS 握手失败：bad certificate',
+              30,
+              kind: ProbeFailureKind.tlsHandshake,
+            ),
+            inFlight: (_) {},
+          );
+        },
+      );
+
+      await runner.run(
+        <String>[_link('a.example', 443), _link('b.example', 8443)],
+        mode: LinkTestMode.latency,
+      );
+
+      expect(
+          seen.where((u) => u == 'http://first.test/generate_204').length, 2);
+      expect(seen.where((u) => u == kDefaultLatencyUrl).length, 2,
+          reason: 'TLS 握手失败属建连类，整批如此才说明端点不可达');
+    });
+
+    test('首轮阶段文案不带「端点 1/3」（健康网络不该看起来像在重试）', () async {
+      final stages = <String>[];
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000]),
+        probeFactory: (speedUrl, latencyUrl, port) => _UrlScriptedProbe(
+          speedUrl: speedUrl,
+          latencyUrl: latencyUrl,
+          localPort: port,
+          onLatency: (_) async =>
+              const LinkProbeOutcome(ttfbMs: 30, elapsedMs: 30),
+          inFlight: (_) {},
+        ),
+      );
+
+      await runner.run(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
+        onProgress: (results, stage) {
+          if (stages.isEmpty || stages.last != stage) stages.add(stage);
+        },
+      );
+
+      // 第一帧是「准备中」，延迟阶段的文案紧随其后。
+      expect(stages, contains('延迟探测'));
+      expect(
+        stages.any((s) => s.contains('端点 1/')),
+        isFalse,
+        reason: '首轮就写「端点 1/3」会让用户以为已经在重试',
+      );
+    });
+
+    test('切换判定不依赖文案：超时文案改了，行为仍是「切一次」而不是「按文字判定」', () async {
+      final seen = <String>[];
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add(latencyUrl);
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            // 故意换一个**完全不同的文案**，但类别仍是 timeout。
+            onLatency: (_) async => LinkProbeOutcome.failure(
+              '超时（5s 内未收到首字节）',
+              kLatencyTimeout.inMilliseconds,
+              kind: ProbeFailureKind.timeout,
+            ),
+            inFlight: (_) {},
+          );
+        },
+      );
+
+      await runner
+          .run(<String>[_link('a.example', 443)], mode: LinkTestMode.latency);
+
+      expect(
+        seen.length,
+        2,
+        reason: '判定读 failureKind：自定义文案仍是 timeout → 切一次；'
+            '若退回字符串比较，这段文字会被当成「非建连类」→ 只跑 1 次',
+      );
+    });
+
+    test('重跑会重新派发探测，但预检失败的 error 不能被清掉', () async {
+      var probeCalls = 0;
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          probeCalls++;
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            onLatency: (_) async => LinkProbeOutcome.failure(
+              '连接失败：Connection refused',
+              5,
+              kind: ProbeFailureKind.connect,
+            ),
+            inFlight: (_) {},
+          );
+        },
+      );
+
+      final run = await runner.run(
+        <String>['not-a-vless-link', _link('a.example', 443)],
+        mode: LinkTestMode.latency,
+      );
+
+      expect(probeCalls, kLatencyMaxAttempts, reason: '合法那条被重跑了 3 次');
+      expect(
+        run.results[0].error,
+        contains('无法解析'),
+        reason: '预检失败不可恢复，重跑不能把它清成「端点不可达」',
+      );
+      expect(run.results[1].state, ProbeState.failed);
+    });
+
+    test('重试路径的并发峰值仍是 6（不许绕过闸门）', () async {
+      var inFlight = 0;
+      var peak = 0;
+      final urls = <String>[];
+
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[for (var i = 0; i < 8; i++) 20000 + i]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          urls.add(latencyUrl);
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            inFlight: (delta) {
+              inFlight += delta;
+              if (inFlight > peak) peak = inFlight;
+            },
+            onLatency: (_) async {
+              await Future<void>.delayed(const Duration(milliseconds: 5));
+              return LinkProbeOutcome.failure(
+                '连接失败：Connection refused',
+                5,
+                kind: ProbeFailureKind.connect,
+              );
+            },
+          );
+        },
+      );
+
+      await runner.run(
+        <String>[for (var i = 0; i < 8; i++) _link('h$i.example', 443 + i)],
+        mode: LinkTestMode.latency,
+      );
+
+      expect(peak, kLatencyParallel,
+          reason: '重试必须复用同一个 _stage/闸门；复制一条派发路径会让峰值变 12/18');
+      expect(urls.length, 8 * kLatencyMaxAttempts, reason: '三轮 × 8 条都派发过');
+    });
+
+    test('一轮里延迟用延迟地址、速度用速度地址（不许混成一个 URL）', () async {
+      final server = await _serve(
+        delayMs: 10,
+        bodyBytes: kWarmupBytes + 2 * 1024 * 1024,
+      );
+      addTearDown(() => server.close(force: true));
+      final seen = <(String, String)>[];
+
+      final runner = LinkTestRunner(
+        speedUrl: 'http://speed-only.test/300.zip',
+        latencyUrl: 'http://latency-only.test/generate_204',
+        xray: _FakeXray(),
+        pool: _FixedPool(<int>[server.port]),
+        probeFactory: (speedUrl, latencyUrl, port) {
+          seen.add((speedUrl, latencyUrl));
+          return LinkProbe(
+            speedUrl: _testUrl,
+            latencyUrl: _testUrl,
+            localPort: port,
+          );
+        },
+      );
+
+      final run = await runner.run(<String>[_link('a.example', 443)]);
+
+      expect(run.results.single.speedMib, isNotNull, reason: 'auto 模式要能测出速度');
+      expect(seen.length, 2, reason: '延迟 1 个 + 速度 1 个');
+      // 两个探测都拿到同一对端点；真正的「谁用哪个」由 LinkProbe.latency/speed
+      // 各自取 latencyUrl/speedUrl 决定（见 test/link_probe_test.dart 的端点分离用例）。
+      expect(
+          seen.every((e) => e.$1 == 'http://speed-only.test/300.zip'), isTrue);
+      expect(seen.every((e) => e.$2 == 'http://latency-only.test/generate_204'),
+          isTrue);
+    });
+
+    // -----------------------------------------------------------------------
+    // 慢但活着的节点 ≠ 端点故障（判定细节见上面「候选端点」那组用例）。
+    //
+    // 这里只补两条**别的用例覆盖不到**的：
+    // ① 判定的自变量是 `failureKind` 标志位，而不是 `error` 的文案 —— 反向也要成立
+    //    （文案恰好是 kProbeTimeout 但类别是建连失败时，必须照旧换端点）；
+    // ② 预检失败（vless://bad）既不参与超时统计，也不许被清 error / 被重跑。
+    // -----------------------------------------------------------------------
+    test('判定只看标志位、不看文案：文案换掉仍不切换；文案是「超时」但标志位为假则切换', () async {
+      // ① 文案是自定义的一句话（模拟日后改文案），但结构化类别是 timeout。
+      final seenCustom = <String>[];
+      final runnerCustom = _batchRunner(
+        ports: <int>[20000],
+        seen: seenCustom,
+        onLog: (_) {},
+        onLatency: (url, port) async => LinkProbeOutcome.failure(
+          '首字节迟迟不来（自定义文案）',
+          kLatencyTimeout.inMilliseconds,
+          kind: ProbeFailureKind.timeout,
+        ),
+      );
+      await runnerCustom.run(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
+      );
+      expect(
+        seenCustom.length,
+        2,
+        reason: '判定读的是标志位：纯超时 → 首轮切一次、第二轮停止；'
+            '若还在比字符串，这段自定义文案会被当成「非超时非建连类」→ 只跑 1 次',
+      );
+
+      // ② 文案**恰好等于** kProbeTimeout，但类别是建连失败 → 仍然要切换。
+      final seenText = <String>[];
+      final runnerText = _batchRunner(
+        ports: <int>[20000],
+        seen: seenText,
+        onLog: (_) {},
+        onLatency: (url, port) async => LinkProbeOutcome.failure(
+          kProbeTimeout,
+          5,
+          kind: ProbeFailureKind.connect,
+        ),
+      );
+      final runText = await runnerText.run(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
+      );
+      expect(seenText.length, kLatencyMaxAttempts,
+          reason: '文案等于 kProbeTimeout 也不能被当成超时（否则改文案就静默变行为）');
+      expect(runText.results.single.timedOut, isFalse,
+          reason: 'error 文案是「超时」但标志位为假：证明判定没在读文案');
+    });
+
+    test('预检失败不计入超时统计：error 不被清掉、不参与重跑', () async {
+      var probeCalls = 0;
+      final logs = <String>[];
+      final runner = LinkTestRunner(
+        xray: _FakeXray(),
+        speedUrl: 'http://speed.test/300.zip',
+        latencyUrl: 'http://first.test/generate_204',
+        pool: _FixedPool(<int>[20000]),
+        onLog: logs.add,
+        probeFactory: (speedUrl, latencyUrl, port) {
+          probeCalls++;
+          return _UrlScriptedProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            inFlight: (_) {},
+            onLatency: (_) async => _timeoutOutcome(),
+          );
+        },
+      );
+
+      final run = await runner.run(
+        <String>['not-a-vless-link', _link('a.example', 443)],
+        mode: LinkTestMode.latency,
+      );
+
+      expect(
+        probeCalls,
+        2,
+        reason: '预检失败那条从不派发；合法那条纯超时 → 首轮切一次、第二轮停止',
+      );
+      expect(run.results[0].host, isEmpty);
+      expect(run.results[0].error, contains('无法解析'),
+          reason: '预检失败不可恢复，不能被清成「端点不可达」');
+      expect(run.results[0].timedOut, isFalse, reason: '预检失败不是超时');
+      expect(run.results[1].latencyKnown, isFalse);
+      expect(run.results[1].timedOut, isTrue);
+      expect(
+        logs.any((l) => l.contains('停止切换端点')),
+        isTrue,
+        reason: '第二轮仍超时 → 停止切换（不是「第一轮就不切」）',
+      );
     });
   });
 
@@ -861,7 +1858,8 @@ void main() {
         startError: 'failed to bind 20000',
       );
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: xray,
         pool: _FixedPool(<int>[20000]),
       );
@@ -882,7 +1880,8 @@ void main() {
 
     test('本来就没有代理时，失败路径也不该误报（不误提示）', () async {
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl,
+        latencyUrl: _testUrl,
         xray: _FakeXray(startError: 'boom'),
         pool: _FixedPool(<int>[20000]),
       );
@@ -899,14 +1898,15 @@ void main() {
       addTearDown(() => server.close(force: true));
       var probeCalls = 0;
       final runner = LinkTestRunner(
-        speedUrl: 'http://speed.test/300.zip',
+        speedUrl: _testUrl, latencyUrl: _testUrl,
         xray: _FakeXray(),
         // 8 个节点共用同一个「接了不回包」的端口 → 6 个在跑、2 个排队
         pool: _FixedPool(List<int>.filled(8, server.port)),
-        probeFactory: (url, port) {
+        probeFactory: (speedUrl, latencyUrl, port) {
           probeCalls++;
           return LinkProbe(
-            speedUrl: url,
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
             localPort: port,
             latencyTimeout: const Duration(seconds: 10),
           );
@@ -941,11 +1941,13 @@ void main() {
       addTearDown(() => server.close(force: true));
       final state = AppState(
         runner: LinkTestRunner(
-          speedUrl: 'http://speed.test/300.zip',
-            xray: _FakeXray(),
+          speedUrl: _testUrl,
+          latencyUrl: _testUrl,
+          xray: _FakeXray(),
           pool: _FixedPool(<int>[server.port]),
-          probeFactory: (url, port) => LinkProbe(
-            speedUrl: url,
+          probeFactory: (speedUrl, latencyUrl, port) => LinkProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
             localPort: port,
             latencyTimeout: const Duration(seconds: 10),
           ),
@@ -977,6 +1979,186 @@ void main() {
       await state.cancelLinkTest();
       await first;
       expect(state.linkTestRunning, isFalse);
+    });
+
+    // QA 独立审出的缺口：取消后立刻再开一轮时，**第一轮** `await runLinkTest`
+    // 的续体比第二轮启动更晚恢复，它会拿着第一轮的结果去写 AppState 的副本状态，
+    // 把「第二轮正在跑」踩成「完成 + 第一轮的已取消结果」。
+    // UI 上点不出来（按钮在 linkTestRunning 时禁用），但 API 层可复现。
+    test('取消后立刻再开一轮：第一轮的迟到收尾不能踩掉第二轮的状态', () async {
+      // 一个可切换的入站：hang=true 时接了不回包，false 时压 400ms 再回 204。
+      var hang = true;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        if (hang) return; // 第一轮：挂住，等 cancel
+        final response = request.response;
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        response.statusCode = HttpStatus.noContent;
+        await response.close();
+      });
+      addTearDown(() => server.close(force: true));
+
+      final state = AppState(
+        runner: LinkTestRunner(
+          speedUrl: _testUrl,
+          latencyUrl: _testUrl,
+          xray: _FakeXray(),
+          pool: _FixedPool(<int>[server.port]),
+          probeFactory: (speedUrl, latencyUrl, port) => LinkProbe(
+            speedUrl: speedUrl,
+            latencyUrl: latencyUrl,
+            localPort: port,
+            latencyTimeout: const Duration(seconds: 10),
+          ),
+        ),
+      );
+
+      final first = state.runLinkTest(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(state.linkTestRunning, isTrue);
+
+      final cancelling = state.cancelLinkTest();
+      hang = false;
+      final second = state.runLinkTest(
+        <String>[_link('b.example', 8443)],
+        mode: LinkTestMode.latency,
+      );
+
+      await cancelling;
+      await first; // 第一轮正式收尾 —— 此刻第二轮仍在探测中（服务端压 400ms）
+
+      expect(
+        state.linkTestRunning,
+        isTrue,
+        reason: '第二轮在跑，第一轮的 finally 不能把「没在跑」写回来',
+      );
+      expect(
+        state.linkStage,
+        isNot('完成'),
+        reason: '更不能把阶段写成「完成」（第一轮读到的是被第二轮重置过的 cancelled=false）',
+      );
+      expect(
+        state.linkResults.any((r) => r.state == ProbeState.cancelled),
+        isFalse,
+        reason: '第一轮的「已取消」结果不能贴到第二轮的列表上',
+      );
+
+      await second;
+      expect(state.linkTestRunning, isFalse);
+      expect(state.linkResults.single.state, ProbeState.done);
+      expect(state.linkStage, '完成');
+    });
+
+    test('cancelLinkTest 的 await 期间新轮已起：不许把新轮的阶段改回「已取消」', () async {
+      // 这条时序敏感，**不用 sleep 碰运气**：用两个 Completer 精确控制
+      // ① 探测何时返回（`_GatedProbe`）；② `_xray.stop()` 何时返回（`_GatedXray.gate`，
+      //    也就是 `runner.cancel()` 卡在哪一刻）。
+      final xray = _GatedXray();
+      final probes = <_GatedProbe>[];
+      final firstProbe = Completer<void>();
+      final secondProbe = Completer<void>();
+      final state = AppState(
+        runner: LinkTestRunner(
+          speedUrl: _testUrl,
+          latencyUrl: _testUrl,
+          xray: xray,
+          pool: _FixedPool(<int>[20000]),
+          probeFactory: (speedUrl, latencyUrl, port) {
+            final probe = _GatedProbe(localPort: port);
+            probes.add(probe);
+            if (probes.length == 1) {
+              if (!firstProbe.isCompleted) firstProbe.complete();
+            } else if (!secondProbe.isCompleted) {
+              secondProbe.complete();
+            }
+            return probe;
+          },
+        ),
+      );
+
+      final first = state.runLinkTest(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
+      );
+      // 第一轮已派发探测，且它卡在自己的 gate 上：事件循环再怎么转也不会前进。
+      await firstProbe.future;
+
+      // 让 cancel 的 `_xray.stop()` 挂住 —— 这段时间正是「用户点了取消、
+      // 又立刻点了开始」的窗口。
+      final stopGate = Completer<void>();
+      xray.gate = stopGate;
+      final cancelling = state.cancelLinkTest();
+
+      // 第二轮立刻起来：`linkStage` 在 runLinkTest 里是**同步**写的，
+      // 所以这里不用等任何异步信号就能确定它已经是「准备中」。
+      final second = state.runLinkTest(
+        <String>[_link('b.example', 8443)],
+        mode: LinkTestMode.latency,
+      );
+      expect(state.linkStage, '准备中', reason: '前置条件：第二轮已接管阶段字段');
+
+      // 放行第一轮的 cancel 收尾 —— 它此刻才恢复执行，并拿到过期令牌。
+      stopGate.complete();
+      await cancelling;
+
+      expect(
+        state.linkStage,
+        '准备中',
+        reason: '取消的迟到收尾不能把第二轮刚写的「准备中」改回「已取消」',
+      );
+      expect(state.linkTestRunning, isTrue, reason: '第二轮仍在跑');
+
+      // 收尾：等第二轮也派发出探测（否则它自己卡在等待上一轮/等待探测里），
+      // 再统一放行，让两轮都正常结束。
+      await secondProbe.future;
+      for (final probe in probes) {
+        probe.release();
+      }
+      await first;
+      await second;
+    });
+
+    test('什么都不在跑时点取消：不该凭空显示「已取消」', () async {
+      final state = AppState(runner: LinkTestRunner(xray: _FakeXray()));
+
+      await state.cancelLinkTest();
+
+      expect(state.linkStage, isEmpty);
+      expect(state.linkTestRunning, isFalse);
+    });
+
+    test('注入 runner 时测速日志仍然进 state.logs（onLog 接线不能断）', () async {
+      final server = await _serve(delayMs: 10);
+      addTearDown(() => server.close(force: true));
+      final state = AppState(
+        // 关键：走**注入**那条路。构造参数里的 onLog 在这条路上不会执行，
+        // 没有 ensureLogSink 的话日志面板会一片空白。
+        runner: LinkTestRunner(
+          speedUrl: _testUrl,
+          latencyUrl: _testUrl,
+          xray: _FakeXray(),
+          pool: _FixedPool(<int>[server.port]),
+        ),
+      );
+
+      await state.runLinkTest(
+        <String>[_link('a.example', 443)],
+        mode: LinkTestMode.latency,
+      );
+
+      expect(
+        state.logs.any((l) => l.contains('端点：延迟=')),
+        isTrue,
+        reason: '开测时要打一行「这一轮打的是哪个端点」，注入 runner 时也得有',
+      );
+      expect(
+        state.logs.any((l) => l.contains('ttfb=') && l.contains('建连=')),
+        isTrue,
+        reason: '每条探测的分项计时必须能到用户眼前（LogPanel 读的就是 state.logs）',
+      );
     });
   });
 

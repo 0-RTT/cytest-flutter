@@ -6,6 +6,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 class Defaults {
   static const fingerprint = '108b6115dc6ebfde76aef4336126f605252d957f';
   static const speedUrl = 'https://е.eu.org/300.zip';
+
+  /// 延迟阶段的目标地址（204 小端点，无 body、无跳转）。
+  ///
+  /// 与 [kDefaultLatencyUrl]（`lib/data/link_probe.dart`）必须**逐字一致**：
+  /// 这里不能 import 那份常量（core 层不依赖 data 层），所以靠单测
+  /// `test/link_probe_test.dart` 的「默认值三条必须对齐」钉住，改一处漏一处会红。
+  ///
+  /// 为什么默认值要和 [speedUrl] 分开：大文件端点的首字节会被服务端/链路缓冲
+  /// 推迟，且常带跨主机 302，跟着跳转还会把第二套 CONNECT/TLS 算进 TTFB ——
+  /// 三条叠加就是「延迟读数远大于 v2rayN」的根因。
+  static const latencyUrl = 'https://cp.cloudflare.com/generate_204';
+
   static const sha1Concurrency = 30;
   static const latencyConcurrency = 100;
   static const speedConcurrency = 3;
@@ -39,7 +51,15 @@ class Defaults {
 }
 
 class AppSettings {
+  /// 速度阶段地址（大文件端点；3s / 64MiB 吞吐窗口靠它）。
   String speedUrl;
+
+  /// 延迟阶段地址（小端点，默认 [Defaults.latencyUrl]）。
+  ///
+  /// 老版本的 JSON 里没有这个键，[fromJson] 会回落到 [Defaults.latencyUrl]
+  /// —— 绝不能因为「没这个键」就留空串，那会让每条线路都报「地址非法」。
+  String latencyUrl;
+
   String fingerprint;
   int sha1Concurrency;
   int latencyConcurrency;
@@ -84,6 +104,7 @@ class AppSettings {
 
   AppSettings({
     this.speedUrl = Defaults.speedUrl,
+    this.latencyUrl = Defaults.latencyUrl,
     this.fingerprint = Defaults.fingerprint,
     this.sha1Concurrency = Defaults.sha1Concurrency,
     this.latencyConcurrency = Defaults.latencyConcurrency,
@@ -131,16 +152,22 @@ class AppSettings {
   /// 被 [load] 的 catch 吞掉后**整份设置静默重置成默认值** ——
   /// 用户丢的是全部配置，而不只是一个字段。
   factory AppSettings.fromJson(Map<String, dynamic> json) => AppSettings(
-        speedUrl: json['speedUrl'] as String? ?? Defaults.speedUrl,
+        // 与 latencyUrl 同一条归一化：`??` 挡不住空串，而空串一路传到
+        // pipeline 的 speedTestURL 会让三阶段下载直接报错。
+        speedUrl: _readUrl(json['speedUrl'], Defaults.speedUrl),
+        // 老 JSON 没有 latencyUrl：回落默认小端点。空串也按「没配」处理——
+        // 空地址会让 latency() 抛「地址非法」，而用户并没有表达「关闭延迟」。
+        latencyUrl: _readUrl(json['latencyUrl'], Defaults.latencyUrl),
         fingerprint: json['fingerprint'] as String? ?? Defaults.fingerprint,
-        sha1Concurrency:
-            (json['sha1Concurrency'] as num?)?.toInt() ?? Defaults.sha1Concurrency,
-        latencyConcurrency:
-            (json['latencyConcurrency'] as num?)?.toInt() ?? Defaults.latencyConcurrency,
+        sha1Concurrency: (json['sha1Concurrency'] as num?)?.toInt() ??
+            Defaults.sha1Concurrency,
+        latencyConcurrency: (json['latencyConcurrency'] as num?)?.toInt() ??
+            Defaults.latencyConcurrency,
         speedConcurrency: _migrateSpeedConcurrency(json),
-        dialTimeout: (json['dialTimeout'] as num?)?.toInt() ?? Defaults.dialTimeout,
-        downloadTimeout:
-            (json['downloadTimeout'] as num?)?.toInt() ?? Defaults.downloadTimeout,
+        dialTimeout:
+            (json['dialTimeout'] as num?)?.toInt() ?? Defaults.dialTimeout,
+        downloadTimeout: (json['downloadTimeout'] as num?)?.toInt() ??
+            Defaults.downloadTimeout,
         maxLatency: _migrateMaxLatency(json),
         // 读进来的这份设置今后都算「已迁移」：toJson 会把这个标记写回去，
         // 下次启动就不会再触发迁移。
@@ -158,6 +185,17 @@ class AppSettings {
         remotePassword: json['remotePassword'] as String? ?? '',
         remoteKeyPath: json['remoteKeyPath'] as String? ?? '',
       );
+
+  /// 读一个「地址」型字段：缺键 / 非字符串 / 空白都回落 [fallback]。
+  ///
+  /// 与 `speedUrl` 的 `?? Defaults.speedUrl` 同一套写法，只是多挡一层空白串：
+  /// 空白地址会让探测直接报「地址非法」，用户在设置页删空输入框时不该
+  /// 得到「所有线路失败」这种后果。
+  static String _readUrl(Object? value, String fallback) {
+    if (value is! String) return fallback;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? fallback : trimmed;
+  }
 
   /// 把老用户存下来的 `maxLatency: 200` 迁到新默认 `0`（不限）。
   ///
@@ -187,8 +225,8 @@ class AppSettings {
   /// 在移动网络下既不会互相抢带宽，又能把整轮耗时压下来约三分之一。
   /// 只改 `Defaults` 不够 —— 老用户的 2 早已落盘。
   static int _migrateSpeedConcurrency(Map<String, dynamic> json) {
-    final stored =
-        (json['speedConcurrency'] as num?)?.toInt() ?? Defaults.speedConcurrency;
+    final stored = (json['speedConcurrency'] as num?)?.toInt() ??
+        Defaults.speedConcurrency;
     final migrated = json['speedConcurrencyMigrated'] as bool? ?? false;
     if (!migrated && stored == Defaults.legacySpeedConcurrency) {
       return Defaults.speedConcurrency;
@@ -198,6 +236,9 @@ class AppSettings {
 
   Map<String, dynamic> toJson() => {
         'speedUrl': speedUrl,
+        // 必须写回：漏写这一行，用户点一次保存就会把延迟地址「删掉」，
+        // 下次启动回落默认值——看起来像「设置没生效」。
+        'latencyUrl': latencyUrl,
         'fingerprint': fingerprint,
         'sha1Concurrency': sha1Concurrency,
         'latencyConcurrency': latencyConcurrency,

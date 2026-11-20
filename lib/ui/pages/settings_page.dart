@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/file_pick.dart';
+import '../../core/settings.dart' show Defaults;
 import '../../data/github.dart';
 import '../../state/app_state.dart';
 import '../widgets/glass.dart';
@@ -30,6 +31,7 @@ class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _dial;
   late TextEditingController _download;
   late TextEditingController _speedUrl;
+  late TextEditingController _latencyUrl;
   late TextEditingController _ghRepo;
   late TextEditingController _ghToken;
   late TextEditingController _remoteHost;
@@ -57,6 +59,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _dial = TextEditingController(text: '${s.dialTimeout}');
     _download = TextEditingController(text: '${s.downloadTimeout}');
     _speedUrl = TextEditingController(text: s.speedUrl);
+    _latencyUrl = TextEditingController(text: s.latencyUrl);
     _ghRepo = TextEditingController(text: s.githubRepo);
     _ghToken = TextEditingController(text: s.githubToken);
     _remoteHost = TextEditingController(text: s.remoteHost);
@@ -71,9 +74,21 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     for (final c in [
-      _sha1, _latency, _speed, _maxLatency, _dial, _download,
-      _speedUrl, _ghRepo, _ghToken,
-      _remoteHost, _remotePort, _remoteUser, _remotePassword, _remoteKey,
+      _sha1,
+      _latency,
+      _speed,
+      _maxLatency,
+      _dial,
+      _download,
+      _speedUrl,
+      _latencyUrl,
+      _ghRepo,
+      _ghToken,
+      _remoteHost,
+      _remotePort,
+      _remoteUser,
+      _remotePassword,
+      _remoteKey,
       _vless,
     ]) {
       c.dispose();
@@ -107,7 +122,16 @@ class _SettingsPageState extends State<SettingsPage> {
     s.maxLatency = int.tryParse(_maxLatency.text) ?? s.maxLatency;
     s.dialTimeout = int.tryParse(_dial.text) ?? s.dialTimeout;
     s.downloadTimeout = int.tryParse(_download.text) ?? s.downloadTimeout;
-    s.speedUrl = _speedUrl.text.trim();
+    // 两个地址的空串语义都是「恢复默认」，不是「关闭这一档」：
+    // - 延迟地址留空会让每条线路都报「地址非法」；
+    // - 速度地址留空会让三阶段的 speedTestURL 变成空串（引擎直接报配置错误）。
+    // 两条必须**对称**处理，改一条漏一条最容易出事故。
+    final speedInput = _speedUrl.text.trim();
+    s.speedUrl = speedInput.isEmpty ? Defaults.speedUrl : speedInput;
+    _speedUrl.text = s.speedUrl;
+    final latencyInput = _latencyUrl.text.trim();
+    s.latencyUrl = latencyInput.isEmpty ? Defaults.latencyUrl : latencyInput;
+    _latencyUrl.text = s.latencyUrl;
     s.githubRepo = repoSlug;
     s.githubToken = _ghToken.text.trim();
     s.remoteHost = _remoteHost.text.trim();
@@ -197,8 +221,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 _row(
                   theme,
+                  icon: Icons.network_ping,
+                  title: '延迟测试地址',
+                  value: s.latencyUrl.isEmpty ? '未配置' : s.latencyUrl,
+                  onTap: () => _openGroup(context, _Group.latencyUrl),
+                ),
+                _row(
+                  theme,
                   icon: Icons.download_outlined,
-                  title: '测速地址',
+                  title: '速度测试地址',
                   value: s.speedUrl.isEmpty ? '未配置' : s.speedUrl,
                   onTap: () => _openGroup(context, _Group.speedUrl),
                   last: true,
@@ -287,11 +318,18 @@ class _SettingsPageState extends State<SettingsPage> {
           _num('连接超时（秒）', _dial, hint: '默认 5'),
           _num('下载超时（秒）', _download, hint: '默认 10'),
         ];
+      case _Group.latencyUrl:
+        return [
+          _text('延迟测试地址', _latencyUrl, hint: Defaults.latencyUrl),
+          _caption('延迟只测「一段往返」（TTFB），要求小端点、无 body、无跳转；'
+              '留空或不可达时自动尝试内置候选（cp.cloudflare.com / gstatic）。'
+              '别把它指向大文件或会 302 的地址，读数会比 v2rayN 大一倍以上。'),
+        ];
       case _Group.speedUrl:
         return [
-          _text('测速地址', _speedUrl,
-              hint: 'https://е.eu.org/300.zip'),
-          _caption('窗口 3s / 上限 64MiB，首 256KiB 预热丢弃。'),
+          _text('速度测试地址', _speedUrl, hint: Defaults.speedUrl),
+          _caption('窗口 3s / 上限 64MiB，首 256KiB 预热丢弃。'
+              '必须是能持续吐数据的大文件，小端点（204）测不出速度。'),
         ];
       case _Group.github:
         return [
@@ -561,7 +599,8 @@ enum _Group {
   lines('线路与代理', '抓取与测速的出入口'),
   concurrency('并发', '过高会互相抢带宽，单条读数偏低'),
   timeouts('超时', '网络抖动大时适当放宽'),
-  speedUrl('测速地址', '窗口 3s / 上限 64MiB，首 256KiB 预热丢弃'),
+  latencyUrl('延迟测试地址', 'TTFB 口径：小端点、无 body、不跟随跳转'),
+  speedUrl('速度测试地址', '窗口 3s / 上限 64MiB，首 256KiB 预热丢弃'),
   github('GitHub 推送', '把订阅写到仓库文件'),
   remote('远程执行', 'SSH 到服务器跑三阶段');
 

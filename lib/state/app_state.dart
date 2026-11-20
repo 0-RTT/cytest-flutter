@@ -23,8 +23,19 @@ class AppState extends ChangeNotifier {
   /// 而真跑一轮测速需要 xray 二进制 —— 不注入就永远验不了。
   AppState({XrayProc? xray, LinkTestRunner? runner})
       : xray = xray ?? XrayProc() {
-    linkTestRunner =
-        runner ?? LinkTestRunner(xray: this.xray, saver: LinkTestStore().save);
+    // onLog 走 pushLog：测试页的「测速日志」面板就是 state.logs，于是
+    // 「建连/响应头/首字节」分项计时对用户和排障者都直接可见。
+    linkTestRunner = runner ??
+        LinkTestRunner(
+          xray: this.xray,
+          saver: LinkTestStore().save,
+          onLog: pushLog,
+        );
+    // 注入 runner 的那条路上构造参数里的 onLog 不会执行，这里补接一次
+    // （已有 sink 时 ensureLogSink 不会覆盖，尊重调用方显式注入的出口）。
+    // 少了这一行，任何用 `AppState(runner: ...)` 的地方都会静默丢掉测速日志，
+    // 表现就是「测速日志面板一片空白」。
+    linkTestRunner.ensureLogSink(pushLog);
   }
 
   AppSettings settings = AppSettings();
@@ -66,6 +77,9 @@ class AppState extends ChangeNotifier {
 
   /// 测速失败的可读原因（null = 没有错误）。
   String? linkTestError;
+
+  /// 链路测速的轮次令牌（每次 [runLinkTest] 自增，见 [_isCurrentLinkRun]）。
+  int _linkRunToken = 0;
 
   /// R12 预留：为什么代理被停了（一次性、读取即消费）。
   ///
@@ -119,6 +133,9 @@ class AppState extends ChangeNotifier {
       lastError = '读取设置失败：$e（已使用默认值）';
       pushLog('✗ 读取设置失败：$e');
     } finally {
+      // 设置里配的两个端点要真正生效：runner 是构造期建的（那时还没读盘），
+      // 所以只能在读完设置之后把地址灌进去。为空串时 runner 自己回落默认值。
+      _applyLinkTestUrls();
       booting = false;
       notifyListeners();
     }
@@ -235,7 +252,20 @@ class AppState extends ChangeNotifier {
 
   Future<void> saveSettings() async {
     await settings.save();
+    // 保存后立刻换端点：下一轮测速就该用新地址，不必等重启。
+    _applyLinkTestUrls();
     notifyListeners();
+  }
+
+  /// 把设置里的「延迟/速度测试地址」灌进测速 runner。
+  ///
+  /// 两个地址是**两条口径**（延迟 = 小端点、速度 = 大文件），必须分开灌；
+  /// 合成一个字段就是「延迟读数和 v2rayN 不可比」的老 bug。
+  void _applyLinkTestUrls() {
+    linkTestRunner.configureUrls(
+      speedUrl: settings.speedUrl,
+      latencyUrl: settings.latencyUrl,
+    );
   }
 
   void pushLog(String line) {
@@ -356,7 +386,12 @@ class AppState extends ChangeNotifier {
     // （抹掉第一轮进度），再被 runner 抛「上一次测速还在进行」，最后 finally 把
     // linkTestRunning 置 false —— 第一轮还在跑，UI 却以为没在跑。
     // 判据用 runner 自己的运行态（唯一真相），不看 linkTestRunning 这个副本。
-    if (linkTestRunner.running) {
+    //
+    // `cancelled` 要一起看：取消是异步收尾的（关 HttpClient / 停进程），
+    // 收尾期间 runner.running 仍为 true。若这里照旧拒绝，用户「取消 → 立刻开始」
+    // 就会看到「测速进行中，请先停止测速」——runner 那边其实能等上一轮收尾，
+    // 两层判据必须一致，否则永远开不出第二轮。
+    if (linkTestRunner.running && !linkTestRunner.cancelled) {
       linkTestError = '测速进行中，请先停止测速';
       notifyListeners();
       return false;
@@ -366,6 +401,15 @@ class AppState extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+    // 轮次令牌：这一轮从此刻起独占 linkResults / linkStage / linkTestRunning。
+    //
+    // 为什么必须有：取消后立刻再开一轮时，**上一轮** `await runner.run(...)` 的
+    // 续体会比新一轮启动更晚恢复执行（runner 侧新一轮的续体先跑，它会把
+    // `_cancelled` 重置为 false）。上一轮照着旧结果写副本状态，就会把
+    // 「第二轮正在跑」踩成「完成 + 第一轮的已取消结果」，`finally` 还会把
+    // `linkTestRunning` 拉成 false。runner 内部的 `_epoch` 管不到 AppState
+    // 这份副本，只能在这里自己判。
+    final token = ++_linkRunToken;
     linkTestRunning = true;
     linkTestError = null;
     linkResults = const [];
@@ -377,11 +421,15 @@ class AppState extends ChangeNotifier {
         links,
         mode: mode,
         onProgress: (results, stage) {
+          if (!_isCurrentLinkRun(token)) return; // 陈旧轮次不许再刷 UI
           linkResults = results;
           linkStage = stage;
           notifyListeners();
         },
       );
+      // 陈旧轮次到这里说明已被新一轮接管：**一个字段都不许再碰**，
+      // 也不返回 false —— 那会让 UI 弹出属于新一轮的 linkTestError。
+      if (!_isCurrentLinkRun(token)) return true;
       linkResults = run.results;
       linkStage = linkTestRunner.cancelled ? '已取消' : '完成';
       // 有失败就把 Xray 侧的最后几行原始输出带进日志：
@@ -405,22 +453,45 @@ class AppState extends ChangeNotifier {
       }
       return true;
     } on LinkTestException catch (e) {
+      if (!_isCurrentLinkRun(token)) return true;
       linkTestError = e.message;
       pushLog('✗ ${e.message}');
       return false;
     } on Object catch (e) {
+      if (!_isCurrentLinkRun(token)) return true;
       linkTestError = e.toString();
       pushLog('✗ $e');
       return false;
     } finally {
-      linkTestRunning = false;
-      notifyListeners();
+      // 只有**当前**轮次才有资格把「没在跑」写回去；否则会把正在跑的新一轮
+      // 标成空闲，UI 立刻放出「开始测试」按钮，用户点下去又是一次冲突。
+      if (_isCurrentLinkRun(token)) {
+        linkTestRunning = false;
+        notifyListeners();
+      }
     }
   }
 
+  /// 这一轮是否仍然「当前」（没被后续 runLinkTest 抢走）。
+  ///
+  /// 与 runner 内部的 `_epoch` 是同一套思路：跨层共享状态时，谁最后启动谁说了算，
+  /// 先启动者的迟到回调一律作废。
+  bool _isCurrentLinkRun(int token) => token == _linkRunToken;
+
   /// 取消测速：置位 → 关在途客户端 → 杀批量进程（三段由 runner 内部完成）。
   Future<void> cancelLinkTest() async {
+    // 取令牌要**在 await 之前**：`runner.cancel()` 是异步收尾（关 HttpClient、
+    // 停批量进程），这段时间用户完全可能已经点「开始」开出新一轮。若这里
+    // 无条件写 `linkStage`，就会把新轮的「准备中/延迟探测」改回「已取消」，
+    // 用户看到「已取消」但其实在测。这个错误下一帧会被 onProgress 自愈，
+    // 所以不算致命，但既然 runLinkTest 已有令牌，这里没理由不跟着判。
+    final token = _linkRunToken;
+    final wasRunning = linkTestRunner.running;
     await linkTestRunner.cancel();
+    // 已被新一轮接管 → 一个字段都别碰。
+    if (!_isCurrentLinkRun(token)) return;
+    // 什么都没在跑时 runner.cancel() 直接 return：此时不该凭空显示「已取消」。
+    if (!wasRunning) return;
     linkStage = '已取消';
     notifyListeners();
   }

@@ -33,14 +33,18 @@ class _Args {
   _Args({
     required this.port,
     required this.url,
+    required this.latencyUrl,
     required this.mode,
   });
 
   /// 本机代理/入站端口。
   final int port;
 
-  /// 测速地址（可含 IDN）。
+  /// 测速（速度阶段）地址（可含 IDN）。
   final String url;
+
+  /// 延迟阶段地址（默认小端点；与速度地址分开，见 kDefaultLatencyUrl）。
+  final String latencyUrl;
 
   /// `latency` / `speed` / `both`。
   final String mode;
@@ -53,6 +57,7 @@ class _Args {
   static _Args? parse(List<String> argv) {
     var port = 20000;
     var url = kDefaultSpeedUrl;
+    var latencyUrl = kDefaultLatencyUrl;
     var mode = 'both';
     for (var i = 0; i < argv.length; i++) {
       final arg = argv[i];
@@ -75,6 +80,11 @@ class _Args {
         url = u;
         continue;
       }
+      final lu = valueOf('--latency-url');
+      if (lu != null) {
+        latencyUrl = lu;
+        continue;
+      }
       final m = valueOf('--mode');
       if (m != null) {
         if (m != 'latency' && m != 'speed' && m != 'both') return null;
@@ -86,7 +96,7 @@ class _Args {
       // 允许把 URL 作为位置参数直接给
       url = arg;
     }
-    return _Args(port: port, url: url, mode: mode);
+    return _Args(port: port, url: url, latencyUrl: latencyUrl, mode: mode);
   }
 }
 
@@ -94,34 +104,41 @@ void _usage() {
   stdout.writeln('K2 冒烟：用 LinkProbe 探本机某个代理/入站口');
   stdout.writeln('');
   stdout.writeln('  dart run tool/smoke_probe.dart [--port 20000] '
-      '[--url $kDefaultSpeedUrl] [--mode latency|speed|both]');
+      '[--url $kDefaultSpeedUrl] '
+      '[--latency-url $kDefaultLatencyUrl] [--mode latency|speed|both]');
   stdout.writeln('');
-  stdout.writeln('  --port   本机代理端口（默认 20000，即批量 xray 的第一个入站）');
-  stdout.writeln('  --url    测速地址（默认 $kDefaultSpeedUrl）');
-  stdout.writeln('  --mode   latency = 只测 TTFB；speed = 只测吞吐；both = 都测（默认）');
+  stdout.writeln('  --port        本机代理端口（默认 20000，即批量 xray 的第一个入站）');
+  stdout.writeln('  --url         测速地址（默认 $kDefaultSpeedUrl）');
+  stdout.writeln('  --latency-url 延迟地址（默认 $kDefaultLatencyUrl）');
+  stdout.writeln('  --mode        latency = 只测 TTFB；speed = 只测吞吐；both = 都测（默认）');
 }
 
 Future<int> _run(_Args args) async {
   // ---- 0) K1 自证：先证明探测目标的主机名是 ASCII 的 ----
   final Uri target;
+  final Uri latencyTarget;
   try {
     target = probeUri(args.url);
+    latencyTarget = probeUri(args.latencyUrl);
   } on UnsupportedIdnException catch (e) {
-    stderr.writeln('[FAIL] 测速地址无法 ASCII 化：$e');
+    stderr.writeln('[FAIL] 地址无法 ASCII 化：$e');
     return 1;
   } on FormatException catch (e) {
-    stderr.writeln('[FAIL] 测速地址不合法：${e.message}');
+    stderr.writeln('[FAIL] 地址不合法：${e.message}');
     return 1;
   }
 
   final asciiHost = target.host;
   final hostIsAscii = RegExp(r'^[\x00-\x7F]+$').hasMatch(asciiHost);
-  stdout.writeln('目标地址 : ${target.toString()}');
+  final latencyHostIsAscii =
+      RegExp(r'^[\x00-\x7F]+$').hasMatch(latencyTarget.host);
+  stdout.writeln('测速地址 : ${target.toString()}');
+  stdout.writeln('延迟地址 : ${latencyTarget.toString()}');
   stdout.writeln('ASCII 主机: $asciiHost'
       '${hostIsAscii ? '  ✓ 全 ASCII' : '  ✗ 含非 ASCII（K1 不合格）'}');
   stdout.writeln('本机代理 : 127.0.0.1:${args.port}');
   stdout.writeln('');
-  if (!hostIsAscii) {
+  if (!hostIsAscii || !latencyHostIsAscii) {
     stderr.writeln('[FAIL] 主机名没有 ASCII 化，拒绝继续探测（K1）');
     return 1;
   }
@@ -130,12 +147,18 @@ Future<int> _run(_Args args) async {
 
   // ---- 1) TTFB（6b 的核心断言：ttfbMs > 0 && error == null）----
   if (args.wantLatency) {
-    final probe = LinkProbe(speedUrl: args.url, localPort: args.port);
+    final probe = LinkProbe(
+      speedUrl: args.url,
+      latencyUrl: args.latencyUrl,
+      localPort: args.port,
+    );
     stdout.writeln('[latency] 开始（看门狗 ${kLatencyTimeout.inSeconds}s）…');
     final outcome = await probe.latency();
     stdout.writeln('  ttfbMs   = ${outcome.ttfbMs}');
     stdout.writeln('  error    = ${outcome.error ?? '（无）'}');
     stdout.writeln('  elapsed  = ${outcome.elapsedMs} ms');
+    // 分项计时：延迟读数可疑时先看这一行（建连 / 响应头 / 首字节）。
+    stdout.writeln('  timings  = ${outcome.timings?.summary ?? '（未采集）'}');
     final pass = outcome.ttfbMs > 0 && outcome.error == null;
     allPass = allPass && pass;
     stdout.writeln(pass ? '  ✓ PASS' : '  ✗ FAIL');
@@ -144,7 +167,11 @@ Future<int> _run(_Args args) async {
 
   // ---- 2) 吞吐（MiB/s，首字节后 3s / 64MiB 窗口）----
   if (args.wantSpeed) {
-    final probe = LinkProbe(speedUrl: args.url, localPort: args.port);
+    final probe = LinkProbe(
+      speedUrl: args.url,
+      latencyUrl: args.latencyUrl,
+      localPort: args.port,
+    );
     stdout.writeln('[speed] 开始（看门狗 ${kSpeedTimeout.inSeconds}s）…');
     final outcome = await probe.speed();
     stdout.writeln('  ttfbMs   = ${outcome.ttfbMs}');
@@ -152,6 +179,7 @@ Future<int> _run(_Args args) async {
         '  speedMib = ${outcome.speedMib?.toStringAsFixed(2) ?? '未测'}');
     stdout.writeln('  error    = ${outcome.error ?? '（无）'}');
     stdout.writeln('  elapsed  = ${outcome.elapsedMs} ms');
+    stdout.writeln('  timings  = ${outcome.timings?.summary ?? '（未采集）'}');
     // 预热未完成算「未测」，不算通过也不算出错：K2 只要求 TTFB 能出数。
     final pass = outcome.ttfbMs > 0 && outcome.error == null;
     allPass = allPass && pass;

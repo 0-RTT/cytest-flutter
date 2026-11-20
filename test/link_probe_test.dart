@@ -223,6 +223,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
         localPort: inbound.port,
       );
 
@@ -250,6 +251,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
         localPort: inbound.port,
       );
 
@@ -270,6 +272,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
         localPort: inbound.port,
       );
 
@@ -288,6 +291,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
         localPort: inbound.port,
       );
 
@@ -304,6 +308,7 @@ void main() {
       await tmp.close();
       final probe = LinkProbe(
         speedUrl: 'https://е.eu.org/300.zip', // IDN：顺带验 K1 ③ 文案洁净
+        latencyUrl: 'https://е.eu.org/300.zip',
         localPort: deadPort,
       );
 
@@ -325,6 +330,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
         localPort: inbound.port,
         latencyTimeout: const Duration(milliseconds: 200),
       );
@@ -349,6 +355,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'https://е.eu.org/300.zip',
+        latencyUrl: 'https://е.eu.org/300.zip',
         localPort: inbound.port,
       );
 
@@ -357,6 +364,58 @@ void main() {
       expect(seenHosts, isNotEmpty);
       expect(seenHosts.first, startsWith('xn--e1a.eu.org'));
       expect(RegExp(r'^[\x00-\x7F]+$').hasMatch(seenHosts.first), isTrue);
+    });
+  });
+
+  group('延迟死线与候选端点（B 方案）', () {
+    test('常量口径：死线 5s、最多 3 次尝试、候选链首项就是默认端点', () {
+      expect(
+        kLatencyTimeout,
+        const Duration(seconds: 5),
+        reason: '12s × 3 个候选会把整轮拖到 36s，用户会以为卡死',
+      );
+      expect(kLatencyMaxAttempts, 3, reason: '首选 + 2 次切换');
+      expect(kLatencyFallbackUrls.first, kDefaultLatencyUrl,
+          reason: '兜底链首项必须与默认端点同一个值（引用同一常量，别复制字面量）');
+      expect(kLatencyFallbackUrls.length, 2);
+      expect(
+        kSpeedTimeout,
+        const Duration(seconds: 25),
+        reason: '速度阶段是 3s 窗口 + 慢启动 + 建连，不能跟着延迟一起缩',
+      );
+      expect(
+        kConnectTimeout,
+        const Duration(seconds: 8),
+        reason: '建连超时是原版设定，本轮不动（死线先到由 watchdog 负责）',
+      );
+    });
+
+    test('看门狗到点收尾时，失败原因可读：恰好是「超时」，不是 cancelled、不是空串', () async {
+      final inbound = await _FakeInbound.start((req) async {
+        // 接了不回包：模拟 DNS 卡死 / 端点黑洞
+        await Future<void>.delayed(const Duration(seconds: 9));
+      });
+      addTearDown(inbound.close);
+      final probe = LinkProbe(
+        speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/generate_204',
+        localPort: inbound.port,
+        latencyTimeout: const Duration(milliseconds: 200),
+      );
+
+      final outcome = await probe.latency();
+
+      expect(
+        outcome.error,
+        kProbeTimeout,
+        reason: '5s 死线比 8s 建连超时短，先到的是 watchdog；'
+            '它掐断在途请求抛的是 HttpException（「连接被中断」），'
+            '必须被翻译成「超时」，否则用户读不懂',
+      );
+      expect(outcome.error, isNotEmpty);
+      expect(outcome.cancelled, isFalse, reason: '超时不是取消，两者不能混');
+      expect(outcome.ok, isFalse);
+      expect(outcome.elapsedMs, lessThan(3000), reason: '看门狗必须按注入的死线收尾');
     });
   });
 
@@ -369,6 +428,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
         localPort: inbound.port,
       );
 
@@ -400,6 +460,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
         localPort: inbound.port,
       );
 
@@ -435,6 +496,7 @@ void main() {
       addTearDown(inbound.close);
       final probe = LinkProbe(
         speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
         localPort: inbound.port,
       );
 
@@ -448,6 +510,148 @@ void main() {
         reason: '达到 3s 预算必须 break，不能把整条流读完',
       );
       expect(outcome.elapsedMs, greaterThanOrEqualTo(kBudgetMs - 500));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Bug B：延迟读数远大于 v2rayN 的「真连接延迟」。
+  //
+  // 修复前的口径：拿**测速**地址（300.zip 大文件）发请求、followRedirects=true、
+  // 以 body 首字节当 TTFB。三条叠加：跨主机跳转会重新 _getConnection（第二套
+  // CONNECT/TLS/请求），大文件端点的首字节被服务端缓冲推迟，于是读数天然翻倍。
+  // 以下用例把这三条钉死。
+  // -------------------------------------------------------------------------
+  group('LinkProbe.latency · 与 v2rayN 可比的延迟口径（Bug B）', () {
+    test('默认延迟端点是 204 小端点，且与测速端点分开（两条口径不许混）', () {
+      expect(kDefaultLatencyUrl, contains('generate_204'));
+      expect(kDefaultLatencyUrl, isNot(contains('300.zip')));
+      expect(kDefaultSpeedUrl, contains('300.zip'));
+
+      final probe = LinkProbe(localPort: 1234);
+
+      // 延迟：小端点、无 body、无跳转
+      expect(probe.latencyUri.host, 'cp.cloudflare.com');
+      expect(probe.latencyUri.path, '/generate_204');
+      // 速度：必须继续用大文件端点（3s 窗口要读得满）
+      expect(probe.uri.host, 'xn--e1a.eu.org');
+      expect(probe.uri.path, '/300.zip');
+    });
+
+    test('不跟随跳转：302 只发一次请求，且记为「可达」（redirects == 0）', () async {
+      final requests = <String>[];
+      final inbound = await _FakeInbound.start((req) async {
+        requests.add(req.uri.toString());
+        final resp = req.response;
+        resp.statusCode = HttpStatus.found; // 302
+        resp.headers.set(
+          HttpHeaders.locationHeader,
+          'http://other-host.test/generate_204',
+        );
+        resp.contentLength = 0;
+        await resp.close();
+      });
+      addTearDown(inbound.close);
+      final probe = LinkProbe(
+        speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
+        localPort: inbound.port,
+      );
+
+      final outcome = await probe.latency();
+
+      expect(
+        requests.length,
+        1,
+        reason: 'followRedirects=true 时 SDK 会为 Location 重新建连'
+            '（_http/http_impl.dart:693 → :3026）再发一次请求，'
+            '延迟读数会白白多一整套 CONNECT+TLS',
+      );
+      expect(outcome.ok, isTrue, reason: '跳转只说明目标站点策略，不说明线路不通');
+      expect(outcome.error, isNull);
+      expect(outcome.ttfbMs, greaterThanOrEqualTo(0));
+      expect(outcome.timings, isNotNull);
+      expect(outcome.timings!.redirects, 0);
+    });
+
+    test('204 No Content：TTFB 取响应头时刻，不能判成「没有读到数据」', () async {
+      final inbound = await _FakeInbound.start((req) async {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        final resp = req.response;
+        resp.statusCode = HttpStatus.noContent;
+        await resp.close();
+      });
+      addTearDown(inbound.close);
+      final probe = LinkProbe(
+        speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
+        localPort: inbound.port,
+      );
+
+      final outcome = await probe.latency();
+
+      expect(
+        outcome.error,
+        isNull,
+        reason: '默认延迟端点就是 generate_204（天生无 body），'
+            '把它判成 kProbeNoData 会让所有节点整批失败',
+      );
+      expect(outcome.ok, isTrue);
+      expect(outcome.ttfbMs, greaterThanOrEqualTo(150));
+      expect(outcome.ttfbMs, lessThan(5000));
+      expect(outcome.timings!.headerMs, greaterThanOrEqualTo(150));
+      expect(outcome.timings!.firstByteMs, -1, reason: '204 没有 body，首字节记为未知');
+    });
+
+    test('分项计时：能把「建连」与「服务端压着不回」分开看出来', () async {
+      // 服务端接到请求后先压 200ms 才写任何东西：这段延迟必须落在
+      // headerMs 上，而不是被算进 connectMs —— 否则日志里就分不清
+      // 「隧道慢」和「对端慢」，排障方向完全相反。
+      final inbound = await _FakeInbound.start((req) async {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await _respond(req, bodyBytes: 512);
+      });
+      addTearDown(inbound.close);
+      final probe = LinkProbe(
+        speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
+        localPort: inbound.port,
+      );
+
+      final outcome = await probe.latency();
+      final timings = outcome.timings!;
+
+      expect(timings.connectMs, greaterThanOrEqualTo(0), reason: '建连必须被计时');
+      expect(
+        timings.headerMs,
+        greaterThanOrEqualTo(150),
+        reason: '这 200ms 是「对端压着不回」，必须落在响应头这一段',
+      );
+      expect(
+        timings.headerMs - timings.connectMs,
+        greaterThanOrEqualTo(150),
+        reason: '本机入站的建连是毫秒级，差值必须几乎全部来自对端等待',
+      );
+      expect(timings.firstByteMs, greaterThanOrEqualTo(timings.headerMs));
+      expect(outcome.ttfbMs, timings.firstByteMs,
+          reason: 'TTFB 仍以首字节为准（有 body 时）');
+    });
+
+    test('4xx/5xx 仍然是失败（放宽 3xx 不等于放宽真错）', () async {
+      final inbound = await _FakeInbound.start(
+        (req) => _respond(req, status: 404, bodyBytes: 16),
+      );
+      addTearDown(inbound.close);
+      final probe = LinkProbe(
+        speedUrl: 'http://probe.test/300.zip',
+        latencyUrl: 'http://probe.test/300.zip',
+        localPort: inbound.port,
+      );
+
+      final outcome = await probe.latency();
+
+      expect(outcome.error, 'HTTP 404');
+      expect(outcome.ok, isFalse);
+      expect(outcome.timings, isNotNull, reason: '失败也要留下分项计时，便于排障');
     });
   });
 }

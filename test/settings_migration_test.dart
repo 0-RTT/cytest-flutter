@@ -2,6 +2,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:cytest/core/settings.dart';
+import 'package:cytest/data/link_probe.dart';
+import 'package:cytest/data/link_test.dart';
+import 'package:cytest/data/vless.dart';
+import 'package:cytest/data/xray.dart';
+import 'package:cytest/state/app_state.dart';
 
 /// 「默认延迟阈值 200 → 0」的一次性迁移。
 ///
@@ -162,4 +167,84 @@ void main() {
       expect(s.httpProxy, isEmpty);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // 延迟 / 速度两个地址必须是两条独立的口径，且老数据能平滑过渡。
+  // -------------------------------------------------------------------------
+  group('Settings · 延迟地址（latencyUrl）', () {
+    test('Defaults 与 link_probe 的常量逐字一致（改一处漏一处会红）', () {
+      expect(Defaults.latencyUrl, kDefaultLatencyUrl);
+      expect(Defaults.speedUrl, kDefaultSpeedUrl);
+      expect(Defaults.latencyUrl, isNot(Defaults.speedUrl));
+    });
+
+    test('老 JSON 没有 latencyUrl 键 → 回落默认小端点（不是空串）', () {
+      final s = AppSettings.fromJson(<String, dynamic>{
+        'speedUrl': 'https://example.com/big.zip',
+      });
+
+      expect(s.latencyUrl, Defaults.latencyUrl);
+      expect(s.speedUrl, 'https://example.com/big.zip', reason: '速度地址不受影响');
+    });
+
+    test('latencyUrl 为空白 / null / 非字符串 → 一律回落默认', () {
+      expect(AppSettings.fromJson(<String, dynamic>{'latencyUrl': '   '}).latencyUrl,
+          Defaults.latencyUrl);
+      expect(AppSettings.fromJson(<String, dynamic>{'latencyUrl': null}).latencyUrl,
+          Defaults.latencyUrl);
+      expect(AppSettings.fromJson(<String, dynamic>{'latencyUrl': 42}).latencyUrl,
+          Defaults.latencyUrl);
+    });
+
+    test('toJson 必须写回 latencyUrl（漏写 → 保存一次就把设置冲掉）', () {
+      final s = AppSettings()
+        ..speedUrl = 'https://s.example.com/big.zip'
+        ..latencyUrl = 'https://l.example.com/generate_204';
+
+      final json = s.toJson();
+      expect(json['latencyUrl'], 'https://l.example.com/generate_204');
+
+      final restored = AppSettings.fromJson(json);
+      expect(restored.latencyUrl, 'https://l.example.com/generate_204');
+      expect(restored.speedUrl, 'https://s.example.com/big.zip');
+    });
+
+    test('落盘再 load 一轮：两个地址都保真', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final s = AppSettings()
+        ..speedUrl = 'https://s.example.com/big.zip'
+        ..latencyUrl = 'https://l.example.com/generate_204';
+      await s.save();
+
+      final loaded = await AppSettings.load();
+      expect(loaded.speedUrl, 'https://s.example.com/big.zip');
+      expect(loaded.latencyUrl, 'https://l.example.com/generate_204');
+    });
+
+    test('boot 后设置里的两个地址真的灌进了 runner（否则设置页是摆设）', () async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'cytest.settings.v1': '{"speedUrl":"https://s.example.com/big.zip",'
+            '"latencyUrl":"https://l.example.com/generate_204"}',
+      });
+      final runner = LinkTestRunner(xray: _FakeXray());
+      final state = AppState(runner: runner);
+
+      await state.boot();
+
+      expect(runner.speedUrl, 'https://s.example.com/big.zip');
+      expect(runner.latencyUrl, 'https://l.example.com/generate_204');
+    });
+  });
+}
+
+/// 只为构造 AppState 用的空壳批量启动器（boot 不会碰它）。
+class _FakeXray implements BatchXray {
+  @override
+  XrayMode mode = XrayMode.none;
+
+  @override
+  Future<String?> startBatch(List<(Vless, int)> nodes) async => 'unused';
+
+  @override
+  Future<void> stop() async {}
 }

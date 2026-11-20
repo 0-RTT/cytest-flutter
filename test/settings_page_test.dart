@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:cytest/core/settings.dart' show Defaults;
 import 'package:cytest/state/app_state.dart';
 import 'package:cytest/ui/pages/settings_page.dart';
 
@@ -45,7 +46,8 @@ void main() {
         'proxyip',
         '并发',
         '超时',
-        '测速地址',
+        '延迟测试地址',
+        '速度测试地址',
         'GitHub 推送',
         '远程执行',
       ]) {
@@ -113,7 +115,8 @@ void main() {
         findsOneWidget,
         reason: '非法地址必须提示用户怎么改，而不是静默失败',
       );
-      expect(find.textContaining('https://github.com/owner/repo'), findsOneWidget);
+      expect(
+          find.textContaining('https://github.com/owner/repo'), findsOneWidget);
       expect(state.settings.githubRepo, isEmpty);
     });
 
@@ -154,6 +157,82 @@ void main() {
     });
   });
 
+  // 延迟与速度是两条口径（延迟 = 204 小端点、速度 = 大文件），入口必须分开；
+  // 合在一起正是「延迟读数远大于 v2rayN」的老 bug。
+  group('SettingsPage · 延迟 / 速度测试地址分离', () {
+    testWidgets('两个入口各自独立，弹层字段对得上', (tester) async {
+      _tallViewport(tester);
+      await tester.pumpWidget(_host(AppState()));
+      await tester.pumpAndSettle();
+
+      await _openGroup(tester, '延迟测试地址');
+      final latency = tester.widget<TextField>(_fieldByLabel('延迟测试地址'));
+      expect(latency.decoration?.hintText, Defaults.latencyUrl);
+      await _closeSheet(tester);
+
+      await _openGroup(tester, '速度测试地址');
+      final speed = tester.widget<TextField>(_fieldByLabel('速度测试地址'));
+      expect(speed.decoration?.hintText, Defaults.speedUrl);
+      // 旧的「测速地址」入口必须彻底消失，避免用户以为只配一个就够
+      expect(find.text('测速地址'), findsNothing);
+    });
+
+    testWidgets('延迟地址的说明写明「不可达时自动尝试内置候选」', (tester) async {
+      _tallViewport(tester);
+      await tester.pumpWidget(_host(AppState()));
+      await tester.pumpAndSettle();
+      await _openGroup(tester, '延迟测试地址');
+
+      expect(
+        find.textContaining('自动尝试内置候选'),
+        findsOneWidget,
+        reason: '端点会静默切换，用户必须知道这件事，否则看不懂阶段文案里的「端点 2/3」',
+      );
+    });
+
+    testWidgets('速度地址清空后保存 → 也回落默认（两条地址必须对称）', (tester) async {
+      _tallViewport(tester);
+      final state = AppState();
+      await tester.pumpWidget(_host(state));
+      await tester.pumpAndSettle();
+
+      await _openGroup(tester, '速度测试地址');
+      await tester.enterText(_fieldByLabel('速度测试地址'), '');
+      await _closeSheet(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      await tester.pumpAndSettle();
+
+      expect(
+        state.settings.speedUrl,
+        Defaults.speedUrl,
+        reason: '空的速度地址会一路传到 pipeline 的 speedTestURL，'
+            '让三阶段下载直接报配置错误；必须和延迟地址一样有兜底',
+      );
+      expect(state.settings.latencyUrl, Defaults.latencyUrl);
+    });
+
+    testWidgets('延迟地址清空后保存 → 回落默认值（不能落盘成空串）', (tester) async {
+      _tallViewport(tester);
+      final state = AppState();
+      await tester.pumpWidget(_host(state));
+      await tester.pumpAndSettle();
+
+      await _openGroup(tester, '延迟测试地址');
+      await tester.enterText(_fieldByLabel('延迟测试地址'), '');
+      await _closeSheet(tester);
+      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      await tester.pumpAndSettle();
+
+      expect(
+        state.settings.latencyUrl,
+        Defaults.latencyUrl,
+        reason: '空地址会让每条线路报「地址非法」，清空输入框的语义是恢复默认',
+      );
+      // 速度地址不能被这次保存顺手改掉
+      expect(state.settings.speedUrl, Defaults.speedUrl);
+    });
+  });
+
   // 真实事故：用户看到「延迟 800ms」以为节点废了，就去设置里填 200ms，
   // 结果一键测试把所有能用的候选都筛掉，看起来像「全部失败」。
   // 所以这一项必须自解释：0 = 不限，且只影响测速前的筛选。
@@ -177,8 +256,7 @@ void main() {
       final field = tester.widget<TextField>(_fieldByLabel('延迟上限（ms）'));
       final helper = field.decoration?.helperText ?? '';
       expect(helper, contains('不代表节点不可用'));
-      expect(helper, contains('延迟测试'),
-          reason: '要说明「延迟测试」不受此项影响，否则用户不敢调');
+      expect(helper, contains('延迟测试'), reason: '要说明「延迟测试」不受此项影响，否则用户不敢调');
     });
 
     testWidgets('默认值读出来就是 0（不限）', (tester) async {
