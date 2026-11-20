@@ -430,6 +430,22 @@ class _SettingsPageState extends State<SettingsPage> {
     unawaited(_save(quiet: true));
   }
 
+  /// 选私钥文件：把「应用目录里的副本路径」填进输入框。
+  ///
+  /// 复制由原生侧完成，Dart 只拿路径：这个字段本身就只是一个路径字符串，
+  /// 读文件内容的事交给 SSH 连接时再做。
+  Future<void> _pickKeyFile() async {
+    try {
+      final path = await pickKeyFile();
+      if (path == null || path.isEmpty) return; // 用户取消
+      if (!mounted) return;
+      setState(() => _remoteKey.text = path); // 触发去抖自动保存
+    } on FilePickException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
   /// 入队一次保存。**所有**保存路径都走这里，保证串行。
   Future<void> _save({required bool quiet, _FormValues? captured}) {
     _debounce?.cancel();
@@ -829,7 +845,12 @@ class _SettingsPageState extends State<SettingsPage> {
           _num('端口', _remotePort, hint: '默认 22'),
           _text('用户', _remoteUser, hint: '默认 root'),
           _text('密码', _remotePassword, obscure: true),
-          _text('私钥路径', _remoteKey, hint: '留空则用密码'),
+          _text('私钥路径', _remoteKey,
+              hint: '留空则用密码',
+              onPick: _pickKeyFile,
+              pickTooltip: '选择私钥文件'),
+          _caption('点右侧文件夹选私钥：无后缀的 id_rsa 也能选，'
+              '选中后会复制一份到应用目录（原文件可以删）。'),
         ];
     }
   }
@@ -1075,14 +1096,23 @@ class _SettingsPageState extends State<SettingsPage> {
       );
 
   Widget _text(String label, TextEditingController c,
-          {String? hint, bool obscure = false}) =>
+          {String? hint, bool obscure = false, VoidCallback? onPick, String? pickTooltip}) =>
       Padding(
         padding: const EdgeInsets.only(top: 10),
         child: TextField(
           controller: c,
           obscureText: obscure,
           style: const TextStyle(fontSize: 13),
-          decoration: _decoration(label: label, hint: hint),
+          decoration: _decoration(label: label, hint: hint).copyWith(
+            // 有些字段（私钥路径）手输一个真实路径基本不现实：给个选择器入口。
+            suffixIcon: onPick == null
+                ? null
+                : IconButton(
+                    tooltip: pickTooltip ?? '选择文件',
+                    icon: const Icon(Icons.folder_open, size: 18),
+                    onPressed: onPick,
+                  ),
+          ),
         ),
       );
 

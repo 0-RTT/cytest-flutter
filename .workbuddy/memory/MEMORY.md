@@ -31,7 +31,10 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 
 ## 3. 环境与构建铁律
 
-- Flutter 3.50 / Dart 3.14；`FLUTTER_STORAGE_BASE_URL` 必须 flutter-io.cn（否则引擎包下载中断）。
+- Flutter 3.50 / Dart 3.14，SDK 原在 `D:\cytest-app\.workbuddy	mp\envlutter`；
+  **2026-11-20 晚该临时目录被清理（cytest-app 整个不见了），本机已无 flutter/dart 可执行**，
+  下次要先重新准备 SDK 与 `activate.sh` 才能本地跑 analyze/test。
+- `FLUTTER_STORAGE_BASE_URL` 必须 flutter-io.cn（否则引擎包下载中断）。
 - 版本组合（降版本行不通）：**AGP 9.1.1 + Gradle 9.3.1 + Kotlin 2.4.20 + compileSdk 37**。
 - 原生二进制走 `jniLibs/arm64-v8a/lib*.so` + `useLegacyPackaging=true`；解压到 filesDir 再 chmod 会被 SELinux 拒。
 - CI 里 xray 必须 `unzip -d /tmp` 再 `mv` 到 jniLibs（落 `assets/` 被静默忽略）。

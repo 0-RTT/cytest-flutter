@@ -31,6 +31,24 @@ Future<String?> pickTextFile() async {
   }
 }
 
+/// 选一个 SSH 私钥文件。
+///
+/// 与 [pickTextFile] 分开的原因：那个把 MIME 限定在 text/csv 一类，而私钥常常
+/// **没有后缀**（id_rsa / id_ed25519），SAF 报不出类型 → 在选择器里直接变灰。
+/// 这里用 `*/*` 不做过滤，并且由原生侧把内容复制到应用目录后返回**副本路径**
+/// （`content://` 不能交给 dartssh2 当文件路径，也不能重复读）。
+///
+/// 返回 `null` = 用户取消；抛 [FilePickException] = 选择或复制失败。
+Future<String?> pickKeyFile() async {
+  try {
+    return await _channel.invokeMethod<String>('pickKeyFile');
+  } on PlatformException catch (e) {
+    throw FilePickException(_humanize(e));
+  } on MissingPluginException {
+    throw const FilePickException('当前平台没有实现文件选择器（仅 Android 支持）');
+  }
+}
+
 String _humanize(PlatformException e) {
   final message = e.message;
   if (message != null && message.isNotEmpty) return message;

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -16,6 +17,7 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONArray
+import java.io.File
 
 /**
  * 暴露三件事：
@@ -66,6 +68,7 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "pickTextFile" -> startPickTextFile(result)
+                    "pickKeyFile" -> startPickKeyFile(result)
                     else -> result.notImplemented()
                 }
             }
@@ -130,11 +133,98 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // ------------------------------------------------------------------
+    // SSH 私钥选择（SAF）
+    // ------------------------------------------------------------------
+    //
+    // 单独一个入口，且**不带 EXTRA_MIME_TYPES**，原因：
+    // 私钥文件通常没有后缀（id_rsa / id_ed25519），SAF 拿不到 MIME 时会把它报成
+    // application/octet-stream 甚至没有类型；一旦用 EXTRA_MIME_TYPES 限定类型，
+    // 这类文件在选择器里会直接变灰 —— 用户看到的就是「文件明明在，却选不了」。
+    // 所以这里只给 type="*/*" 全量列出，格式对不对交给 SSH 解析去报错。
+    //
+    // 返回值是**应用私有目录里的副本路径**：content:// 只能读一次、也不能给
+    // dartssh2 当文件路径用，复制一份到 filesDir/keys/ 才能在后续每次连接时复用。
+    private fun startPickKeyFile(result: MethodChannel.Result) {
+        if (pendingPick != null) {
+            result.error("busy", "已有一个文件选择器打开，请先完成它", null)
+            return
+        }
+        pendingPick = result
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_PICK_KEY)
+        } catch (e: Exception) {
+            pendingPick = null
+            result.error("no_picker", "无法打开系统文件选择器：${e.message}", null)
+        }
+    }
+
+    private fun handlePickKey(resultCode: Int, data: Intent?) {
+        val result = pendingPick
+        pendingPick = null
+        if (result == null) return
+        val uri: Uri? = if (resultCode == Activity.RESULT_OK) data?.data else null
+        if (uri == null) {
+            result.success(null) // 用户取消
+            return
+        }
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("无法打开所选文件（openInputStream 返回 null）")
+            if (bytes.isEmpty()) {
+                result.error("read_failed", "所选文件是空的", null)
+                return
+            }
+            if (bytes.size > MAX_KEY_BYTES) {
+                result.error("too_large", "文件过大：${bytes.size} 字节（上限 $MAX_KEY_BYTES）", null)
+                return
+            }
+            val dir = File(filesDir, "keys")
+            if (!dir.exists() && !dir.mkdirs()) {
+                result.error("read_failed", "无法创建 keys 目录", null)
+                return
+            }
+            val file = File(dir, safeFileName(displayName(uri)))
+            file.writeBytes(bytes)
+            result.success(file.absolutePath)
+        } catch (e: Exception) {
+            result.error("read_failed", "读取密钥失败：${e.message}", null)
+        }
+    }
+
+    private fun displayName(uri: Uri): String? = try {
+        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    } catch (_: Exception) {
+        null
+    }
+
+    /** 文件名只保留安全字符：内容管理器给的显示名可能带路径分隔符或中文。 */
+    private fun safeFileName(raw: String?): String {
+        val base = raw.orEmpty().substringAfterLast('/').substringAfterLast('\\')
+        val cleaned = base.replace(Regex("[^A-Za-z0-9._-]"), "_").trim('_', '.')
+        if (cleaned.isEmpty()) return "ssh_key_${System.currentTimeMillis()}"
+        return cleaned
+    }
+
     @Deprecated("FlutterActivity 基类在不同 Flutter 版本间变化，经典 API 更稳")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode != REQUEST_PICK_TEXT) {
-            super.onActivityResult(requestCode, resultCode, data)
-            return
+        when (requestCode) {
+            REQUEST_PICK_KEY -> {
+                handlePickKey(resultCode, data)
+                return
+            }
+            REQUEST_PICK_TEXT -> Unit
+            else -> {
+                super.onActivityResult(requestCode, resultCode, data)
+                return
+            }
         }
         val result = pendingPick
         pendingPick = null
@@ -450,6 +540,10 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val REQUEST_PICK_TEXT = 4321
+        private const val REQUEST_PICK_KEY = 4322
+
+        /** 私钥上限 64KB：OpenSSH 私钥几 KB，超过大概率选错了文件。 */
+        private const val MAX_KEY_BYTES = 64L * 1024
 
         /** 单文件上限 5MB：proxyip 列表几百 KB 就到头，超大概率是选错了文件。 */
         private const val MAX_BYTES = 5L * 1024 * 1024
