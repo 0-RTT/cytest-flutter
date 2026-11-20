@@ -62,7 +62,6 @@ jobs:
             FL="${PINNED_FLUTTER_VERSION}"
             XR="${PINNED_XRAY_VERSION}"
             GO="${PINNED_GO_VERSION}"
-            PUB=get
             echo "模式=pinned（仓库写死版本）"
           else
             FL=$(curl -fsSL --retry 3 --retry-delay 2 \
@@ -79,16 +78,14 @@ jobs:
             # getApplicationSupportDirectory() 抛 ClassNotFoundException →
             # 记录页一直转圈。CI 的 analyze/test 都发现不了这种「只在真机炸」的问题，
             # 所以运行时依赖必须是可复现的；升级走「本地 pub upgrade + 真机验证 + 提交 lock」。
-            PUB=get
             echo "模式=latest（工具链取最新，Dart 包按 lock）"
           fi
           {
             echo "FLUTTER_VERSION=$FL"
             echo "XRAY_VERSION=$XR"
             echo "GO_VERSION=$GO"
-            echo "PUB_CMD=$PUB"
           } >> "$GITHUB_ENV"
-          echo "flutter=$FL | xray=$XR | go=$GO | pub=$PUB"
+          echo "flutter=$FL | xray=$XR | go=$GO"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -103,11 +100,24 @@ jobs:
           channel: stable
           cache: true
 
+      # pub 依赖缓存：subosito/flutter-action 的 cache 只覆盖 SDK 本身，
+      # 每次 `flutter pub get` 仍要连 pub.dev 解析 + 下载全部包（实测 30~60s）。
+      # key 跟 pubspec.lock 走：lock 不变就必然命中；restore-keys 兜住「加了个包」
+      # 的情况（旧条目仍能复用大部分，只补新增的）。
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            pub-${{ runner.os }}-
+
       # 原来是 curl 下载 70MB 的 go tar.gz 再 sudo tar 到 /usr/local，实测 28 秒。
       # setup-go 优先命中 runner 预装的 toolcache，命中时 1~2 秒。
       # cache: false —— 本仓库没有 go.mod/go.sum（单文件 go build），
       # 让 setup-go 去找依赖文件只会打一条「no dependency file」警告。
       - name: Set up Go
+        if: github.event_name != 'pull_request'
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -133,24 +143,41 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-modules-v1
 
+      # xray 单版本 30MB，每天多次发版会重复下载。按 XRAY_VERSION 缓存二进制本身
+      # （不是 zip），命中时直接拷进 jniLibs。
+      - name: Cache xray binary
+        if: github.event_name != 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/xray-cache/libxray.so
+          key: xray-${{ runner.os }}-${{ env.XRAY_VERSION }}-arm64
+
       - name: Fetch native binaries
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           JNI=android/app/src/main/jniLibs/arm64-v8a
           mkdir -p assets "$JNI"
           echo "== xray (android arm64) =="
-          # --retry：这个项目被网络抖动坑过多次（SDK 包损坏、Maven 429），
-          # 大文件下载一律带退避重试，别让一次抖断掉整次发版。
-          curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused -o /tmp/xray.zip \
-            "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-android-arm64-v8a.zip"
-          unzip -j -o -q /tmp/xray.zip xray -d /tmp
+          if [ -f /tmp/xray-cache/libxray.so ]; then
+            echo "   缓存命中：$(ls -lh /tmp/xray-cache/libxray.so | awk '{print $5}')"
+          else
+            # --retry：这个项目被网络抖动坑过多次（SDK 包损坏、Maven 429），
+            # 大文件下载一律带退避重试，别让一次抖断掉整次发版。
+            curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused -o /tmp/xray.zip \
+              "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-android-arm64-v8a.zip"
+            unzip -j -o -q /tmp/xray.zip xray -d /tmp
+            mkdir -p /tmp/xray-cache
+            cp -f /tmp/xray /tmp/xray-cache/libxray.so
+          fi
           # 必须以 lib*.so 进 jniLibs，系统才会解压到 nativeLibraryDir 并给执行权限
-          mv -f /tmp/xray "$JNI/libxray.so"
+          cp -f /tmp/xray-cache/libxray.so "$JNI/libxray.so"
           ls -lh "$JNI/libxray.so"
 
       # pipeline 二进制由本仓库 engine/pipeline.go 现场编译（与 cytest-app 的
       # tools/pipeline 是同一份源码的副本，改动需两侧同步）。
       - name: Build pipeline binaries
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           JNI=android/app/src/main/jniLibs/arm64-v8a
@@ -167,6 +194,7 @@ jobs:
           ls -lh "$JNI/libpipeline.so" assets/pipeline-linux
 
       - name: Resolve version
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -182,7 +210,7 @@ jobs:
       # 真机上路径 API 直接抛异常；analyze/test 无法覆盖这类运行时问题。
       - name: Flutter pub get
         shell: bash
-        run: flutter pub "${PUB_CMD}"
+        run: flutter pub get
 
       - name: Analyze
         # 不能用 `|| true`：那会把 error 的退出码一起吞掉，即使 analyze 报 error
@@ -196,7 +224,10 @@ jobs:
       - name: Unit tests
         run: flutter test
 
+      # PR 上只做「能不能过」的校验（analyze + test），不出包：
+      # 出包要 3~4 分钟，而 PR 的产物没人装。要验包用 workflow_dispatch 手动触发。
       - name: Build release APK
+        if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
           flutter build apk --release --target-platform android-arm64 \
@@ -206,6 +237,7 @@ jobs:
       # 把「这次到底用了什么版本」固化下来：构建不可复现，但必须可追溯。
       # 同时写进 Job Summary（点开 run 就能看到）和 versions.txt（跟 release 一起发）。
       - name: Record resolved versions
+        if: github.event_name != 'pull_request'
         shell: bash
         run: |
           set -euo pipefail
@@ -244,7 +276,7 @@ jobs:
       # 非 tag 构建（PR / 手动触发）仍然留一份 artifact 方便下载排查；
       # tag 构建直接进下一步发版，省掉上传+下载的往返。
       - name: Upload APK (non-tag)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/v') }}
         uses: actions/upload-artifact@v7
         with:
           name: cytest-flutter-apk
