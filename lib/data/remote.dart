@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:dartssh2/dartssh2.dart';
 
 import '../core/bin.dart';
@@ -55,33 +56,60 @@ class RemoteRunner {
 
     final workDir = '/tmp/cytest-${DateTime.now().millisecondsSinceEpoch}';
 
+    // 引擎缓存：远端按内容哈希留一份，哈希没变就不再上传 6.8MB。
+    // 用哈希而不是版本号：改一行 Go 代码哈希就变，缓存自然失效，不会用到旧二进制。
+    final hash = sha1.convert(asset).toString().substring(0, 12);
+    final home = (await _runCapture(client, r'echo $HOME')).trim();
+    if (home.isEmpty) throw Exception('无法确定远端 HOME 目录');
+    final cacheDir = '$home/.cytest';
+    final remoteBin = '$cacheDir/pipeline-$hash';
+
     try {
       onLine('创建远端目录 …');
-      await _run(client, 'mkdir -p $workDir/bin $workDir/input $workDir/conf $workDir/output', onLine);
+      await _run(client, 'mkdir -p $workDir/input $workDir/conf $workDir/output', onLine);
 
-      onLine('上传 pipeline（${(asset.length / 1048576).toStringAsFixed(1)} MB）…');
-      final sftp = await client.sftp();
-      await _upload(sftp, '$workDir/bin/pipeline', asset);
-      await _upload(sftp, '$workDir/input/data.txt', utf8.encode(censysJson));
-      await _upload(sftp, '$workDir/conf/config.json', utf8.encode(_configJson(settings)));
-      await sftp.close();
+      final hasBin =
+          (await _runCapture(client, 'test -x "$remoteBin" && echo yes || echo no')).trim();
+      if (hasBin == 'yes') {
+        onLine('远端已有同版本引擎（$hash），跳过上传');
+      } else {
+        onLine('上传 pipeline（${(asset.length / 1048576).toStringAsFixed(1)} MB）…');
+        await _run(client, 'mkdir -p "$cacheDir"', null);
+        final sftp = await client.sftp();
+        // 先传 .part 再 mv：中途断线不会留下一个「看起来可用」的半截二进制。
+        await _upload(sftp, '$remoteBin.part', asset);
+        await sftp.close();
+        await _run(client, 'chmod 755 "$remoteBin.part" && mv -f "$remoteBin.part" "$remoteBin"', null);
+      }
+
+      // 数据与配置每次不同，必须每次传。
+      final sftpData = await client.sftp();
+      await _upload(sftpData, '$workDir/input/data.txt', utf8.encode(censysJson));
+      await _upload(sftpData, '$workDir/conf/config.json', utf8.encode(_configJson(settings)));
+      await sftpData.close();
 
       onLine('开始三阶段测试 …');
       await _run(
         client,
-        'cd $workDir && chmod +x bin/pipeline && '
-        './bin/pipeline -data input/data.txt -config conf/config.json -result output/result.csv',
+        'cd $workDir && "$remoteBin" -data input/data.txt -config conf/config.json -result output/result.csv',
         onLine,
       );
 
       onLine('拉取结果 …');
       final out = await _runCapture(client, 'cat $workDir/output/result.csv');
-      await _run(client, 'rm -rf $workDir', null);
 
       final rows = parseCsv(out);
       if (rows.isEmpty) throw Exception('远端结果为空');
       return rows;
     } finally {
+      // 清理放在 finally：原来写在成功路径末尾，SSH 断了 / 引擎报错就会留下
+      // 一堆 /tmp/cytest-*（每次几十 MB），跑几十轮就堆满 /tmp。
+      // 缓存目录 ~/.cytest 不动，那是下次省上传的凭据。
+      try {
+        await _run(client, 'rm -rf $workDir', null);
+      } catch (_) {
+        // 清理失败不影响结果交付，也不该盖住原始异常。
+      }
       try {
         client.close();
       } catch (_) {}
