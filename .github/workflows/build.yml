@@ -39,6 +39,10 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # GitHub ubuntu runner 的 Android SDK 固定在这里；显式写出是为了让下面
+      # 的 cache path 能引用（actions/cache 的 path 不支持 shell 展开）。
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
       - name: Checkout
@@ -145,6 +149,18 @@ jobs:
 
       # xray 单版本 30MB，每天多次发版会重复下载。按 XRAY_VERSION 缓存二进制本身
       # （不是 zip），命中时直接拷进 jniLibs。
+      # NDK 缓存：`ndkVersion = flutter.ndkVersion` 让 Flutter 插件每次构建都检查
+      # NDK 28.2.13676358，runner 自带的不是这个版本 → 每次都下 android-ndk-r28c-linux.zip
+      # （约 700MB，解压后 2.2GB，实测占 release 构建的大头）。
+      # 直接缓存解压后的目录：命中时插件看到「已安装」就跳过下载与解压。
+      # 放在这里而不是更早：PR 不构建 APK，不需要 NDK。
+      - name: Cache Android NDK
+        if: github.event_name != 'pull_request'
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_SDK_ROOT }}/ndk/28.2.13676358
+          key: ndk-28.2.13676358-${{ runner.os }}
+
       - name: Cache xray binary
         if: github.event_name != 'pull_request'
         uses: actions/cache@v4
