@@ -40,7 +40,8 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - 旧的 `D:\cytest-app\.workbuddy	mp\env` 已在 2026-11-20 晚被清理（连同 cytest-app 仓库），
   不要再引用那条路径。
 - `FLUTTER_STORAGE_BASE_URL` 必须 flutter-io.cn（否则引擎包下载中断），env.sh 里已设。
-- 版本组合（降版本行不通）：**AGP 9.1.1 + Gradle 9.3.1 + Kotlin 2.4.20 + compileSdk 37**。
+- 版本组合（降版本行不通）：**AGP 9.3.1 + Gradle 9.5.0 + Kotlin 2.4.20 + compileSdk 37**。
+（原 9.1.1/9.3.1 会触发 Flutter 的「即将停止支持」警告，2026-11-20 已升级并本地验证。）
 - 原生二进制走 `jniLibs/arm64-v8a/lib*.so` + `useLegacyPackaging=true`；解压到 filesDir 再 chmod 会被 SELinux 拒。
 - CI 里 xray 必须 `unzip -d /tmp` 再 `mv` 到 jniLibs（落 `assets/` 被静默忽略）。
 - **`INTERNET` 必须写在 `src/main/AndroidManifest.xml`**；缺了症状极误导（xray 建 socket 失败 → freePort 抛错被吞 → 回落 20000 → 8s 超时 → 报「xray 未能在 8 秒内监听」）。排查从 APK 本体取证（`aapt2 dump permissions`）。
