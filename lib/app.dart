@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'ui/home.dart';
 import 'ui/widgets/glass.dart';
@@ -141,6 +142,17 @@ class CytestApp extends StatelessWidget {
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
       themeMode: ThemeMode.system,
+      // 固定简体中文：应用文案本身是中文，系统控件的文案（输入框长按菜单、
+      // 返回按钮提示、对话框按钮）也要跟着中文，不能一半中文一半英文。
+      // 不加 localizationsDelegates 时 Flutter 用 DefaultMaterialLocalizations，
+      // 永远是英文 —— 这不是系统设置问题，是应用缺 delegate。
+      locale: const Locale('zh', 'CN'),
+      supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       // 渐变底在最底层，页面切换时固定不动，内容像玻璃板一样滑过。
       builder: (context, child) =>
           GlassBackground(child: child ?? const SizedBox.shrink()),

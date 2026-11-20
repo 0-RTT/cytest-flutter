@@ -9,6 +9,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # 中文本地化：不加这个，长按输入框的「粘贴/全选/剪切」是 Material
+  # 默认的英文文案（DefaultMaterialLocalizations），系统语言是中文也不会变。
+  flutter_localizations:
+    sdk: flutter
   provider: ^6.1.2
   shared_preferences: ^2.3.2
   path_provider: ^2.1.4
