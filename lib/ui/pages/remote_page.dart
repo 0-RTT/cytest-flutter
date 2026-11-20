@@ -23,8 +23,9 @@ class RemotePage extends StatefulWidget {
 }
 
 class _RemotePageState extends State<RemotePage> {
-  late final TextEditingController _data =
-      TextEditingController(text: widget.initialInput ?? '');
+  /// 已选中的 Censys 数据（原始文本）。没有粘贴入口了 —— 数据一律从记录里选，
+  /// 避免「手贴一份和记录里那份不一致」这种查不出来的问题。
+  String _dataContent = '';
   final _logScroll = ScrollController();
   final List<String> _log = [];
   bool _running = false;
@@ -34,8 +35,17 @@ class _RemotePageState extends State<RemotePage> {
   String _dataLabel = '';
 
   @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialInput;
+    if (initial != null && initial.trim().isNotEmpty) {
+      _dataContent = initial;
+      _dataLabel = '外部传入的数据';
+    }
+  }
+
+  @override
   void dispose() {
-    _data.dispose();
     _logScroll.dispose();
     super.dispose();
   }
@@ -54,15 +64,15 @@ class _RemotePageState extends State<RemotePage> {
     );
     if (picked == null || !mounted) return;
     setState(() {
-      _data.text = picked.content;
+      _dataContent = picked.content;
       _dataLabel = picked.label;
     });
   }
 
   Future<void> _run() async {
-    final input = _data.text.trim();
+    final input = _dataContent.trim();
     if (input.isEmpty) {
-      _toast('先粘贴候选数据');
+      _toast('先点「从记录选择」挑一份 Censys 数据');
       return;
     }
     final state = context.read<AppState>();
@@ -147,17 +157,23 @@ class _RemotePageState extends State<RemotePage> {
     final s = context.watch<AppState>().settings;
 
     return Scaffold(
-      appBar: GlassAppBar(
-        title: '远程执行',
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: FilledButton(
-              onPressed: _running ? null : _run,
-              child: Text(_running ? '执行中…' : '在服务器上执行'),
+      appBar: const GlassAppBar(title: '远程执行'),
+      // 主操作放底部一整条：AppBar 右上角那个按钮离手指远、又挤掉标题空间。
+      bottomNavigationBar: GlassBar(
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+            child: SizedBox(
+              height: 46,
+              child: FilledButton.icon(
+                onPressed: _running ? null : _run,
+                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                label: Text(_running ? '执行中…' : '在服务器上执行'),
+              ),
             ),
           ),
-        ],
+        ),
       ),
       // 底部 SafeArea：body 不会自动避让系统手势条 / 三键导航。
       // top: false —— 顶部已由 AppBar 处理。
@@ -253,32 +269,57 @@ class _RemotePageState extends State<RemotePage> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      TextField(
-                        controller: _data,
-                        maxLines: 4,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          // monospace 在 Android 上不含中文字形，缺 fallback 中文显示方块
-                          fontFamilyFallback: ['sans-serif'],
-                          fontSize: 11.5,
+                      const SizedBox(height: 8),
+                      // 只读摘要：数据只能来自记录，没有手输入口。
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: _dataContent.isEmpty
+                                ? theme.colorScheme.outlineVariant
+                                : theme.colorScheme.primary.withValues(alpha: 0.5),
+                          ),
+                          color: _dataContent.isEmpty
+                              ? null
+                              : theme.colorScheme.primary.withValues(alpha: 0.06),
                         ),
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          isDense: true,
-                          hintText: '粘贴 Censys JSON，或点右上「从记录选择」',
+                        child: Row(
+                          children: [
+                            Icon(
+                              _dataContent.isEmpty
+                                  ? Icons.inbox_outlined
+                                  : Icons.check_circle_outline,
+                              size: 18,
+                              color: _dataContent.isEmpty
+                                  ? theme.colorScheme.outline
+                                  : theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _dataContent.isEmpty
+                                    ? '还没有选择数据'
+                                    : '$_dataLabel  ·  '
+                                        '${(_dataContent.length / 1024).toStringAsFixed(1)} KB',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: _dataContent.isEmpty
+                                      ? theme.colorScheme.onSurfaceVariant
+                                      : theme.colorScheme.onSurface,
+                                ),
+                              ),
+                            ),
+                            if (_dataContent.isNotEmpty)
+                              Text(
+                                '重选',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                      if (_dataLabel.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 6),
-                          child: Text(
-                            '已载入：$_dataLabel',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                        ),
                     ],
                   ),
                 ),
