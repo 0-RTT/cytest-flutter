@@ -49,6 +49,9 @@ class _RemotePageState extends State<RemotePage> {
       _log.clear();
     });
 
+    // 只关「本次任务自己拉起的」代理：用户原本就开着的那条不动，否则会
+    // 把他正在用的抓取代理一起停掉。
+    var startedProxyHere = false;
     try {
       int? proxyPort;
       if (state.settings.remoteUseProxy) {
@@ -58,6 +61,7 @@ class _RemotePageState extends State<RemotePage> {
         if (!state.xray.running) {
           setState(() => _log.add('启动本机代理…'));
           await state.startProxyLine(null);
+          startedProxyHere = true;
         }
         proxyPort = state.xray.port;
       }
@@ -82,6 +86,11 @@ class _RemotePageState extends State<RemotePage> {
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     } finally {
+      if (startedProxyHere) {
+        // 任务结束就收掉，不留一条空转的 Xray 连接（费电、也占着节点连接）。
+        await state.stopProxyLine();
+        if (mounted) setState(() => _log.add('已关闭本次临时拉起的代理'));
+      }
       if (mounted) setState(() => _running = false);
     }
   }
