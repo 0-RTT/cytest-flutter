@@ -113,6 +113,17 @@ class AppState extends ChangeNotifier {
   /// 可用条数。
   int get linkOkCount => linkResults.where((r) => r.ok).length;
 
+  /// 把一条历史测速记录载回当前结果（记录页点进去看/推送用）。
+  ///
+  /// 只填展示用状态、**不动 runner**：这不是一次新的测速，没有进程要起。
+  /// 阶段文字写明「历史记录」，避免用户把它当成刚跑完的结果。
+  void loadLinkRun(LinkTestRun run) {
+    linkResults = run.results;
+    linkStage = '历史记录';
+    linkTestError = null;
+    notifyListeners();
+  }
+
   /// 最快速度（MiB/s）。
   double get linkFastest {
     var best = 0.0;

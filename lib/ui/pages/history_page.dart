@@ -10,6 +10,7 @@ import '../../state/app_state.dart';
 import '../widgets/glass.dart';
 import 'result_page.dart';
 import 'test_page.dart';
+import 'vless_test_page.dart';
 
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
@@ -228,86 +229,28 @@ class _HistoryPageState extends State<HistoryPage> {
     }
   }
 
-  /// 链路测速详情：一次运行里每条节点的延迟/速度/失败原因。
+  /// 打开一条链路测速记录：把结果载回 AppState，再进 VLESS 测试页。
   ///
-  /// 用底部弹层而不是新页面：这里是「回看」而不是「操作」，弹层关掉即回到列表，
-  /// 不会在导航栈里堆一层。
+  /// 为什么要进那个页面而不是只显示详情：历史记录的价值是「回看后再推送」，
+  /// 而推送入口（勾选节点 → 推送 N）本来就在 VLESS 页。只给一个只读弹层，
+  /// 用户到不了推送页，等于这条记录只能看不能用。
   Future<void> _openLinkRun(LinkTestRun run) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return SafeArea(
-          top: false,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(ctx).size.height * 0.8,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
-                  child: Row(
-                    children: [
-                      Text('${_fmtTime(run.createdAt)} · ${_modeLabel(run.mode)}',
-                          style: theme.textTheme.titleSmall),
-                      const Spacer(),
-                      Text('${run.okCount}/${run.results.length} 可用',
-                          style: theme.textTheme.labelSmall),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1),
-                Flexible(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    itemCount: run.results.length,
-                    separatorBuilder: (_, __) => const Divider(height: 12),
-                    itemBuilder: (_, i) {
-                      final r = run.results[i];
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(r.name, style: const TextStyle(fontSize: 13)),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${r.host}:${r.port} · ${_stateLabel(r)}',
-                            style: TextStyle(
-                                fontSize: 11.5, color: theme.hintColor),
-                          ),
-                          if (r.error != null)
-                            Text(
-                              r.error!,
-                              style: TextStyle(
-                                  fontSize: 11.5,
-                                  color: theme.colorScheme.error),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+    final state = context.read<AppState>();
+    state.loadLinkRun(run);
+    final targets = <String>[
+      for (final r in run.results)
+        if (r.host.isNotEmpty && r.port > 0) '${r.host}:${r.port}',
+    ];
+    final links = state.settings.vlessLinks;
+    await Navigator.of(context).push(
+      GlassRoute(
+        builder: (_) => VlessTestPage(
+          targets: targets,
+          template: links.isEmpty ? '' : links.first,
+        ),
+      ),
     );
-  }
-
-  static String _stateLabel(LinkTestResult r) {
-    final latency = r.latencyMs >= 0 ? '${r.latencyMs} ms' : '延迟未测';
-    // speedMib == null 是「未测」，**不是 0**；显示成 0.00 MiB/s 会让用户
-    // 以为测出来是零速，这是两件完全不同的事。
-    final speed = r.speedMib == null
-        ? '速度未测'
-        : '${r.speedMib!.toStringAsFixed(2)} MiB/s';
-    return '$latency · $speed';
+    if (mounted) await _reload();
   }
 
   static String _modeLabel(LinkTestMode mode) => switch (mode) {
