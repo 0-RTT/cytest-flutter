@@ -1,186 +1,140 @@
-# cytest-flutter 项目记忆
+# cytest-flutter · 项目记忆（唯一权威，2026-11-20 重整）
 
-## 定位
-Kotlin 版（0-RTT/cytest-app）的 Flutter 重写，独立仓库 0-RTT/cytest-flutter，独立目录 D:\cytest-flutter。
-与 cytest-app 共用同一份网络引擎（engine/pipeline.go 是从 tools/pipeline 复制的副本，改动需两边同步）。
-**本目录的记忆只写 Flutter 侧，不要再往 cytest-app 的 memory 里混。**
+Kotlin 版（`0-RTT/cytest-app`）的 Flutter 重写，独立仓库 `D:\cytest-flutter`。
+`engine/pipeline.go` 是 cytest-app `tools/pipeline` 的副本，改动需两边同步。**本记忆只写 Flutter 侧。**
 
-## 构建环境（2026-11-17 打通）
-Flutter 3.50.0 / Dart 3.14.0，SDK 在 `D:\cytest-app\.workbuddy\tmp\env\flutter`（由 activate.sh 注入 PATH）。
-`source D:\cytest-app\.workbuddy\tmp\env\activate.sh` 后：
-- `FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`（引擎包必须走这个，否则 Google 存储下载中断）
-- `PUB_HOSTED_URL=https://pub.flutter-io.cn`
-- `ANDROID_HOME` = `D:\cytest-app\.workbuddy\tmp\env\sdk`（platforms 34/35/36/37.0 已装齐）
+---
 
-版本组合（踩了一轮才定）：**AGP 9.1.1 + Gradle 9.3.1 + Kotlin 2.4.20 + compileSdk 37**。
-- Flutter 3.50 强制 Gradle ≥ 9.3.1、AGP ≥ 9.1.1，降版本行不通
-- AGP 9.3.1 要求 Gradle 9.5.0，本地没有，所以卡在 9.1.1
+## 1. 发布流程（每天都要用）
 
-## 关键坑
-1. **flutter_inappwebview 6.1.5 不兼容 AGP 9**：它用 `getDefaultProguardFile('proguard-android.txt')`，AGP 9 已移除。
-   解法：把插件 vendor 到 `packages/flutter_inappwebview_android`，改成 `proguard-android-optimize.txt`，
-   pubspec 用 `dependency_overrides` 指向本地路径（CI 同样生效）。升级插件后可去掉。
-2. **各插件要求不同 compileSdk**：jni_flutter 要 35、inappwebview 要 34，本机原本只有 37。
-   已用 sdkmanager 装齐 34/35/36；主项目与 vendor 插件都指向 37。
-3. **网络下载极不稳定**：Flutter SDK（1.7G）和 Gradle 发行包多次下载损坏（zip 中央目录缺失）。
-   可靠做法是用 `D:\cytest-app\.workbuddy\tmp\dl.py`（Python 分块 + Range + zip 校验）手动补到缓存。
-4. **Dart 与 Kotlin 的行为差异**：`Uri.fragment` 不解码（Kotlin 会），需显式 `Uri.decodeComponent`。
-   `Uri.queryParameters` 会自动解码，注意区分。
+```bash
+source D:/cytest-app/.workbuddy/tmp/env/activate.sh   # 注入 PATH / FLUTTER_STORAGE_BASE_URL 等
+cd /d/cytest-flutter && git add -A && git commit -m "..."
+git -c http.proxy=socks5h://127.0.0.1:10808 push origin main
+git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push origin v1.0.NN
+```
 
-## 代码结构
-`lib/data/` 逐项对齐原版：vless（解析/替换/配置）、xray（进程+批量）、pipeline（三阶段+CSV）、
-node_template（订阅+mihomo）、history、remote（dartssh2）、github。
-`lib/state/app_state.dart` 是 ChangeNotifier 门面，`lib/ui/home.dart` 是两列卡片 + 底部两 Tab。
+- **CI 只监听 tag `v*`**，push main 不出包。日常验证靠 CI（用户要求：本地不要跑全量测试）。
+- 本机代理：v2rayN 只有 **SOCKS 10808**（无 HTTP 入站）→ git 必须 `socks5h://`（`h` 让代理解析域名）。
+- 查 CI / GitHub API 必须加 `--ssl-no-revoke --socks5-hostname 127.0.0.1:10808`（schannel 吊销列表离线会报 `CRYPT_E_REVOCATION_OFFLINE`）。
+- 版本号是占位，`--build-name/--build-number` 由 CI 从 tag 注入（`BUILD_NAME = tag 去掉 v`）。
+- 当前基线：**v1.0.48**，APK 28,632,000 字节（27.31 MiB / 28.6 MB 十进制）。
 
-## 与原版的已知差异
-导出改复制到剪贴板（不写外部存储）；链路测速是串行起 Xray 探活（未做多端口批量）；
-mihomo 只保留 proxies/groups/rules 核心段（无 rule-providers、假 IP 过滤）。
+## 2. 体积认知（踩过的错）
 
-## 产物
-APK 走 `flutter build apk --release --target-platform android-arm64`，
-二进制（pipeline / pipeline-linux / xray）由 `scripts/fetch-assets.sh` 或 CI 生成，不入库。
+| 包 | 十进制 | MiB | 压缩后构成 |
+|---|---|---|---|
+| Kotlin CI | 38.5 MB | 36.75 | dex 15.15 · xray 12.01 · pipeline-linux 6.50 · pipeline 2.47 |
+| Flutter CI | 28.6 MB | 27.31 | **引擎 7.92** · xray 12.01 · pipeline-linux 2.77 · pipeline 2.49 · dex 1.65 |
 
-## CI 与发布（2026-11-17 打通）
-GitHub Actions：`subosito/flutter-action@v2` + runner 预装 Android SDK，`flutter analyze` →
-`flutter test`（12 项）→ `flutter build apk --release --target-platform android-arm64` 全绿。
-APK 37.5MB，包名 `com.cytest.cytest`，minSdk 29 / targetSdk 36，与 Kotlin 版（com.cytest.app）可共存。
+- 差约 9 MiB：Kotlin dex 多 13.5（Compose + BouncyCastle + 看起来未开 R8），被 Flutter 引擎 7.9 抵掉一部分。
+- **别拿本地 18MB 的包比**：没跑「拉取原生二进制」步骤时包里没有 xray/pipeline，是错口径。
+- 「pipeline-linux 改 gzip 省 4~5MB」**已证伪**：它在 APK 里已被 deflate 到 2.77 MiB，别再提。
 
-发版：`git tag -a v1.x.x -m "..." && git push origin v1.x.x` → release job 下载 artifact、
-重命名为 cytest-flutter.apk 后发正式版。
-**2026-11-17 起 workflow 只监听 tag**（`on.push.tags: ['v*']`），已去掉 `branches: [main]`。
-原因：发版要先 `push main` 再 `push tag`，两个触发条件会让同一 commit 被完整构建两遍
-（历史 #20/#21、#22/#23、#24/#25 全是成对的）。现在日常验证走本地 `flutter analyze` + `flutter test`，
-或开 PR（`pull_request` 触发保留）。改完配置后 push main 不会再产生 run，可用 actions 页面确认。
+## 3. 环境与构建铁律
 
-**必须在 workflow 顶层声明 `permissions: contents: write`**，否则 softprops 发 release 报 403
-（generate_release_notes 也依赖这个权限）。
+- Flutter 3.50 / Dart 3.14，SDK 在 `D:\cytest-app\.workbuddy\tmp\env\flutter`；`FLUTTER_STORAGE_BASE_URL` 必须 flutter-io.cn。
+- 版本组合（降版本行不通）：**AGP 9.1.1 + Gradle 9.3.1 + Kotlin 2.4.20 + compileSdk 37**。
+- **二进制执行权限走 jniLibs**：`libpipeline.so`/`libxray.so` 放 `jniLibs/arm64-v8a/` + `useLegacyPackaging=true`，路径由 MethodChannel `cytest/native` 的 `nativeLibraryDir` 给。解压到 filesDir 再 chmod 会被 SELinux 拒。
+- CI 里 xray 必须 `unzip -d /tmp` 再 `mv` 到 jniLibs（落 `assets/` 被静默忽略）。
+- **INTERNET 必须写在 `src/main/AndroidManifest.xml`**；缺了症状极误导（xray 建 socket 失败 → freePort 抛错被吞 → 回落 20000 → 8s 超时 → 报「xray 未能在 8 秒内监听」）。排查从 APK 本体取证（`aapt2 dump permissions`）。
+- AGP strip jniLibs 的 ELF 只影响节头表，APK 内与本地差 306 字节属正常。
+- `flutter_inappwebview 6.1.5` 不兼容 AGP 9 → vendor 到 `packages/flutter_inappwebview_android` 改 `proguard-android-optimize.txt`，pubspec 用 `dependency_overrides`。
+- 本机 `sdk/ndk/28.2.*` 是空目录，会让本地 Gradle 预检查报错（CI 不阻塞），已隔离。
+- CI：`permissions: contents: write`；缓存 `~/.gradle/caches` + wrapper；`-Xmx3G -XX:MaxMetaspaceSize=1G`；Maven 429 会让 Gradle 配置阶段静默失败（别写成 OOM）。
 
-注意：CI 里 `Download pipeline binaries` 步骤实际是用 engine/pipeline.go 现场编译（Go 1.27.1），
-不是从 cytest-app 的 release 拉——engine/pipeline.go 必须与 tools/pipeline/pipeline.go 保持同步。
+## 4. 架构与数据流
 
-## WebView 必须真实可见（v1.0.3 定稿）
-`InAppWebView` 放在 `SizedBox(height: 1)`、`Positioned(left: -3000)`、`Opacity(0.01)` 三种写法下
-原生 View 都不 attach，`onWebViewCreated` 永不触发，`_web` 保持 null → 报「WebView 初始化失败」。
-**正确做法（v1.0.3 起）**：`Column` + `Expanded(ListView)` + 底部固定高度预览区，
-高度 `min(180, 屏高×30%)` 且下限 60，键盘弹出（`viewInsets.bottom > 0`）时压到 60。
-**铁律：高度绝不能压到 0 或移出屏外**，那会销毁 PlatformView、`_web` 置空、正在跑的 loadUrl 丢失。
-注意 `viewInsets` 必须在 `build(context)` 这层读（Scaffold 之上），Scaffold 在
-`resizeToAvoidBottomInset: true` 时会把 body 内的底部 inset 抹成 0。
-抓取前等 controller 就绪的上限已放宽到 15 秒（低端机首次建 PlatformView 常超 3 秒），
-状态卡显示已等秒数与 WebView 阶段，便于远程排障。
+```
+UI 页面 → AppState(=TestViewModel) → data/*（xray 进程、pipeline Go 引擎、probe）→ 文件
+```
 
-## release 包必须声明 INTERNET（v1.0.3 修）
-`INTERNET` 原本只写在 `android/app/src/debug|profile/AndroidManifest.xml`，**main 里没有**，
-release 只合并 main → 正式包彻底无网络能力。症状极具误导性：
-- xray 子进程无法创建 AF_INET socket → `freePort()` 全部抛异常被 catch 吞掉 → 回落 20000
-  → 仍绑不上 → `waitPort` 8 秒超时 → 报「xray 未能在 8 秒内监听」
-- WebView 加载任何网页都被系统拦截
-排查铁律：**怀疑权限/打包问题时，从 APK 本体取证据**，别只看源码或中间产物：
-`aapt2 dump permissions app-release.apk`，或解包读二进制 manifest。
-（`build/app/intermediates/packaged_manifests/.../AndroidManifest.xml` 是合并后明文，也可直接 grep。）
-AGP 会 strip `jniLibs` 里的 ELF，但只影响节头表区，不影响执行；APK 内与本地差 306 字节属正常。
+| 目录 | 内容 | 记录页分组 |
+|---|---|---|
+| `cytest/runs/` | 三阶段结果（每轮目录 + CSV） | **Censys 测速结果** |
+| `cytest/archives/` | Censys 抓取快照（JSON） | **Censys 抓取存档** |
+| `cytest/linktest/` | 链路测速 `<createdAt>.json`，保留 20 | **VLESS 测速结果** |
 
+记录页三组都支持多选删除（AppBar 勾选图标 → 底部「删除 N 项」/全选）。点第一组进结果页；点抓取存档载入重跑；点 VLESS 记录 → `AppState.loadLinkRun` → 进 VLESS 页（结果已就绪、默认勾选、可直接推送）。
 
-## 二进制执行权限：必须走 jniLibs（v1.0.2 起）
-把 xray/pipeline 解压到 `filesDir` 再 `chmod 755` **在 Android 上行不通**——SELinux 拒绝
-`app_data_file` 执行，报 `ProcessException: Permission denied`（而 `Process.run('chmod')` 的失败
-被 catch 吞掉，表面看是 chmod 成功）。
-正确做法：二进制以 `libpipeline.so` / `libxray.so` 放进 `android/app/src/main/jniLibs/arm64-v8a/`，
-配 `packaging.jniLibs.useLegacyPackaging = true` 让系统解压到 nativeLibraryDir（自带 x 权限）。
-运行时路径通过 MethodChannel `cytest/native` 的 `nativeLibraryDir` 拿（见 MainActivity.kt）。
-附带收益：APK 从 37.6MB 降到 27.3MB（.so 压缩存储）。
+## 5. 三阶段本地测试（v1.0.23 定稿，口径未变）
 
-注意：CI 里 xray 必须 `unzip -d /tmp` 后 `mv` 到 jniLibs，落到 `assets/` 不会进包（会被静默忽略，
-APK 小 12MB 且运行时报找不到 libxray.so）。
+**唯一权威参照 `D:\censys-speedtest\src\pipeline.go`（原版 729 行）。**
 
-## UI 布局铁律（v1.0.6 定稿）
-**`Scaffold` 的 body 不会自动避让系统手势条/三键导航**，必须在 body 包
-`SafeArea(top: false, child: ...)`；`top: false` 是因为顶部已由 AppBar 处理。
-全项目 8 个页面（home/fetch/test/lines/remote/settings/history/result）统一如此。
-例外：带 `bottomNavigationBar` 的 Scaffold 会把 body 的 bottom padding 清零
-（`scaffold.dart` 的 `removeBottomPadding`），那里 SafeArea 取 0，重复应用无害。
+①指纹 GET `http://ip:port` 读 ≤50MiB 算 SHA1（5s/重试1/并发30/不按端口预筛）；
+②延迟**纯 TCP 握手**（有代理则 CONNECT+GET 读1字节），并发100，`maxLatency>0` 才淘汰（默认 0）；
+③测速每条绑自己 ip:port、SNI/Host 取 speedTestURL 域名，预热 256KiB、窗口 3s/64MiB、并发 2。
 
-**M3 坑**：`IconButton` 的 `iconSize` / `padding` / `visualDensity` / `constraints`
-四个构造参数在 M3 下会被 `_IconButtonM3` 丢弃，且 `tapTargetSize: padded` 会把按钮
-撑到 40px。要压尺寸必须走 `style: ButtonStyle(...)`。
+- 默认指纹 `108b6115…` = **CF 400 错误页(253B) 的 SHA1**，即「这台是 CF 节点」检测器。
+- **延迟必须 TCP 口径**：曾改成 TCP+TLS+HEAD 首字节，同一 IP 从 154ms 变 2023ms。
+- 退出码 `0` 有结果 / `1` 零可用（仍先写 result.csv）/ `2` 参数或环境错误。
+- `config.json` 由 Dart 生成，**不含 httpProxy**。
 
-**长时间运行的页面（v1.0.13 定稿）**：日志/输出统一用公共模块
-`lib/ui/widgets/log_panel.dart` 的 `LogPanel`，两个使用方（test_page 日志、
-remote_page 远端输出）都是 `Column` 固定区 + `Expanded(LogPanel)`，
-不再有写死高度的日志小盒。**绝不能把日志卡塞进整体滚动的 ListView 末尾**
-（内外双层滚动会互相传递边界，日志既小又被挤到首屏外）。
+## 6. 链路测速（VLESS 页）
 
-**包底（用户明确反馈）**：`Expanded` 外层 `Padding` 必须给 `bottom` 留 14px。
-只给 horizontal 会让卡片底边贴着 SafeArea/屏幕物理边缘，圆角和最后一行糊在一起，
-看着像"没包底、显示不完整"。列表内容区本身再加 `bottom: 12`，让末行远离圆角。
+编排：端口池（20000+500 bind 探测）→ 批量起 xray → 延迟波(6) → AUTO 过滤 → 速度波(2) → 落盘 → 停进程。
+`LinkTestRunner` 在 AppState 里是**单例跨轮复用**。
 
-**输入全文**：放 `showModalBottomSheet`，主页面只留一行摘要 —— 抓取 JSON 有几十 KB，
-塞进 6 行 TextField 会把整页撑满。弹层里的 `TextEditingController` 必须由弹层自己的
-StatefulWidget 持有：`showModalBottomSheet(...).whenComplete()` 在退出动画开始前就触发，
-那时 dispose 会让正在卸载的 TextField 抛 "used after being disposed"。
+- **闸门**：两个 `Semaphore` 是实例字段，`drain()` 永久生效 → 每轮 `_runOnce()` 开头必须 `reopen()`，且必须在「await 上一轮收尾」之后（真实理由是避免旧 socket 未关就放新轮进来、实际并发翻倍；**不是** permits 虚增，那条注释已订正）。
+- **取消**：置位 + 关在途 HttpClient + 杀进程。已取消的上一轮：`run()` await 它收尾；真重入才抛「上一次测速还在进行」。`AppState` 用轮次令牌防止旧轮覆盖新轮的 stage/results/running。
+- **延迟口径（v1.0.48 改）**：先**预热一次**（建隧道 + CONNECT + 目标 TLS，不计时，失败即红），再在同一条 keep-alive 连接上**计时第二次**往返 → 读数 ≈ 一跳 RTT，与 v2rayN「真连接延迟」可比。预热耗时记 `ProbeTimings.warmupMs`（日志字段 `预热=`）。`LinkProbe.warmUp` 默认 false（既有单测按一次请求计数），生产 runner 传 true。
+- 延迟端点：`latencyUrl`（默认 `https://cp.cloudflare.com/generate_204`），**不跟随跳转**（跟随会把第二套 CONNECT+TLS 算进 TTFB）；3xx/204/205 记可达（TTFB 取响应头），4xx/5xx 与「200 零字节」仍失败。
+- 候选端点链：`[设置首选, cf, gstatic, 速度地址]` 去重保序，最多 3 次尝试。**首轮死线 8s、重试 5s**（5s<8s 时看门狗先开枪，会把「不可达」记成超时 → 候选链永不触发，fallback 变空壳）。
+- 切换判定读 `ProbeFailureKind`（**禁止比较 error 文案**）：有延迟就不切；超时且首轮→切一次；重试轮仍全超时→停（判为线路慢）；混合不切；清一色 connect/tlsHandshake→切满 3 次。切前只清延迟失败，**预检失败(host 为空)绝不清**。重跑复用同一 `_stage`/闸门。
+- 速度：`speedUrl`（默认 `е.eu.org/300.zip`，`е` 是西里尔 U+0435），跟随跳转，3s/64MiB + 256KiB 预热。
+- 语义：`speedMib == null` = 未测（≠0）；`cancelled` ≠ `failed`；AUTO 模式下速度阶段 TTFB 只在「本条还没延迟」时才兼作延迟。
+- 阶段文案：首轮写「延迟探测」，第 2 次起才带「端点 n/m，约再 N 秒」；全部超时时收尾给「更换延迟测试地址」的可执行提示。
 
-## 与 Kotlin 版的功能差距（2026-11-17 逐条对照）
-Kotlin 版 111 个 .kt / 17,108 行；Flutter 版 21 个 .dart / 4,236 行。
-69 个用户可见功能点：已对齐 8 / 缺失 37 / 退化 24，加权完成度约 **30%**。
-- P0 核心流程 64%：抓取→三阶段→结果→推 GitHub 这条主干靠复用 Go pipeline 保住了
-- **P1 日常效率仅 16%**：原版价值密度最高的那层几乎全空
-- 三个「行为错」比「缺功能」更危险：
-  1. 链路测速记的是 Xray **启动耗时**，不是 TTFB/吞吐（`lines_page.dart` 的 probe）
-  2. 「取消测试」用 `pkill -f cytest/pipeline`，但进程名是 `libpipeline.so`，**杀不掉**
-  3. 链路测速逐条 `xray.start()` 重启，40 条要串行重启 40 次（批量配置已写好未接线）
-- 缺失大头：结果页排序/筛选/导出文件、历史合并、mihomo 的 rule-providers/dns/tun、
-  备份 UI（`history.dart` 的 exportBackup/importBackup 已实现但零调用）、last run 恢复
+## 7. 设置（保存机制是踩过大坑的）
 
-## Censys 抓取架构（v1.0.11 定稿）
+- 存储：`SharedPreferences` key `cytest.settings.v1`。**不要改 key**（等于清空所有老用户配置）。
+- **boot 是异步的**（`AppState()..boot()`，UI 不等它）。设置页 `_bind` 若在 boot 前跑会拿到默认值；保存时若全量写回，就把磁盘配置抹成默认 —— 这就是用户报的「保存也丢失」。修法：boot 后只补「未被编辑」的字段 + **只写脏字段**（`_Field` 枚举 + 穷尽 switch 的 `_valueOf/_controllerOf/_labelOf/_applyField`）。
+- 自动保存：文本 600ms 去抖、关弹层 flush、退后台 flush、dispose 前同步取快照；所有保存走**同一条串行队列**（`setString` 是整份 JSON 覆盖写，并发会丢改动）。
+- 失败处理：日志 + 状态栏 + SnackBar 三处可见；`saveSettings()` 后 `AppSettings.load()` 读回比对 16 字段，不一致就报错；**快照只在「写盘成功且自检通过」后推进**，失败不推进 → 再点保存会真的重试。
+- 空串语义：`speedUrl`/`latencyUrl`/`subPath`/`yamlPath` 空串 = 回落默认（不是关闭这一档）。
+- `settings.speedUrl` **双通道**：既进三阶段 `speedTestURL`，也进链路测速速度阶段（默认值两边逐字一致，有单测钉住）。
+- GitHub 分组含：仓库、Token、**订阅文件名(base64)**、**mihomo 文件名(YAML)**；推送页不再有文件名输入，只回显「写入 <文件名>」。
 
-**主通道是原生 WebView，纯 HTTP 只是「有 Cookie 时先问一句」的快路径。**
-站点 Fastly 分级放行：干净出口 IP 可能直给 JSON；可疑 IP 一律挑战页；被 TLS
-指纹拦时请求根本发不出去（带齐 27 个浏览器头也一样）。
+## 8. UI 铁律
 
-链路：`fetch_page` → `lib/data/censys_fetch.dart`（编排，可单测）→
-`censys_http.dart`（纯 HTTP）/ `MainActivity.kt` 的 `fetchSearch`（原生 WebView）。
+- Scaffold body 要包 `SafeArea(top: false, ...)`（手势条）；有 bottomNavigationBar 时其 bottom padding 被清零。
+- **M3**：`IconButton` 的 iconSize/padding/visualDensity/constraints 会被丢弃；压尺寸必须 `style: ButtonStyle(...)`。
+- 长跑页日志统一 `LogPanel`（固定区 + Expanded），**绝不塞进整体滚动 ListView 末尾**。
+- `Expanded` 外层 `Padding` 给 `bottom: 14`，列表内容区再 `bottom: 12`。
+- 弹层的 `TextEditingController` 必须由弹层自己的 StatefulWidget 持有（`whenComplete()` 早于退出动画）。
+- **WebView 必须真实可见**（高度不能为 0、不能移出屏外，否则 PlatformView 被销毁）；预览区高 `min(180, 屏高×30%)`，下限 60。
+- 选择态下列表底部留 88px，避免最后一行被操作条压住。
 
-失败处置别写成一刀切（这是唯一容易退化的判断，单测钉住）：
-- 拿到 JSON → 直接用，不启动 WebView
-- HTML 挑战页 / 401 / 403 → **清 Cookie**，回退 WebView
-- **无状态码**（握手/连接/超时）→ 本会话**禁用快路径**，Cookie 救不了 TLS 指纹
-- 其它错误 JSON（如 400）→ 保持现状，多半是 CQL 语法错
+## 9. 与 Kotlin 版差距
 
-`CensysFetchPlan.maxHttpFailures = 2`：WebView 每次都刷新 Cookie，若挑战按出口 IP
-判定，快路径会永远不收敛、每次白等 1~2s，所以给个上界。
-Cookie 存 `AppSettings.censysCookie`（设置页可见可清），**变更含被清空都要落盘**，
-失败路径也要落 —— 否则下次还拿着过期 Cookie 白试。
+```
+Kotlin  111 个 .kt  / 17,108 行
+Flutter  39 个 .dart / 12,269 行
+```
 
-## 版本号
+代码小主要因为 Kotlin 是 MVVM 分层（UiState/UiEvent/ViewModel/Repository/DI）+ res 资源；**不代表功能齐**。
+功能点评估是 **v1.0.23 时点**：69 个用户可见点 对齐 8 / 缺失 37 / 退化 24（≈30%）。此后已补：记录页浏览与多选删除、推送文件名、延迟口径、设置保存。仍缺：结果页排序/导出文件、历史合并、mihomo 的 rule-providers/dns/tun、备份导入导出 UI、last run 恢复。
 
-`pubspec.yaml` 的 version 是占位，实际由 `--build-name` / `--build-number` 覆盖。
-CI 在 tag 时注入 `BUILD_NAME=${GITHUB_REF#refs/tags/v}`，所以 v1.0.2 的包 versionName 就是 1.0.2。
-本地构建记得手动传这两个参数，否则显示 1.0.0。
+## 10. 已知遗留
 
-## CI 构建失败的两个坑（2026-11-17 实测）
-1. **Maven 429 限流（真实根因）**：`Could not GET 'https://repo.maven.apache.org/maven2/...'
-   Received status code 429 from server: Too Many Requests`，发生在 Gradle **配置阶段**
-   （编译都还没开始），表现为「40~50 秒无声失败、无 Java 报错」。已在 workflow 加
-   `actions/cache` 缓存 `~/.gradle/caches` + wrapper（commit `ab37f49`）。
-   注意 `subosito/flutter-action` 的 `cache: true` **只管 Flutter SDK，不管 Maven**。
-2. **Gradle 堆超过 runner 内存**：`gradle.properties` 原是 `-Xmx8G -XX:MaxMetaspaceSize=4G`
-   合计 12GB，而 GitHub ubuntu-latest runner 只有 7GB。已改 `-Xmx3G -XX:MaxMetaspaceSize=1G`，
-   本地 release 构建实测通过（27.4MB / 173s）。
+1. 设置「切走就丢」依赖 `AppLifecycleListener(onHide/onPause)`，`SettingsPage` 在 IndexedStack 常驻几乎不 dispose → **必须真机验**（改一项 → 杀进程 → 冷启动看还在不在）。
+2. 链路测速真实读数本地无法验证（无外网）；真机跑一轮看日志 `预热=` 与 `建连=`。
+3. 慢节点（首字节 >8s）会被判失败并多试一轮；要「宁可慢也测出」得放宽首轮死线。
+4. 设置页每次按键全页 `setState`（16 次比较），低端机性能未量化。
+5. `_formKey` 未用于 validate；归一化规则在 `_readForm` / `_backfillNormalized` 各写一遍。
 
-**教训**：commit `4f753a7` 的说明把根因写成 OOM，属推断未经验证，真实原因是 429。
-两者都该修，但**不要把推断写成结论**——同一现象有两个互斥解释时，先找能同时容纳两者的证据。
-另：本机 `sdk/ndk/28.2.13676358` 是个只有 `.installer` 的空目录（缺 source.properties），
-会让本地 Gradle 预先报错（CI 不阻塞）；已隔离到 `/tmp/ndk_quarantine/`。
+## 11. 工作方式（用户明确要求，2026-11-20）
 
-## 验收准则：先有能跑的二进制，再谈断言（2026-11-17 立）
+- **小 bug：我直接改 → 只对改动文件 `dart analyze` → 提交 → 推 CI，让 CI 当守门人。不建 QA、不跑本地全量、不冻结 md5。**
+- 只有「数据会丢 / 并发 / 持久化 / 删除」才额外加独立验证。
+- **用户原话里没有的需求不加**；想加先问一句。
+- 禁止两个 agent 并行改同一批文件（撞过一次，造成版本叠加与证据污染）。
+- 「冻结」= 运行前后各取一次 md5 且一致，不是抽样一次。
+- 验收准则：无命令不算通过；断言机器可判；成功与失败路径都留证；拿不到环境就标「未验收」。
 
-1. **无命令 = 未验收**：每条「通过」必须附「可复现命令 + 关键输出 + 退出码」，缺一算未做。
-2. **断言机器可判**：用 expect / 退出码 / grep 命中数落断言，禁用「已实现 / 符合设计 / 应该没问题」。
-3. **成功与失败路径都留证**：死端口、空数据、截断输入必须证明「错误可读、不静默降级、退出码正确」，只测 happy path 不算数。
-4. **基线数量不写死**：写「原 N 不回归 + 新增全绿 = 总数全绿」，随基线（34→90→110…）更新仍成立。
-5. **三道关分开留证**：静态（`flutter analyze` + `dart analyze tool/`）/ 测试（全量）/ 构建产物（INTERNET、extractNativeLibs、.so 齐）各自独立过关，不互相顶替。
-6. **拿不到环境就标「未验收」**：缺设备/缺出口时不得用「某侧跑通了」替代「真机跑通了」，降级为后续项并写明阻塞关系。
+## 12. 其他踩坑
 
-> 起因：2026-11-17 一轮里出现「110 测试全绿但 `grep '\.latency()' test/` 零命中」——
-> 最核心的入口函数一条没测，全靠真机冒烟兜。测试数量不等于覆盖。
-
+- `Uri.fragment` 不解码（Kotlin 会），需 `Uri.decodeComponent`。
+- golden 预览图：`flutter test --update-goldens` 可出 PNG，但必须 `FontLoader` 加载 `msyh.ttc`（中文）+ `materialicons-regular.otf`（图标），否则全是方块；golden 依赖平台字体，**不要提交到 CI**。
+- 本机「无外网」时先看 v2rayN 核心是否在跑（10808 是否监听、有没有 xray.exe 子进程），别急着断言没网。
+- 后台 `curl` 卡住会被自动转后台并留下 `flutter_tester.exe`，收尾时记得 `taskkill`。
