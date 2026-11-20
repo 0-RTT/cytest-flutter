@@ -558,9 +558,14 @@ class AppState extends ChangeNotifier {
 
   Future<void> saveArchive(String body) async {
     try {
-      await History.saveArchive(body);
-    } catch (_) {
-      // 存档失败不影响主流程
+      final path = await History.saveArchive(body);
+      // 把落盘文件名写进日志：命名（ASN + 时间）是否生效，看这一行就够，
+      // 不用去翻应用私有目录。
+      final name = path.split(Platform.pathSeparator).last;
+      pushLog('存档：$name');
+    } catch (e) {
+      // 存档失败不影响主流程，但要留下原因
+      pushLog('存档失败：$e');
     }
   }
 }

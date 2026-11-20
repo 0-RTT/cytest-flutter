@@ -68,4 +68,67 @@ void main() {
       expect(dominantAsn(''), isNull);
     });
   });
+
+  group('dominantAsn · 结构变体（真机返回过的形状）', () {
+    test('Censys Platform：host.autonomous_system + matched_services 并存', () {
+      final body = jsonEncode({
+        'status': 'success',
+        'results': {
+          'total_hits': 2,
+          'hits': [
+            {
+              'host': {
+                'ip': '104.16.0.1',
+                'port': 443,
+                'autonomous_system': {'asn': 13335, 'name': 'CLOUDFLARENET'},
+                'services': [
+                  {'port': 443, 'service_name': 'HTTP'},
+                ],
+              },
+              'matched_services': [
+                {'port': 443},
+              ],
+            },
+            {
+              'host': {
+                'ip': '104.16.0.2',
+                'autonomous_system': {'asn': 13335},
+              },
+            },
+          ],
+        },
+      });
+      expect(dominantAsn(body), 'AS13335');
+    });
+
+    test('ASN 藏在更深层（services 里的 autonomous_system）也能找到', () {
+      final body = jsonEncode({
+        'results': {
+          'hits': [
+            {
+              'host': {
+                'services': [
+                  {
+                    'autonomous_system': {'asn': 4713},
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+      expect(dominantAsn(body), 'AS4713');
+    });
+
+    test('as_number 这种别名也认', () {
+      final body = jsonEncode({
+        'results': {
+          'hits': [
+            {'as_number': 7679},
+          ],
+        },
+      });
+      expect(dominantAsn(body), 'AS7679');
+    });
+  });
 }

@@ -54,21 +54,37 @@ String? dominantAsn(String json) {
   return 'AS${entries.first.key}';
 }
 
-int? _asnOf(Map hit) {
-  final direct = _asInt(hit['asn']);
-  if (direct != null) return direct;
-
-  final as = hit['autonomous_system'];
-  if (as is Map) {
-    final fromAs = _asInt(as['asn']);
-    if (fromAs != null) return fromAs;
+/// 在一个 hit 里找 ASN。
+///
+/// 为什么用**递归兜底**而不是只查固定路径：Censys 的响应结构随接口版本变过好几次
+/// （`asn` 直接在 hit 上 / `autonomous_system.asn` / `host.autonomous_system.asn`，
+/// 还有 `host.services` 里带 `matched_services` 的版本）。写死路径一旦对不上，
+/// 命名就静默退回 `unknown`，表现成「ASN 没生效」——这种失败很难在真机上报出来。
+/// 递归找名字是 `asn` / `as_number` 的键，深度限 6，代价可以忽略。
+int? _asnOf(Object? node, [int depth = 0]) {
+  if (node == null || depth > 6) return null;
+  if (node is Map) {
+    for (final key in const ['asn', 'as_number', 'asn_number']) {
+      final v = _asInt(node[key]);
+      if (v != null && v > 0) return v;
+    }
+    final as = node['autonomous_system'];
+    if (as is Map) {
+      for (final key in const ['asn', 'number', 'as_number']) {
+        final v = _asInt(as[key]);
+        if (v != null && v > 0) return v;
+      }
+    }
+    for (final v in node.values) {
+      final found = _asnOf(v, depth + 1);
+      if (found != null) return found;
+    }
+    return null;
   }
-  final host = hit['host'];
-  if (host is Map) {
-    final hostAs = host['autonomous_system'];
-    if (hostAs is Map) {
-      final nested = _asInt(hostAs['asn']);
-      if (nested != null) return nested;
+  if (node is List) {
+    for (final v in node) {
+      final found = _asnOf(v, depth + 1);
+      if (found != null) return found;
     }
   }
   return null;
