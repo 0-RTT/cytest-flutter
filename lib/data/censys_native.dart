@@ -51,8 +51,21 @@ Future<String> fetchCensysSearch({
 
   final json = censysJsonOrNull(text ?? '');
   if (json == null) {
-    // 原生侧已经把「是不是挑战页」判断过了；走到这里说明返回内容异常
-    throw const CensysNativeException('原生 WebView 返回的不是 Censys 搜索结果');
+    // 原生侧已经把「是不是挑战页」判断过了；走到这里说明返回内容异常。
+    // 带上开头几十个字符：如果是 CQL 语法错误，服务端的报错原文就在这里
+    // （不带的话只能看到一句「不是搜索结果」，完全无从判断）。
+    final snippet = (text ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+    final hint = snippet.isEmpty
+        ? '响应为空'
+        : snippet.length > 160
+            ? '${snippet.substring(0, 160)}…'
+            : snippet;
+    throw CensysNativeException(
+      hint.isEmpty
+          ? '原生 WebView 返回的不是 Censys 搜索结果（响应为空）'
+          : '原生 WebView 返回的不是 Censys 搜索结果（响应开头：$hint）',
+      details: <Object?, Object?>{'snippet': hint},
+    );
   }
   return json;
 }

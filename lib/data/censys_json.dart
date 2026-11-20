@@ -80,3 +80,39 @@ int? _asInt(Object? v) {
   if (v is String) return int.tryParse(v.trim().replaceAll('AS', '').replaceAll('as', ''));
   return null;
 }
+
+/// 归一化用户输入的 CQL。
+///
+/// 用户经常直接从浏览器地址栏复制整条 URL，或者复制已经编码过的查询串：
+/// - 整条 URL：`https://platform.censys.io/api/search?q=host.x:JP+and+...`
+/// - 地址栏编码：空格变成 `+`、引号变成 `%22`、花括号变成 `%7B`…
+///
+/// 这两种形式如果原样发给服务端，`+` 会被当成字面加号、`%22` 会被二次编码成
+/// `%2522`，Censys 直接返回 CQL 语法错误 —— 表现就是「明明浏览器有数据，
+/// 应用里却提示不是搜索结果」。所以必须先还原成真正的查询语句。
+String normalizeCql(String raw) {
+  var q = raw.trim();
+  if (q.isEmpty) return q;
+
+  // 1) 整条 URL：取 q= 参数（Uri 会自动把 %xx 和 + 还原）。
+  if (q.startsWith('http://') || q.startsWith('https://')) {
+    final uri = Uri.tryParse(q);
+    final fromQuery = uri?.queryParameters['q'];
+    if (fromQuery != null && fromQuery.trim().isNotEmpty) return fromQuery.trim();
+    return q;
+  }
+
+  // 2) 已编码的查询串。
+  if (q.contains('%')) {
+    try {
+      final decoded = Uri.decodeQueryComponent(q).trim();
+      if (decoded.isNotEmpty) return decoded;
+    } on ArgumentError {
+      // 不是合法编码（例如正则里本来就有 %）：原样使用。
+    }
+  } else if (q.contains('+')) {
+    // 没有 % 但出现 +：这是地址栏把空格编码成 + 的形式。
+    q = q.replaceAll('+', ' ').trim();
+  }
+  return q;
+}

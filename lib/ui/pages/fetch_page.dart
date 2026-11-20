@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/settings.dart';
 import '../../data/censys_diag.dart';
+import '../../data/censys_json.dart';
 import '../../data/censys_native.dart';
 import '../../data/vless.dart';
 import '../../state/app_state.dart';
@@ -79,10 +80,11 @@ class _FetchPageState extends State<FetchPage> {
 
   /// 当前查询对应的 API 地址（用户要的「直接访问那个链接」）。
   String get _apiUrl =>
-      '$_origin$_searchPath?q=${Uri.encodeQueryComponent(_cql.text.trim())}';
+      '$_origin$_searchPath?q=${Uri.encodeQueryComponent(normalizeCql(_cql.text))}';
 
   Future<void> _fetch() async {
-    final query = _cql.text.trim();
+    // 先归一化：用户可能粘的是整条 URL 或地址栏编码过的串（+ 当空格）。
+    final query = normalizeCql(_cql.text);
     if (query.isEmpty) {
       _toast('查询语句不能为空');
       return;
