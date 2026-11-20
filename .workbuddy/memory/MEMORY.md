@@ -9,7 +9,7 @@
 ## 1. 发布（每次都用）
 
 ```bash
-source /d/cytest-flutter/.toolchain/env.sh
+source toolchain.sh   # 仓库根目录的入口脚本，自动找到工具链
 cd /d/cytest-flutter && git add -A && git commit -m "..."
 git -c http.proxy=socks5h://127.0.0.1:10808 push origin main
 git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push origin v1.0.NN
@@ -31,10 +31,12 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 
 ## 3. 环境与构建铁律
 
-- **本地工具链已自足于仓库内 `.toolchain/`（不入库）**：`source .toolchain/env.sh` 后
+- **本地工具链在 `C:\cytest-toolchain`（6 G，不放仓库里：D 盘只剩 5 G）**：
+  `source toolchain.sh`（仓库根目录的入口，自动回落 `.toolchain/env.sh`）后
   flutter / dart / adb / sdkmanager 全部可用。内容：Flutter 3.50.0 SDK、
-  android-sdk（platforms;android-37.0 + build-tools;37.0.0 + platform-tools + cmdline-tools）、
-  JAVA_HOME 复用 Android Studio 的 JBR 21（不单独装 JDK）。
+  android-sdk（platforms;android-37 + build-tools;37.0.0 + platform-tools + cmdline-tools
+  + ndk;28.2.13676358）、JAVA_HOME 复用 Android Studio 的 JBR 21（不装 JDK）。
+  构建产物仍在仓库 `build/`（debug APK 126 M）。
 - 旧的 `D:\cytest-app\.workbuddy	mp\env` 已在 2026-11-20 晚被清理（连同 cytest-app 仓库），
   不要再引用那条路径。
 - `FLUTTER_STORAGE_BASE_URL` 必须 flutter-io.cn（否则引擎包下载中断），env.sh 里已设。
