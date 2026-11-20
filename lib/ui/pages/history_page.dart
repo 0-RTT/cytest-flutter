@@ -13,7 +13,22 @@ import 'test_page.dart';
 import 'vless_test_page.dart';
 
 class HistoryPage extends StatefulWidget {
-  const HistoryPage({super.key});
+  const HistoryPage({
+    super.key,
+    this.loadRuns,
+    this.loadArchives,
+    this.loadLinkRuns,
+    this.selectAllOnLoad = false,
+  });
+
+  /// 三个读盘入口都可注入：默认走真实目录，测试里喂假数据就能渲染出
+  /// 「有记录」的界面（golden 截图不需要真机/模拟器）。
+  final Future<List<RecordInfo>> Function()? loadRuns;
+  final Future<List<RecordInfo>> Function()? loadArchives;
+  final Future<List<LinkTestRun>> Function()? loadLinkRuns;
+
+  /// 仅供截图/测试：加载完成后直接进入多选态并全选，用来预览删除条。
+  final bool selectAllOnLoad;
 
   @override
   State<HistoryPage> createState() => _HistoryPageState();
@@ -71,9 +86,12 @@ class _HistoryPageState extends State<HistoryPage> {
       });
     }
     try {
-      final runs = await History.listRuns().timeout(_loadTimeout);
-      final archives = await History.listArchives().timeout(_loadTimeout);
-      final linkRuns = await LinkTestStore().list().timeout(_loadTimeout);
+      final runs = await (widget.loadRuns?.call() ?? History.listRuns())
+          .timeout(_loadTimeout);
+      final archives = await (widget.loadArchives?.call() ?? History.listArchives())
+          .timeout(_loadTimeout);
+      final linkRuns = await (widget.loadLinkRuns?.call() ?? LinkTestStore().list())
+          .timeout(_loadTimeout);
       if (!mounted) return;
       setState(() {
         _runs = runs;
@@ -84,6 +102,10 @@ class _HistoryPageState extends State<HistoryPage> {
         _selected.clear();
         _selecting = false;
       });
+      if (widget.selectAllOnLoad) {
+        _selecting = true;
+        _selectAll();
+      }
     } on TimeoutException {
       if (!mounted) return;
       setState(() => _error = '读取记录超时（${_loadTimeout.inSeconds}s）：'
@@ -376,10 +398,10 @@ class _HistoryPageState extends State<HistoryPage> {
                       children: [
                         _section(
                           theme: theme,
-                          title: '测试历史',
+                          title: 'Censys 测试结果',
                           count: _runs.length,
                           isEmpty: _runs.isEmpty,
-                          emptyText: '暂无记录，先跑一次本地测试',
+                          emptyText: '暂无结果，先跑一次本地测试',
                           rows: [
                             for (final r in _runs)
                               _runTile(theme, r),
@@ -388,23 +410,23 @@ class _HistoryPageState extends State<HistoryPage> {
                         const SizedBox(height: 12),
                         _section(
                           theme: theme,
-                          title: 'VLESS 链路测速',
-                          count: _linkRuns.length,
-                          isEmpty: _linkRuns.isEmpty,
-                          emptyText: '暂无记录，去 VLESS 测试页跑一轮',
+                          title: 'Censys 原始数据',
+                          count: _archives.length,
+                          isEmpty: _archives.isEmpty,
+                          emptyText: '暂无数据，抓取成功会自动存一份',
                           rows: [
-                            for (final l in _linkRuns) _linkTile(theme, l),
+                            for (final a in _archives) _archiveTile(theme, a),
                           ],
                         ),
                         const SizedBox(height: 12),
                         _section(
                           theme: theme,
-                          title: 'Censys 存档',
-                          count: _archives.length,
-                          isEmpty: _archives.isEmpty,
-                          emptyText: '暂无存档，抓取成功会自动存一份',
+                          title: 'VLESS 测试结果',
+                          count: _linkRuns.length,
+                          isEmpty: _linkRuns.isEmpty,
+                          emptyText: '暂无结果，去 VLESS 测试页跑一轮',
                           rows: [
-                            for (final a in _archives) _archiveTile(theme, a),
+                            for (final l in _linkRuns) _linkTile(theme, l),
                           ],
                         ),
                       ],
