@@ -398,7 +398,7 @@ class _HistoryPageState extends State<HistoryPage> {
                       children: [
                         _section(
                           theme: theme,
-                          title: 'Censys 测试结果',
+                          title: 'Censys 测速结果',
                           count: _runs.length,
                           isEmpty: _runs.isEmpty,
                           emptyText: '暂无结果，先跑一次本地测试',
@@ -410,7 +410,7 @@ class _HistoryPageState extends State<HistoryPage> {
                         const SizedBox(height: 12),
                         _section(
                           theme: theme,
-                          title: 'Censys 原始数据',
+                          title: 'Censys 抓取存档',
                           count: _archives.length,
                           isEmpty: _archives.isEmpty,
                           emptyText: '暂无数据，抓取成功会自动存一份',
@@ -421,7 +421,7 @@ class _HistoryPageState extends State<HistoryPage> {
                         const SizedBox(height: 12),
                         _section(
                           theme: theme,
-                          title: 'VLESS 测试结果',
+                          title: 'VLESS 测速结果',
                           count: _linkRuns.length,
                           isEmpty: _linkRuns.isEmpty,
                           emptyText: '暂无结果，去 VLESS 测试页跑一轮',
