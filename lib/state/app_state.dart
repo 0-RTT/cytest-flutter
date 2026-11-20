@@ -257,6 +257,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 直接在内存里改过 [settings] 之后，通知 UI 重绘。
+  ///
+  /// 为什么需要它：设置页保存失败时要把乐观写入**回滚**（内存与磁盘保持一致），
+  /// 回滚本身不落盘、也没有 `notifyListeners` 的时机；少了这一次通知，摘要行
+  /// 会继续显示「已经存上」的新值，用户就被骗了。只通知、不写盘、不换端点
+  /// —— 它不能替代 [saveSettings]。
+  void notifySettingsChanged() => notifyListeners();
+
   /// 把设置里的「延迟/速度测试地址」灌进测速 runner。
   ///
   /// 两个地址是**两条口径**（延迟 = 小端点、速度 = 大文件），必须分开灌；
