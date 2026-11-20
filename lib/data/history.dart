@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../core/paths.dart';
 import '../core/settings.dart';
+import 'censys_json.dart';
 import 'pipeline.dart';
 
 class RecordInfo {
@@ -131,13 +132,21 @@ class History {
     return '${t.year}-${two(t.month)}-${two(t.day)} ${two(t.hour)}:${two(t.minute)}';
   }
 
+  /// 存档文件名：`<ASN>-<yyyyMMdd-HHmmss>`，例如 `AS13335-20261120-223012.json`。
+  ///
+  /// 带 ASN 是为了「一眼看出这是哪个网段的数据」：同一批候选往往来自同一个
+  /// 骨干（Cloudflare 13335 之类），光看时间戳根本分不出两份存档的差别。
+  /// ASN 取命中里的**众数**（见 [dominantAsn]）；取不到就写 `unknown`，
+  /// 绝不因为命名失败而丢数据。
   static Future<String> saveArchive(String body) async {
     if (body.length < 100) throw Exception('内容过短，不存档');
     final dir = await Paths.archive();
     final now = DateTime.now();
     String two(int v) => v.toString().padLeft(2, '0');
-    final id = '${now.year}${two(now.month)}${two(now.day)}-'
+    final stamp = '${now.year}${two(now.month)}${two(now.day)}-'
         '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+    final asn = dominantAsn(body) ?? 'unknown';
+    final id = '$asn-$stamp';
     final file = File('${dir.path}/$id.json');
     await file.writeAsString(body, flush: true);
     return file.path;

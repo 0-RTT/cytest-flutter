@@ -500,8 +500,9 @@ class _HistoryPageState extends State<HistoryPage> {
       title: Text(a.at, style: const TextStyle(fontSize: 13)),
       // 命中数从文件头里取；取不到（格式差异 / 老存档）
       // 就写「存档」，不要显示「0 命中」这种误导。
-      subtitle: Text(a.total > 0 ? '${a.total} 命中' : '存档',
-          style: const TextStyle(fontSize: 11.5)),
+      // 新存档的文件名带 ASN（`AS13335-20261120-223012`），顺手显示出来；
+      // 老存档名是纯数字时间戳，取不到就只显示命中数。
+      subtitle: Text(_archiveSubtitle(a), style: const TextStyle(fontSize: 11.5)),
       trailing: _selecting
           ? null
           : Row(
@@ -517,6 +518,14 @@ class _HistoryPageState extends State<HistoryPage> {
               ],
             ),
     );
+  }
+
+  /// 存档副标题：`AS13335 · 512 命中`（老存档没有 ASN 就只显示命中数）。
+  static String _archiveSubtitle(RecordInfo a) {
+    final head = a.id.split('-').first;
+    final asn = head.startsWith('AS') ? head : '';
+    final count = a.total > 0 ? '${a.total} 命中' : '存档';
+    return asn.isEmpty ? count : '$asn · $count';
   }
 
   Widget _linkTile(ThemeData theme, LinkTestRun run) {
