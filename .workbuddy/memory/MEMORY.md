@@ -1,7 +1,7 @@
 # cytest-flutter · 项目记忆（唯一权威，2026-11-20 重整）
 
-Kotlin 版（`0-RTT/cytest-app`）的 Flutter 重写，独立仓库 `D:\cytest-flutter`。
-`engine/pipeline.go` 是 cytest-app `tools/pipeline` 的副本，改动需两边同步。**本记忆只写 Flutter 侧。**
+候选代理筛选工具的 Flutter 实现，仓库 `D:\cytest-flutter`。
+`engine/pipeline.go` 是 Go 引擎源码副本，改动需与上游同步。
 
 ---
 
@@ -22,12 +22,15 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 
 ## 2. 体积认知（踩过的错）
 
-| 包 | 十进制 | MiB | 压缩后构成 |
-|---|---|---|---|
-| Kotlin CI | 38.5 MB | 36.75 | dex 15.15 · xray 12.01 · pipeline-linux 6.50 · pipeline 2.47 |
-| Flutter CI | 28.6 MB | 27.31 | **引擎 7.92** · xray 12.01 · pipeline-linux 2.77 · pipeline 2.49 · dex 1.65 |
+当前 CI 产物：28.6 MB（27.31 MiB），压缩后构成：
 
-- 差约 9 MiB：Kotlin dex 多 13.5（Compose + BouncyCastle + 看起来未开 R8），被 Flutter 引擎 7.9 抵掉一部分。
+| 内容 | MiB |
+|---|---|
+| Flutter 引擎（libflutter 7.92 + libapp 1.65 代码） | 9.57 |
+| Xray（libxray.so） | 12.01 |
+| pipeline（.so + 远程执行用的 linux 版） | 5.26 |
+| 其它 | 0.55 |
+
 - **别拿本地 18MB 的包比**：没跑「拉取原生二进制」步骤时包里没有 xray/pipeline，是错口径。
 - 「pipeline-linux 改 gzip 省 4~5MB」**已证伪**：它在 APK 里已被 deflate 到 2.77 MiB，别再提。
 
@@ -59,7 +62,7 @@ UI 页面 → AppState(=TestViewModel) → data/*（xray 进程、pipeline Go �
 
 ## 5. 三阶段本地测试（v1.0.23 定稿，口径未变）
 
-**唯一权威参照 `D:\censys-speedtest\src\pipeline.go`（原版 729 行）。**
+**唯一权威参照 `D:\censys-speedtest\src\pipeline.go`（729 行，Go 引擎参考实现）。**
 
 ①指纹 GET `http://ip:port` 读 ≤50MiB 算 SHA1（5s/重试1/并发30/不按端口预筛）；
 ②延迟**纯 TCP 握手**（有代理则 CONNECT+GET 读1字节），并发100，`maxLatency>0` 才淘汰（默认 0）；
@@ -105,15 +108,14 @@ UI 页面 → AppState(=TestViewModel) → data/*（xray 进程、pipeline Go �
 - **WebView 必须真实可见**（高度不能为 0、不能移出屏外，否则 PlatformView 被销毁）；预览区高 `min(180, 屏高×30%)`，下限 60。
 - 选择态下列表底部留 88px，避免最后一行被操作条压住。
 
-## 9. 与 Kotlin 版差距
+## 9. 功能完成度
 
 ```
-Kotlin  111 个 .kt  / 17,108 行
-Flutter  39 个 .dart / 12,269 行
+39 个 .dart / 12,269 行（lib/）
 ```
 
-代码小主要因为 Kotlin 是 MVVM 分层（UiState/UiEvent/ViewModel/Repository/DI）+ res 资源；**不代表功能齐**。
-功能点评估是 **v1.0.23 时点**：69 个用户可见点 对齐 8 / 缺失 37 / 退化 24（≈30%）。此后已补：记录页浏览与多选删除、推送文件名、延迟口径、设置保存。仍缺：结果页排序/导出文件、历史合并、mihomo 的 rule-providers/dns/tun、备份导入导出 UI、last run 恢复。
+已完成：抓取（WebView 过挑战）、线路与代理、三阶段本地测试、结果页排序与推送、记录页三组浏览 + 多选删除、远程执行、设置（含推送文件名、自动保存）。
+**未实现/退化**：结果页导出文件、历史合并、mihomo 的 rule-providers / dns / tun、备份导入导出 UI、last run 恢复、导出写文件（现为复制到剪贴板）。
 
 ## 10. 已知遗留
 
@@ -134,7 +136,7 @@ Flutter  39 个 .dart / 12,269 行
 
 ## 12. 其他踩坑
 
-- `Uri.fragment` 不解码（Kotlin 会），需 `Uri.decodeComponent`。
+- `Uri.fragment` 不解码，需要时用 `Uri.decodeComponent`（`Uri.queryParameters` 才会自动解码）。
 - golden 预览图：`flutter test --update-goldens` 可出 PNG，但必须 `FontLoader` 加载 `msyh.ttc`（中文）+ `materialicons-regular.otf`（图标），否则全是方块；golden 依赖平台字体，**不要提交到 CI**。
 - 本机「无外网」时先看 v2rayN 核心是否在跑（10808 是否监听、有没有 xray.exe 子进程），别急着断言没网。
 - 后台 `curl` 卡住会被自动转后台并留下 `flutter_tester.exe`，收尾时记得 `taskkill`。
