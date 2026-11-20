@@ -48,6 +48,38 @@ class LinkTestStore {
     return runs;
   }
 
+  /// 删一次运行（`<id>.json`）。文件不存在视为已删，不报错。
+  ///
+  /// 删不掉（占用/权限）**不抛**：调用方是记录页的删除按钮，抛出去只会让
+  /// 用户看到一个失败的弹窗而列表已经刷新过，反而以为删成功了。
+  Future<void> delete(String id) async {
+    final dir = await _dir();
+    final file = File('${dir.path}/$id.json');
+    try {
+      if (await file.exists()) await file.delete();
+    } on Object {
+      // 删不掉不影响其它条目，下次 prune 还会再试。
+    }
+  }
+
+  /// 批量删除（记录页多选）。逐条走 [delete]，单条失败不影响其它条。
+  Future<int> deleteMany(Iterable<String> ids) async {
+    var removed = 0;
+    for (final id in ids) {
+      final dir = await _dir();
+      final file = File('${dir.path}/$id.json');
+      var existed = false;
+      try {
+        existed = await file.exists();
+        if (existed) await file.delete();
+      } on Object {
+        existed = false;
+      }
+      if (existed) removed++;
+    }
+    return removed;
+  }
+
   /// 裁剪到 [maxKeep] 个（最新的保留）。
   Future<void> prune() async {
     final files = await _files();
