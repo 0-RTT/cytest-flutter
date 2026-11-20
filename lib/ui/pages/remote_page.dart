@@ -535,7 +535,7 @@ class _DataPickerSheetState extends State<_DataPickerSheet> {
               width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
           : Icon(info.isArchive ? Icons.archive_outlined : Icons.science_outlined,
               size: 18),
-      title: Text(info.at, style: const TextStyle(fontSize: 13)),
+      title: Text(info.label, style: const TextStyle(fontSize: 13)),
       subtitle: Text(subtitle, style: const TextStyle(fontSize: 11.5)),
       onTap: () => _choose(info),
     );

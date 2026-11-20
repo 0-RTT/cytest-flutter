@@ -24,6 +24,18 @@ class RecordInfo {
     this.bytes = 0,
     this.isArchive = false,
   });
+
+  /// 存档文件名里的 ASN（`AS13335-20261120-223012` → `AS13335`）。
+  ///
+  /// 老存档名是纯时间戳、或抓取时取不到 ASN（写成 unknown），这里都返回 null。
+  String? get asn {
+    if (!isArchive) return null;
+    final head = id.split('-').first;
+    return head.startsWith('AS') ? head : null;
+  }
+
+  /// 给人看的名字：存档带 ASN 时是 `AS13335 · 2026-11-20 22:30`。
+  String get label => asn == null ? at : '$asn · $at';
 }
 
 /// 历史记录与存档，语义对齐桌面端 history.go。
