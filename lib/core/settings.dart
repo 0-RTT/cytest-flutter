@@ -35,6 +35,15 @@ class Defaults {
   /// 「超过阈值」，用户看到的就是「一键测试全部失败」。所以默认改为 0。
   static const maxLatency = 0;
 
+  /// 推送到 GitHub 的**订阅文件名**（base64 文本）。
+  ///
+  /// 放在设置里而不是推送页：一次配好长期复用，避免每次都手填（推送页
+  /// 那个输入框已按需求移除）。
+  static const subPath = 'cytest-sub.txt';
+
+  /// 推送到 GitHub 的 **mihomo YAML 文件名**。
+  static const yamlPath = 'config.yaml';
+
   /// v1.0.19 及更早版本的默认值，仅用于一次性迁移识别（见 AppSettings.fromJson）。
   static const legacyMaxLatency = 200;
 
@@ -96,6 +105,10 @@ class AppSettings {
 
   /// 已规范化的 `owner/repo`（设置页保存时用 parseRepoSlug 转过）。
   String githubRepo;
+
+  /// GitHub 推送的两个文件名（见 [Defaults.subPath] / [Defaults.yamlPath]）。
+  String subPath;
+  String yamlPath;
   String remoteHost;
   int remotePort;
   String remoteUser;
@@ -120,6 +133,8 @@ class AppSettings {
     this.proxyIps = const [],
     this.githubToken = '',
     this.githubRepo = '',
+    this.subPath = Defaults.subPath,
+    this.yamlPath = Defaults.yamlPath,
     this.remoteHost = '',
     this.remotePort = 22,
     this.remoteUser = 'root',
@@ -179,6 +194,10 @@ class AppSettings {
         proxyIps: (json['proxyIps'] as List?)?.cast<String>() ?? const [],
         githubToken: json['githubToken'] as String? ?? '',
         githubRepo: json['githubRepo'] as String? ?? '',
+        // 老 JSON 没有这两个键 → 回落默认；空串同样回落（清空文件名会让
+        // 推送写到仓库根目录，等于把文件铺在根上，绝大多数人都不是这个意思）。
+        subPath: _readUrl(json['subPath'], Defaults.subPath),
+        yamlPath: _readUrl(json['yamlPath'], Defaults.yamlPath),
         remoteHost: json['remoteHost'] as String? ?? '',
         remotePort: (json['remotePort'] as num?)?.toInt() ?? 22,
         remoteUser: json['remoteUser'] as String? ?? 'root',
@@ -255,6 +274,9 @@ class AppSettings {
         'proxyIps': proxyIps,
         'githubToken': githubToken,
         'githubRepo': githubRepo,
+        // 必须写回：漏写会在下次启动把用户设的文件名回落到默认值。
+        'subPath': subPath,
+        'yamlPath': yamlPath,
         'remoteHost': remoteHost,
         'remotePort': remotePort,
         'remoteUser': remoteUser,

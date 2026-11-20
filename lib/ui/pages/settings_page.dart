@@ -47,6 +47,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late TextEditingController _latencyUrl;
   late TextEditingController _ghRepo;
   late TextEditingController _ghToken;
+  late TextEditingController _subPath;
+  late TextEditingController _yamlPath;
   late TextEditingController _remoteHost;
   late TextEditingController _remotePort;
   late TextEditingController _remoteUser;
@@ -124,6 +126,8 @@ class _SettingsPageState extends State<SettingsPage> {
     _latencyUrl = TextEditingController(text: s.latencyUrl);
     _ghRepo = TextEditingController(text: s.githubRepo);
     _ghToken = TextEditingController(text: s.githubToken);
+    _subPath = TextEditingController(text: s.subPath);
+    _yamlPath = TextEditingController(text: s.yamlPath);
     _remoteHost = TextEditingController(text: s.remoteHost);
     _remotePort = TextEditingController(text: '${s.remotePort}');
     _remoteUser = TextEditingController(text: s.remoteUser);
@@ -147,6 +151,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _latencyUrl,
         _ghRepo,
         _ghToken,
+        _subPath,
+        _yamlPath,
         _remoteHost,
         _remotePort,
         _remoteUser,
@@ -239,6 +245,9 @@ class _SettingsPageState extends State<SettingsPage> {
       // 仓库地址允许直接粘网页链接，统一规范化成 owner/repo。
       githubRepo: repoInput.isEmpty ? '' : parseRepoSlug(repoInput),
       githubToken: _ghToken.text.trim(),
+      // 文件名同样走「空串=默认」：空文件名会把订阅写到仓库根目录。
+      subPath: _subPath.text.trim().isEmpty ? Defaults.subPath : _subPath.text.trim(),
+      yamlPath: _yamlPath.text.trim().isEmpty ? Defaults.yamlPath : _yamlPath.text.trim(),
       remoteHost: _remoteHost.text.trim(),
       remotePort: intOf(_remotePort, base.remotePort),
       remoteUser: _remoteUser.text.trim(),
@@ -283,6 +292,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _Field.latencyUrl => v.latencyUrl,
         _Field.githubRepo => v.githubRepo,
         _Field.githubToken => v.githubToken,
+        _Field.subPath => v.subPath,
+        _Field.yamlPath => v.yamlPath,
         _Field.remoteHost => v.remoteHost,
         _Field.remotePort => v.remotePort,
         _Field.remoteUser => v.remoteUser,
@@ -303,6 +314,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _Field.latencyUrl => _latencyUrl,
         _Field.githubRepo => _ghRepo,
         _Field.githubToken => _ghToken,
+        _Field.subPath => _subPath,
+        _Field.yamlPath => _yamlPath,
         _Field.remoteHost => _remoteHost,
         _Field.remotePort => _remotePort,
         _Field.remoteUser => _remoteUser,
@@ -323,6 +336,8 @@ class _SettingsPageState extends State<SettingsPage> {
         _Field.latencyUrl => '延迟地址',
         _Field.githubRepo => 'GitHub 仓库',
         _Field.githubToken => 'GitHub Token',
+        _Field.subPath => '订阅文件名',
+        _Field.yamlPath => 'YAML 文件名',
         _Field.remoteHost => '远程主机',
         _Field.remotePort => '远程端口',
         _Field.remoteUser => '远程用户',
@@ -364,6 +379,10 @@ class _SettingsPageState extends State<SettingsPage> {
         s.githubRepo = v.githubRepo;
       case _Field.githubToken:
         s.githubToken = v.githubToken;
+      case _Field.subPath:
+        s.subPath = v.subPath;
+      case _Field.yamlPath:
+        s.yamlPath = v.yamlPath;
       case _Field.remoteHost:
         s.remoteHost = v.remoteHost;
       case _Field.remotePort:
@@ -800,6 +819,9 @@ class _SettingsPageState extends State<SettingsPage> {
         return [
           _text('仓库地址', _ghRepo, hint: 'https://github.com/0-RTT/sub'),
           _text('Token', _ghToken, obscure: true, hint: '需要 repo contents 写权限'),
+          _text('订阅文件名（base64）', _subPath, hint: Defaults.subPath),
+          _text('mihomo 文件名（YAML）', _yamlPath, hint: Defaults.yamlPath),
+          _caption('推送时写到仓库的这两个文件；留空则用默认名。'),
         ];
       case _Group.remote:
         return [
@@ -1096,6 +1118,8 @@ enum _Field {
   latencyUrl,
   githubRepo,
   githubToken,
+  subPath,
+  yamlPath,
   remoteHost,
   remotePort,
   remoteUser,
@@ -1122,6 +1146,8 @@ class _FormValues {
     required this.latencyUrl,
     required this.githubRepo,
     required this.githubToken,
+    required this.subPath,
+    required this.yamlPath,
     required this.remoteHost,
     required this.remotePort,
     required this.remoteUser,
@@ -1141,6 +1167,8 @@ class _FormValues {
         latencyUrl: s.latencyUrl,
         githubRepo: s.githubRepo,
         githubToken: s.githubToken,
+        subPath: s.subPath,
+        yamlPath: s.yamlPath,
         remoteHost: s.remoteHost,
         remotePort: s.remotePort,
         remoteUser: s.remoteUser,
@@ -1159,6 +1187,8 @@ class _FormValues {
   final String latencyUrl;
   final String githubRepo;
   final String githubToken;
+  final String subPath;
+  final String yamlPath;
   final String remoteHost;
   final int remotePort;
   final String remoteUser;

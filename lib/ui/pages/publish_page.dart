@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/settings.dart' show Defaults;
 import '../../data/github.dart';
 import '../../data/mihomo.dart';
 import '../../data/publish.dart';
@@ -31,11 +32,6 @@ class PublishPage extends StatefulWidget {
 class _PublishPageState extends State<PublishPage> {
   late final TextEditingController _template =
       TextEditingController(text: widget.template);
-  late final TextEditingController _subPath =
-      TextEditingController(text: 'cytest-sub.txt');
-  late final TextEditingController _yamlPath =
-      TextEditingController(text: 'config.yaml');
-
   static const _previewKey = ValueKey('publish_preview_panel');
 
   final _previewScroll = ScrollController();
@@ -63,8 +59,6 @@ class _PublishPageState extends State<PublishPage> {
   @override
   void dispose() {
     _template.dispose();
-    _subPath.dispose();
-    _yamlPath.dispose();
     _previewScroll.dispose();
     _lanDns.dispose();
     super.dispose();
@@ -91,7 +85,15 @@ class _PublishPageState extends State<PublishPage> {
     return _mode == 'sub' ? b.subscription : b.yaml;
   }
 
-  String get _path => (_mode == 'sub' ? _subPath.text : _yamlPath.text).trim();
+  /// 目标文件名来自「设置 → GitHub 推送」（推送页不再让用户手填）。
+  String _pathOf(AppState state) {
+    final s = state.settings;
+    final name = (_mode == 'sub' ? s.subPath : s.yamlPath).trim();
+    // 兜底不放在这里也行（AppSettings.fromJson / 设置页都做了空串回落），
+    // 但推送是写远端的前一步，宁可多一层。
+    if (name.isNotEmpty) return name;
+    return _mode == 'sub' ? Defaults.subPath : Defaults.yamlPath;
+  }
 
   void _toast(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -115,11 +117,7 @@ class _PublishPageState extends State<PublishPage> {
       _toast(_error ?? '内容生成失败');
       return;
     }
-    final path = _path;
-    if (path.isEmpty) {
-      _toast('先填文件名');
-      return;
-    }
+    final path = _pathOf(state);
     if (state.settings.githubToken.trim().isEmpty ||
         parseRepoSlug(state.settings.githubRepo).isEmpty) {
       _toast('先在「设置 → GitHub 推送」填仓库地址和 Token');
@@ -354,23 +352,32 @@ class _PublishPageState extends State<PublishPage> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: _mode == 'sub' ? _subPath : _yamlPath,
-                        onChanged: (_) => setState(() {}),
-                        maxLines: 1,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontFamilyFallback: ['sans-serif'],
-                          fontSize: 12,
-                        ),
-                        decoration: InputDecoration(
-                          border: const OutlineInputBorder(),
-                          isDense: true,
-                          labelText: _mode == 'sub'
-                              ? '订阅文件名（base64）'
-                              : 'mihomo 文件名（YAML）',
-                        ),
+                      const SizedBox(height: 8),
+                      // 文件名不再在这里编辑：它是长期配置，放在「设置 → GitHub 推送」。
+                      // 页面上只回显「会写到哪个文件」，避免用户以为还能改。
+                      Row(
+                        children: [
+                          Icon(Icons.description_outlined,
+                              size: 14, color: theme.hintColor),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              '写入 ${_pathOf(context.watch<AppState>())}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'monospace',
+                                fontFamilyFallback: const ['sans-serif'],
+                                fontSize: 11.5,
+                                color: theme.hintColor,
+                              ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => _toast('在「设置 → GitHub 推送」里改文件名'),
+                            child: const Text('修改', style: TextStyle(fontSize: 12)),
+                          ),
+                        ],
                       ),
                       // 高级选项只影响 YAML，base64 模式下不显示。
                       if (_mode == 'yaml') ...[

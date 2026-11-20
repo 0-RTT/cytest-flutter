@@ -160,24 +160,18 @@ void main() {
       );
       await tester.pump();
 
-      // 订阅格式：默认订阅文件名，预览复制按钮叫「复制内容」
-      expect(find.text('订阅文件名（base64）'), findsOneWidget);
+      // 文件名不再是输入框：它来自「设置 → GitHub 推送」，页面上只回显。
+      expect(find.textContaining('写入 cytest-sub.txt'), findsOneWidget);
       expect(find.byTooltip('复制内容'), findsOneWidget);
       expect(find.byTooltip('跳到最新'), findsNothing);
-      final subField = tester.widget<TextField>(
-        find.widgetWithText(TextField, '订阅文件名（base64）'),
-      );
-      expect(subField.controller?.text, 'cytest-sub.txt');
+      expect(find.widgetWithText(TextField, '订阅文件名（base64）'), findsNothing);
 
-      // 改成 YAML 后文件名切到 config.yaml，且没有跳到最新按钮
+      // 改成 YAML 后回显的换成 YAML 文件名，且没有跳到最新按钮
       await tester.tap(find.text('yaml'));
       await tester.pump();
-      expect(find.text('mihomo 文件名（YAML）'), findsOneWidget);
+      expect(find.textContaining('写入 config.yaml'), findsOneWidget);
       expect(find.byTooltip('跳到最新'), findsNothing);
-      final yamlField = tester.widget<TextField>(
-        find.widgetWithText(TextField, 'mihomo 文件名（YAML）'),
-      );
-      expect(yamlField.controller?.text, 'config.yaml');
+      expect(find.widgetWithText(TextField, 'mihomo 文件名（YAML）'), findsNothing);
     });
     testWidgets('推送页默认直连，可切到走代理', (tester) async {
       await tester.pumpWidget(
