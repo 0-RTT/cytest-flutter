@@ -11,8 +11,8 @@ on:
     branches: [ main ]
   workflow_dispatch:
     inputs:
-      pinned:
-        description: '用仓库里写死的版本（应急回退），而不是解析最新'
+      latest:
+        description: '临时解析上游最新版本（默认用仓库钉死的版本）'
         type: boolean
         default: false
 
@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # ---- 钉死的版本（只在 dispatch 勾选 pinned=true 时使用）----
+  # ---- 钉死的版本（默认就用这三行；dispatch 勾 latest=true 才去解析上游）----
   PINNED_FLUTTER_VERSION: '3.50.0'
   PINNED_XRAY_VERSION: 'v26.11.9'
   PINNED_GO_VERSION: '1.27.x'
@@ -48,42 +48,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      # 每次构建都去上游解析「当前最新稳定版」，而不是用仓库里写死的常量：
-      # - Flutter：官方 releases_linux.json 的 current_release.stable
-      # - Xray   ：GitHub releases/latest 的 tag
-      # - Go     ：交给 setup-go 的 stable（它自己解析最新稳定）
-      # - Dart 包：flutter pub upgrade（在 pubspec 的 ^ 约束内取最新）
+      # **默认用仓库钉死的版本**，只在 dispatch 勾 latest=true 时去上游解析。
       #
-      # 代价是构建不再逐字节可复现，所以解析结果写进 versions.txt 并作为
-      # release 资产发布，出问题能回溯「那次到底用的什么版本」。
-      # 应急回退：workflow_dispatch 勾选 pinned=true → 用 PINNED_* 那三个常量。
-      - name: Resolve latest toolchain
+      # 为什么反转（2026-11-20）：原来每次构建都取「最新 Flutter」，而 AGP/Gradle
+      # 是仓库里钉死的 —— 两者会漂移。Flutter 每升一版都可能抬高最低 AGP/Gradle
+      # 要求，于是构建日志里冒出「Gradle 9.3.1 / AGP 9.1.1 即将停止支持」这类
+      # 警告，再下一次 Flutter 升级就变成硬失败。也就是说：**漂移是隐患，警告只是
+      # 它冒出来的形式**。钉死 Flutter 之后，升级必须是一次显式提交（连同 AGP/
+      # Gradle 一起改并有本地验证），不会半夜被上游推着走。
+      #
+      # 想临时试新版仍可：workflow_dispatch 勾 latest=true。解析结果照旧写进
+      # versions.txt 发到 Release，便于回溯。
+      - name: Resolve toolchain versions
         shell: bash
         run: |
           set -euo pipefail
-          PINNED='${{ github.event.inputs.pinned || 'false' }}'
-          if [ "$PINNED" = "true" ]; then
+          LATEST='${{ github.event.inputs.latest || 'false' }}'
+          if [ "$LATEST" = "true" ]; then
+            # 临时解析上游最新（Flutter 官方 current_release.stable / Xray latest tag）
+            FL=$(curl -fsSL --retry 3 --retry-delay 2 https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json               | python3 -c "import json,sys; d=json.load(sys.stdin); h={r['hash']:r for r in d['releases']}; print(h[d['current_release']['stable']]['version'])")
+            XR=$(curl -fsSL --retry 3 --retry-delay 2 -H "Accept: application/vnd.github+json"               https://api.github.com/repos/XTLS/Xray-core/releases/latest               | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])")
+            GO=stable
+            echo "模式=latest（临时解析上游最新；Dart 包仍按 pubspec.lock）"
+          else
+            # 默认：用仓库钉死的三行，构建可复现，升级必须显式提交
             FL="${PINNED_FLUTTER_VERSION}"
             XR="${PINNED_XRAY_VERSION}"
             GO="${PINNED_GO_VERSION}"
-            echo "模式=pinned（仓库写死版本）"
-          else
-            FL=$(curl -fsSL --retry 3 --retry-delay 2 \
-              https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json \
-              | python3 -c "import json,sys; d=json.load(sys.stdin); h={r['hash']:r for r in d['releases']}; print(h[d['current_release']['stable']]['version'])")
-            XR=$(curl -fsSL --retry 3 --retry-delay 2 \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/XTLS/Xray-core/releases/latest \
-              | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])")
-            GO=stable
-            # Dart 包永远按 pubspec.lock 安装，**不再 upgrade**。
-            # 2026-11-19 事故：upgrade 把 path_provider_android 拉到 2.3.x
-            # （实现改为 JNI 直连），真机上 FindClass 失败 →
-            # getApplicationSupportDirectory() 抛 ClassNotFoundException →
-            # 记录页一直转圈。CI 的 analyze/test 都发现不了这种「只在真机炸」的问题，
-            # 所以运行时依赖必须是可复现的；升级走「本地 pub upgrade + 真机验证 + 提交 lock」。
-            echo "模式=latest（工具链取最新，Dart 包按 lock）"
+            echo "模式=pinned（仓库钉死版本，默认）"
           fi
+          # Dart 包永远按 pubspec.lock 安装，**不 upgrade**：
+          # 2026-11-19 事故：upgrade 把 path_provider_android 拉到 2.3.x（JNI 实现），
+          # 真机 FindClass 失败 → 记录页一直转圈，analyze/test 发现不了。
           {
             echo "FLUTTER_VERSION=$FL"
             echo "XRAY_VERSION=$XR"
@@ -246,8 +242,16 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          flutter build apk --release --target-platform android-arm64 \
-            --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
+          flutter build apk --release --target-platform android-arm64 --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}" 2>&1 | tee /tmp/build.log
+          # Flutter 对「Gradle/AGP 版本即将停止支持」只发 warning：日志全绿，下一版
+          # Flutter 就变硬失败。这里把 warning 升成 error —— 要么当场升版本，
+          # 要么显式改这条规则，不能让隐患躺在日志里。
+          if grep -q "will soon be dropped" /tmp/build.log; then
+            echo "::error title=Gradle/AGP 版本即将不被支持::$(grep -m2 'will soon be dropped' /tmp/build.log | sed 's/^ *//' | tr '\n' ' ')"
+            echo "处理方式：按提示升 gradle-wrapper.properties 与 settings.gradle.kts，"
+            echo "本地 flutter build apk --release 验证通过后再发版。"
+            exit 1
+          fi
           ls -lh build/app/outputs/flutter-apk/
 
       # 把「这次到底用了什么版本」固化下来：构建不可复现，但必须可追溯。
