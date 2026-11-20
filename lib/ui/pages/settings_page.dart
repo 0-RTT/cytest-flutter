@@ -435,9 +435,74 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 复制由原生侧完成，Dart 只拿路径：这个字段本身就只是一个路径字符串，
   /// 读文件内容的事交给 SSH 连接时再做。
   Future<void> _pickKeyFile() async {
+    final List<KeyFileCandidate>? files;
     try {
-      final path = await pickKeyFile();
-      if (path == null || path.isEmpty) return; // 用户取消
+      // 选文件夹而不是选文件：无后缀的密钥在 Android 17 的文件选择器里
+      // 会被 MIME 过滤掉（文件夹能进、里面是空的），只能由应用自己列目录。
+      files = await pickKeyFolder();
+    } on FilePickException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+      return;
+    }
+    if (files == null) return; // 用户取消
+    if (!mounted) return;
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('这个文件夹里没有文件，换一个目录试试')),
+      );
+      return;
+    }
+
+    final list = files;
+    final picked = await showModalBottomSheet<KeyFileCandidate>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text('选择私钥文件（${list.length} 个）',
+                    style: theme.textTheme.titleSmall),
+              ),
+              // 上限只是防手滑：目录里文件多时别把整屏铺满。
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 360),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: list.length,
+                  itemBuilder: (_, i) {
+                    final f = list[i];
+                    return ListTile(
+                      dense: true,
+                      title: Text(f.name, style: const TextStyle(fontSize: 13)),
+                      subtitle: Text(
+                        f.size >= 0 ? '${f.size} 字节' : '大小未知',
+                        style: const TextStyle(fontSize: 11.5),
+                      ),
+                      onTap: () => Navigator.pop(ctx, f),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+
+    try {
+      final path = await importKeyUri(picked.uri);
+      if (path == null || path.isEmpty) return;
       if (!mounted) return;
       setState(() => _remoteKey.text = path); // 触发去抖自动保存
     } on FilePickException catch (e) {

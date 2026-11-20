@@ -31,7 +31,61 @@ Future<String?> pickTextFile() async {
   }
 }
 
-/// 选一个 SSH 私钥文件。
+/// 文件夹里的一个候选文件（只用于界面展示，选中后由原生侧复制）。
+class KeyFileCandidate {
+  const KeyFileCandidate({
+    required this.name,
+    required this.size,
+    required this.uri,
+  });
+
+  final String name;
+
+  /// 字节数，-1 = 未知（某些 provider 不给大小）。
+  final int size;
+
+  /// `content://...` 文档 URI（选中后交给 [importKeyUri]）。
+  final String uri;
+}
+
+/// 选一个 SSH 私钥**文件夹**，返回里面的文件列表（用户取消返回 null）。
+///
+/// 为什么不是「直接选文件」：Android 17 的文件选择器按 MIME 过滤，无后缀的
+/// 密钥（id_rsa / id_ed25519）算不出类型，连 `*/*` 也显示不出来 —— 用户看到
+/// 「文件夹能进，里面空空」。改成拿目录的读权限，由应用自己列子项，
+/// 全程不经过 MIME 判断。
+Future<List<KeyFileCandidate>?> pickKeyFolder() async {
+  try {
+    final raw = await _channel.invokeListMethod<dynamic>('pickKeyFolder');
+    if (raw == null) return null;
+    return [
+      for (final item in raw)
+        if (item is Map)
+          KeyFileCandidate(
+            name: '${item['name'] ?? ''}',
+            size: (item['size'] as num?)?.toInt() ?? -1,
+            uri: '${item['uri'] ?? ''}',
+          ),
+    ];
+  } on PlatformException catch (e) {
+    throw FilePickException(_humanize(e));
+  } on MissingPluginException {
+    throw const FilePickException('当前平台没有实现文件选择器（仅 Android 支持）');
+  }
+}
+
+/// 把 [KeyFileCandidate.uri] 指向的文件复制到应用私有目录，返回绝对路径。
+Future<String?> importKeyUri(String uri) async {
+  try {
+    return await _channel.invokeMethod<String>('importKeyUri', {'uri': uri});
+  } on PlatformException catch (e) {
+    throw FilePickException(_humanize(e));
+  } on MissingPluginException {
+    throw const FilePickException('当前平台没有实现文件选择器（仅 Android 支持）');
+  }
+}
+
+/// 选一个 SSH 私钥文件（单文件通道，部分机型可用）。
 ///
 /// 与 [pickTextFile] 分开的原因：那个把 MIME 限定在 text/csv 一类，而私钥常常
 /// **没有后缀**（id_rsa / id_ed25519），SAF 报不出类型 → 在选择器里直接变灰。

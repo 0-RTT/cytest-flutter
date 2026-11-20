@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -69,6 +70,15 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "pickTextFile" -> startPickTextFile(result)
                     "pickKeyFile" -> startPickKeyFile(result)
+                    "pickKeyFolder" -> startPickKeyFolder(result)
+                    "importKeyUri" -> {
+                        val uri = call.argument<String>("uri")
+                        if (uri == null) {
+                            result.error("bad_args", "缺少 uri", null)
+                        } else {
+                            importKeyUri(Uri.parse(uri), result)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -165,6 +175,113 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // ------------------------------------------------------------------
+    // 私钥：改为「选文件夹 → 应用内列出文件」
+    // ------------------------------------------------------------------
+    //
+    // 为什么不再直接选文件：Android 17 的 DocumentsUI 严格按 MIME 过滤，
+    // 无后缀的密钥（id_rsa / id_ed25519）连 */* 都不显示 —— 用户看到的是
+    // 「文件夹能进，里面一个文件都没有」。
+    //
+    // 树 URI 拿到的是**目录**的读权限，之后用 DocumentsContract 自己列子项、
+    // 自己读字节，全程不经过 MIME 判断，无后缀也能选。
+    private fun startPickKeyFolder(result: MethodChannel.Result) {
+        if (pendingPick != null) {
+            result.error("busy", "已有一个文件选择器打开，请先完成它", null)
+            return
+        }
+        pendingPick = result
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+            )
+        }
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_PICK_KEY_DIR)
+        } catch (e: Exception) {
+            pendingPick = null
+            result.error("no_picker", "无法打开系统文件夹选择器：${e.message}", null)
+        }
+    }
+
+    private fun handlePickKeyFolder(resultCode: Int, data: Intent?) {
+        val result = pendingPick
+        pendingPick = null
+        if (result == null) return
+        val tree: Uri? = if (resultCode == Activity.RESULT_OK) data?.data else null
+        if (tree == null) {
+            result.success(null) // 用户取消
+            return
+        }
+        try {
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    tree,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            val treeDocId = DocumentsContract.getTreeDocumentId(tree)
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, treeDocId)
+            val cols = arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+            )
+            val items = ArrayList<Map<String, Any>>()
+            contentResolver.query(childrenUri, cols, null, null, null)?.use { c ->
+                while (c.moveToNext() && items.size < MAX_KEY_FILES) {
+                    val mime = c.getString(3)
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
+                    val docId = c.getString(0) ?: continue
+                    val name = c.getString(1) ?: continue
+                    val size = if (c.isNull(2)) -1L else c.getLong(2)
+                    val docUri = DocumentsContract.buildDocumentUriUsingTree(tree, docId)
+                    items.add(
+                        mapOf(
+                            "name" to name,
+                            "size" to size,
+                            "uri" to docUri.toString(),
+                        ),
+                    )
+                }
+            }
+            items.sortBy { (it["name"] as String).lowercase() }
+            result.success(items)
+        } catch (e: Exception) {
+            result.error("read_failed", "读取文件夹失败：${e.message}", null)
+        }
+    }
+
+    /** 把选中的子项复制到 filesDir/keys，返回绝对路径。 */
+    private fun importKeyUri(uri: Uri, result: MethodChannel.Result) {
+        try {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("无法打开所选文件（openInputStream 返回 null）")
+            if (bytes.isEmpty()) {
+                result.error("read_failed", "所选文件是空的", null)
+                return
+            }
+            if (bytes.size > MAX_KEY_BYTES) {
+                result.error("too_large", "文件过大：${bytes.size} 字节（上限 $MAX_KEY_BYTES）", null)
+                return
+            }
+            val dir = File(filesDir, "keys")
+            if (!dir.exists() && !dir.mkdirs()) {
+                result.error("read_failed", "无法创建 keys 目录", null)
+                return
+            }
+            val name = displayName(uri) ?: "ssh_key_${System.currentTimeMillis()}"
+            val file = File(dir, safeFileName(name))
+            file.writeBytes(bytes)
+            result.success(file.absolutePath)
+        } catch (e: Exception) {
+            result.error("read_failed", "读取密钥失败：${e.message}", null)
+        }
+    }
+
     private fun handlePickKey(resultCode: Int, data: Intent?) {
         val result = pendingPick
         pendingPick = null
@@ -218,6 +335,10 @@ class MainActivity : FlutterActivity() {
         when (requestCode) {
             REQUEST_PICK_KEY -> {
                 handlePickKey(resultCode, data)
+                return
+            }
+            REQUEST_PICK_KEY_DIR -> {
+                handlePickKeyFolder(resultCode, data)
                 return
             }
             REQUEST_PICK_TEXT -> Unit
@@ -541,6 +662,10 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val REQUEST_PICK_TEXT = 4321
         private const val REQUEST_PICK_KEY = 4322
+        private const val REQUEST_PICK_KEY_DIR = 4323
+
+        /** 列目录时最多返回多少个文件：私钥目录通常只有几个，200 足够且不会卡 UI。 */
+        private const val MAX_KEY_FILES = 200
 
         /** 私钥上限 64KB：OpenSSH 私钥几 KB，超过大概率选错了文件。 */
         private const val MAX_KEY_BYTES = 64L * 1024
