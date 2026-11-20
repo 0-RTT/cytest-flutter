@@ -79,7 +79,6 @@ class _HomeTab extends StatelessWidget {
         title: 'cytest',
         automaticallyImplyLeading: false,
         actions: [
-          _lineStatus(theme, state),
           IconButton(
             onPressed: () => context.read<AppState>().boot(),
             tooltip: '刷新状态',
@@ -183,44 +182,6 @@ class _HomeTab extends StatelessWidget {
         endIndent: 14,
         color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
       );
-
-  Widget _lineStatus(ThemeData theme, AppState state) {
-    final running = state.xray.running;
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-        decoration: BoxDecoration(
-          color: running
-              ? theme.colorScheme.primary.withValues(alpha: 0.14)
-              : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 7,
-              height: 7,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: running
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.outline,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              running ? '线路已连接' : '线路未启动',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: running
-                    ? theme.colorScheme.primary
-                    : theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _label(ThemeData theme, String text) => Padding(
         padding: const EdgeInsets.only(left: 4),

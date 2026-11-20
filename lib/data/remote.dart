@@ -7,6 +7,7 @@ import 'package:dartssh2/dartssh2.dart';
 import '../core/bin.dart';
 import '../core/settings.dart';
 import 'pipeline.dart';
+import 'socks_socket.dart';
 
 /// 远程执行：把 Linux 版 pipeline 推到服务器跑三阶段，拉回结果。
 /// 语义对齐桌面端 remote.go。
@@ -17,6 +18,8 @@ class RemoteRunner {
     required AppSettings settings,
     required String censysJson,
     required void Function(String line) onLine,
+    /// 非空 = 经本机 SOCKS5（Xray mixed 入站）连服务器；null = 直连。
+    int? proxyPort,
   }) async {
     final host = settings.remoteHost.trim();
     if (host.isEmpty) throw Exception('服务器地址为空');
@@ -28,9 +31,16 @@ class RemoteRunner {
       throw Exception('内嵌的 Linux 版 pipeline 缺失');
     }
 
-    onLine('连接 $host:$port …');
-    final socket = await SSHSocket.connect(host, port,
-        timeout: const Duration(seconds: 15));
+    onLine('连接 $host:$port …${proxyPort == null ? '（直连）' : '（经本机代理 127.0.0.1:$proxyPort）'}');
+    final socket = proxyPort == null
+        ? await SSHSocket.connect(host, port,
+            timeout: const Duration(seconds: 15))
+        : await connectViaSocks5(
+            proxyHost: '127.0.0.1',
+            proxyPort: proxyPort,
+            host: host,
+            port: port,
+          );
 
     final client = SSHClient(
       socket,

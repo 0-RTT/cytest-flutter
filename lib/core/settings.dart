@@ -115,6 +115,9 @@ class AppSettings {
   String remotePassword;
   String remoteKeyPath;
 
+  /// 远程执行是否走本机代理（SSH over SOCKS5）。默认直连：SSH 通常不经过墙。
+  bool remoteUseProxy;
+
   AppSettings({
     this.speedUrl = Defaults.speedUrl,
     this.latencyUrl = Defaults.latencyUrl,
@@ -140,6 +143,7 @@ class AppSettings {
     this.remoteUser = 'root',
     this.remotePassword = '',
     this.remoteKeyPath = '',
+    this.remoteUseProxy = false,
   });
 
   static const _key = 'cytest.settings.v1';
@@ -203,6 +207,7 @@ class AppSettings {
         remoteUser: json['remoteUser'] as String? ?? 'root',
         remotePassword: json['remotePassword'] as String? ?? '',
         remoteKeyPath: json['remoteKeyPath'] as String? ?? '',
+        remoteUseProxy: json['remoteUseProxy'] as bool? ?? false,
       );
 
   /// 读一个「地址」型字段：缺键 / 非字符串 / 空白都回落 [fallback]。
@@ -282,5 +287,6 @@ class AppSettings {
         'remoteUser': remoteUser,
         'remotePassword': remotePassword,
         'remoteKeyPath': remoteKeyPath,
+        'remoteUseProxy': remoteUseProxy,
       };
 }

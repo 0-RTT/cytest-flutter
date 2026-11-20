@@ -257,7 +257,7 @@ Future<bool> waitPort(int port, {Duration timeout = _kPortTimeout}) async {
 ///
 /// 引入它的原因：`running` 在批量模式下没有任何意义（批量进程占着 20 个入站口，
 /// 但它不是一个「可用的单线路代理」）。之前用同一个 `_running` 字段表示两种状态，
-/// 导致 `fetch_page` / `home` 在测速期间误以为「线路已连接」。
+/// 导致抓取页在测速期间误以为「线路已连接」而走代理。
 ///
 /// - [none]：没有任何 xray 进程
 /// - [line]：单线路代理（「启动线路」/「获取数据」用），`running == true`
@@ -334,7 +334,7 @@ class XrayProc implements BatchXray {
   /// **单线路代理**是否可用（唯一真相 = [mode] == line）。
   ///
   /// 批量模式进程虽然活着，但它不是可用的单线路代理，所以这里返回 false：
-  /// `fetch_page` 据此判断要不要走代理、`home` 据此显示「线路已连接」（K4）。
+  /// 抓取页与远程执行页据此判断要不要走代理。
   /// 不额外叠加 `_proc != null`：进程崩溃时 exitCode 回调会把 mode 归零，
   /// 多一个条件就是同一事实的第二份副本。
   bool get running => _mode == XrayMode.line;

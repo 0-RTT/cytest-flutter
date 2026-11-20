@@ -50,8 +50,20 @@ class _RemotePageState extends State<RemotePage> {
     });
 
     try {
+      int? proxyPort;
+      if (state.settings.remoteUseProxy) {
+        if (state.settings.vlessLinks.isEmpty) {
+          throw Exception('走代理需要先在「设置 → 线路与代理」填 VLESS 链接');
+        }
+        if (!state.xray.running) {
+          setState(() => _log.add('启动本机代理…'));
+          await state.startProxyLine(null);
+        }
+        proxyPort = state.xray.port;
+      }
       final rows = await RemoteRunner.run(
         settings: state.settings,
+        proxyPort: proxyPort,
         censysJson: input,
         onLine: (line) {
           if (!mounted) return;
@@ -138,6 +150,42 @@ class _RemotePageState extends State<RemotePage> {
                               : theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Text('访问方式',
+                              style: theme.textTheme.labelMedium),
+                          const Spacer(),
+                          SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment(value: false, label: Text('直连')),
+                              ButtonSegment(value: true, label: Text('走代理')),
+                            ],
+                            selected: {s.remoteUseProxy},
+                            onSelectionChanged: _running
+                                ? null
+                                : (v) async {
+                                    final state = context.read<AppState>();
+                                    state.settings.remoteUseProxy = v.first;
+                                    await state.saveSettings();
+                                    if (mounted) setState(() {});
+                                  },
+                            showSelectedIcon: false,
+                            style: const ButtonStyle(
+                                visualDensity: VisualDensity.compact),
+                          ),
+                        ],
+                      ),
+                      if (s.remoteUseProxy)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            '经本机 Xray 的 SOCKS 入站连服务器；未启动会自动拉起线路',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
