@@ -35,3 +35,6 @@ android/app/src/main/jniLibs/**/*.so
 android/.kotlin/
 _log.txt
 _*.json
+
+# 本地工具链（Flutter / Android SDK），不入库
+.toolchain/

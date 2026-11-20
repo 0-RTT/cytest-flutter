@@ -9,7 +9,7 @@
 ## 1. 发布（每次都用）
 
 ```bash
-source D:/cytest-app/.workbuddy/tmp/env/activate.sh
+source /d/cytest-flutter/.toolchain/env.sh
 cd /d/cytest-flutter && git add -A && git commit -m "..."
 git -c http.proxy=socks5h://127.0.0.1:10808 push origin main
 git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push origin v1.0.NN
@@ -31,10 +31,13 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 
 ## 3. 环境与构建铁律
 
-- Flutter 3.50 / Dart 3.14，SDK 原在 `D:\cytest-app\.workbuddy	mp\envlutter`；
-  **2026-11-20 晚该临时目录被清理（cytest-app 整个不见了），本机已无 flutter/dart 可执行**，
-  下次要先重新准备 SDK 与 `activate.sh` 才能本地跑 analyze/test。
-- `FLUTTER_STORAGE_BASE_URL` 必须 flutter-io.cn（否则引擎包下载中断）。
+- **本地工具链已自足于仓库内 `.toolchain/`（不入库）**：`source .toolchain/env.sh` 后
+  flutter / dart / adb / sdkmanager 全部可用。内容：Flutter 3.50.0 SDK、
+  android-sdk（platforms;android-37.0 + build-tools;37.0.0 + platform-tools + cmdline-tools）、
+  JAVA_HOME 复用 Android Studio 的 JBR 21（不单独装 JDK）。
+- 旧的 `D:\cytest-app\.workbuddy	mp\env` 已在 2026-11-20 晚被清理（连同 cytest-app 仓库），
+  不要再引用那条路径。
+- `FLUTTER_STORAGE_BASE_URL` 必须 flutter-io.cn（否则引擎包下载中断），env.sh 里已设。
 - 版本组合（降版本行不通）：**AGP 9.1.1 + Gradle 9.3.1 + Kotlin 2.4.20 + compileSdk 37**。
 - 原生二进制走 `jniLibs/arm64-v8a/lib*.so` + `useLegacyPackaging=true`；解压到 filesDir 再 chmod 会被 SELinux 拒。
 - CI 里 xray 必须 `unzip -d /tmp` 再 `mv` 到 jniLibs（落 `assets/` 被静默忽略）。
@@ -42,6 +45,22 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - `flutter_inappwebview 6.1.5` 不兼容 AGP 9 → vendor 到 `packages/flutter_inappwebview_android` 改 `proguard-android-optimize.txt` + `dependency_overrides`。
 - 本机 `sdk/ndk/28.2.*` 空目录会让本地 Gradle 预检查报错（CI 不阻塞），已隔离。
 - CI：`permissions: contents: write`；缓存 `~/.gradle/caches`+wrapper；`-Xmx3G -XX:MaxMetaspaceSize=1G`；Maven 429 会让 Gradle 配置阶段静默失败（别写成 OOM）。
+
+
+### .toolchain 的三处本地补丁（重装时照做，否则 Gradle 直接失败）
+
+1. **`platforms/android-37`**：Google 只发 `platforms;android-37.0`，而 `compileSdk = 37`
+   会让 AGP 去找 `platforms/android-37`，找不到就调 sdkmanager 自动装（该包不存在 → 失败）。
+   做法：把 `android-37.0` 复制成 `android-37`，并把 `source.properties` 的
+   `AndroidVersion.ApiLevel=37.0` 改成 `37`。
+2. **`ndk/28.2.13676358`**：`ndkVersion = flutter.ndkVersion` 让 Flutter 插件强制下载这个版本，
+   而 sdkmanager 下载会报 `Error on ZipFile unknown archive`（代理下断流）。
+   做法：`curl --noproxy '*' -C -` 下 `android-ndk-r28c-windows.zip`（714MB），解压后把
+   `android-ndk-r28c` 改名成 `28.2.13676358`。
+3. **JDK 不单独装**：`JAVA_HOME` 指向 Android Studio 自带 JBR 21。
+
+验证：`source .toolchain/env.sh && flutter build apk --debug` → 4 分钟出
+`build/app/outputs/flutter-apk/app-debug.apk`。
 
 ## 4. UI 铁律
 
