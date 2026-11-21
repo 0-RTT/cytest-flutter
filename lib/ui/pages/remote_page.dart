@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
+import '../phosphor_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -178,7 +180,7 @@ class _RemotePageState extends State<RemotePage> {
               height: 46,
               child: FilledButton.icon(
                 onPressed: _running ? null : _run,
-                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                icon: const Icon(PhosphorIconsRegular.cloudArrowUp, size: 18),
                 label: Text(_running ? '执行中…' : '在服务器上执行'),
               ),
             ),
@@ -270,7 +272,7 @@ class _RemotePageState extends State<RemotePage> {
                           const Spacer(),
                           TextButton.icon(
                             onPressed: _running ? null : _pickData,
-                            icon: const Icon(Icons.list_alt, size: 16),
+                            icon: const Icon(PhosphorIconsRegular.listBullets, size: 16),
                             label: const Text('从记录选择', style: TextStyle(fontSize: 12)),
                             style: TextButton.styleFrom(
                               visualDensity: VisualDensity.compact,
@@ -299,8 +301,8 @@ class _RemotePageState extends State<RemotePage> {
                           children: [
                             Icon(
                               _dataContent.isEmpty
-                                  ? Icons.inbox_outlined
-                                  : Icons.check_circle_outline,
+                                  ? PhosphorIconsRegular.tray
+                                  : PhosphorIconsRegular.checkCircle,
                               size: 18,
                               color: _dataContent.isEmpty
                                   ? theme.colorScheme.outline
@@ -543,7 +545,7 @@ class _DataPickerSheetState extends State<_DataPickerSheet> {
       leading: busy
           ? const SizedBox(
               width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-          : Icon(info.isArchive ? Icons.archive_outlined : Icons.science_outlined,
+          : Icon(info.isArchive ? PhosphorIconsRegular.archive : PhosphorIconsRegular.flask,
               size: 18),
       title: Text(info.label, style: const TextStyle(fontSize: 13)),
       subtitle: Text(subtitle, style: const TextStyle(fontSize: 11.5)),

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
+import '../phosphor_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -238,7 +240,7 @@ class _TestPageState extends State<TestPage> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.folder_open_outlined,
+                  Icon(PhosphorIconsRegular.folderOpen,
                       size: 17, color: theme.colorScheme.primary),
                   const SizedBox(width: 6),
                   Text('候选', style: theme.textTheme.titleSmall),
@@ -268,8 +270,8 @@ class _TestPageState extends State<TestPage> {
                     children: [
                       Icon(
                         hasTargets
-                            ? Icons.description_outlined
-                            : Icons.list_alt_outlined,
+                            ? PhosphorIconsRegular.fileText
+                            : PhosphorIconsRegular.listBullets,
                         size: 18,
                         color: theme.colorScheme.onSurfaceVariant,
                       ),
@@ -286,7 +288,7 @@ class _TestPageState extends State<TestPage> {
                           ),
                         ),
                       ),
-                      Icon(Icons.chevron_right,
+                      Icon(PhosphorIconsRegular.caretRight,
                           size: 18, color: theme.colorScheme.onSurfaceVariant),
                     ],
                   ),
@@ -468,7 +470,7 @@ class _RecordPickerSheetState extends State<_RecordPickerSheet> {
       dense: true,
       enabled: _loadingId == null,
       leading: Icon(
-        info.isArchive ? Icons.archive_outlined : Icons.history,
+        info.isArchive ? PhosphorIconsRegular.archive : PhosphorIconsRegular.clockCounterClockwise,
         size: 20,
         color: theme.colorScheme.onSurfaceVariant,
       ),
@@ -480,7 +482,7 @@ class _RecordPickerSheetState extends State<_RecordPickerSheet> {
               height: 16,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : const Icon(Icons.chevron_right, size: 18),
+          : const Icon(PhosphorIconsRegular.caretRight, size: 18),
       onTap: () => _choose(info),
     );
   }

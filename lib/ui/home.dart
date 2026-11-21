@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'phosphor_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -65,8 +67,8 @@ class _BottomNav extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final items = const [
-      (Icons.home_rounded, '首页'),
-      (Icons.settings_outlined, '设置'),
+      (PhosphorIconsRegular.house, '首页'),
+      (PhosphorIconsRegular.gear, '设置'),
     ];
     final active = dark ? const Color(0xFFCBD5E1) : _C.accent;
     final idle = dark ? const Color(0xFF9CA3AF) : _C.sub;
@@ -164,7 +166,7 @@ class _HomeTab extends StatelessWidget {
                   onPressed: () => context.read<AppState>().boot(),
                   tooltip: '刷新状态',
                   visualDensity: VisualDensity.compact,
-                  icon: Icon(Icons.refresh_rounded,
+                  icon: Icon(PhosphorIconsRegular.arrowClockwise,
                       size: 22,
                       color: dark ? const Color(0xFF9CA3AF) : _C.sub),
                 ),
@@ -180,7 +182,7 @@ class _HomeTab extends StatelessWidget {
                 Expanded(
                   child: _stepCard(
                     context,
-                    icon: Icons.cloud_download_outlined,
+                    icon: PhosphorIconsRegular.cloudArrowDown,
                     title: '获取数据',
                     subtitle: 'Censys 拉候选',
                     onTap: () => _push(context, const FetchPage()),
@@ -190,7 +192,7 @@ class _HomeTab extends StatelessWidget {
                 Expanded(
                   child: _stepCard(
                     context,
-                    icon: Icons.graphic_eq_rounded,
+                    icon: PhosphorIconsRegular.waveform,
                     title: '本地测试',
                     subtitle: '延迟 / 速度',
                     onTap: () => _push(context, const TestPage()),
@@ -206,7 +208,7 @@ class _HomeTab extends StatelessWidget {
               onTap: () => _push(context, const ResultPage()),
               child: Row(
                 children: [
-                  _iconChip(context, Icons.bar_chart_rounded),
+                  _iconChip(context, PhosphorIconsRegular.chartBar),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -232,8 +234,8 @@ class _HomeTab extends StatelessWidget {
                       ],
                     ),
                   ),
-                  Icon(Icons.chevron_right_rounded,
-                      size: 20,
+                  Icon(PhosphorIconsRegular.caretRight,
+                      size: 18,
                       color: dark ? const Color(0xFF6B7280) : _C.sub),
                 ],
               ),
@@ -249,7 +251,7 @@ class _HomeTab extends StatelessWidget {
                 Expanded(
                   child: _toolCard(
                     context,
-                    icon: Icons.history_rounded,
+                    icon: PhosphorIconsRegular.clockCounterClockwise,
                     title: '记录',
                     subtitle: '历史与存档',
                     chevron: true,
@@ -260,7 +262,7 @@ class _HomeTab extends StatelessWidget {
                 Expanded(
                   child: _toolCard(
                     context,
-                    icon: Icons.dns_outlined,
+                    icon: PhosphorIconsRegular.hardDrives,
                     title: '远程执行',
                     subtitle: '服务器跑三阶段',
                     dot: true,
@@ -356,9 +358,9 @@ class _HomeTab extends StatelessWidget {
   TextStyle _titleStyle(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
-      fontSize: 16,
+      fontSize: 17,
       fontWeight: FontWeight.w600,
-      letterSpacing: -0.3,
+      letterSpacing: -0.4,
       color: dark ? const Color(0xFFF3F4F6) : _C.ink,
     );
   }
@@ -426,6 +428,7 @@ class _HomeTab extends StatelessWidget {
     bool chevron = false,
   }) {
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
     return _card(
       context,
       onTap: onTap,
@@ -434,38 +437,36 @@ class _HomeTab extends StatelessWidget {
         children: [
           Row(
             children: [
-              _iconChip(context, icon),
-              const Spacer(),
-              if (dot)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: dark ? const Color(0xFF7FBFA8) : _C.teal,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(title, style: _titleStyle(context)),
-          const SizedBox(height: 3),
-          Row(
-            children: [
+              Icon(icon, size: 22, color: tint),
+              const SizedBox(width: 9),
               Expanded(
-                child: Text(subtitle,
+                child: Text(title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: _subStyle(context)),
+                    style: _titleStyle(context)),
               ),
-              if (chevron)
-                Icon(Icons.chevron_right_rounded,
-                    size: 18,
+              if (dot)
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: dark ? const Color(0xFF7FBFA8) : _C.teal,
+                    shape: BoxShape.circle,
+                  ),
+                )
+              else if (chevron)
+                Icon(PhosphorIconsRegular.caretRight,
+                    size: 16,
                     color: dark ? const Color(0xFF6B7280) : _C.sub),
             ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 31),
+            child: Text(subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _subStyle(context)),
           ),
         ],
       ),

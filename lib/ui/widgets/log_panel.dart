@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../phosphor_icons.dart';
+
 import 'glass.dart';
 
 /// 通用日志/输出面板：标题栏 + 独立滚动的内容区。
@@ -97,13 +99,13 @@ class LogPanel extends StatelessWidget {
                   IconButton(
                     onPressed: lines.isEmpty ? null : onJumpToLatest,
                     tooltip: '跳到最新',
-                    icon: const Icon(Icons.vertical_align_bottom, size: 18),
+                    icon: const Icon(PhosphorIconsRegular.arrowDown, size: 18),
                     visualDensity: VisualDensity.compact,
                   ),
                 IconButton(
                   onPressed: lines.isEmpty ? null : () { onCopy(); },
                   tooltip: copyTooltip,
-                  icon: const Icon(Icons.copy_all_outlined, size: 18),
+                  icon: const Icon(PhosphorIconsRegular.copy, size: 18),
                   visualDensity: VisualDensity.compact,
                 ),
               ],

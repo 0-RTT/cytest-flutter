@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../phosphor_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -92,7 +94,7 @@ class _ResultPageState extends State<ResultPage> {
         actions: [
           TextButton.icon(
             onPressed: picked == 0 ? null : _openTest,
-            icon: const Icon(Icons.science_outlined, size: 17),
+            icon: const Icon(PhosphorIconsRegular.flask, size: 17),
             label: Text('测试 ($picked)'),
           ),
           PopupMenuButton<String>(

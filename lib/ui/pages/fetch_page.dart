@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+
+import '../phosphor_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:provider/provider.dart';
@@ -558,7 +560,7 @@ class _FetchPageState extends State<FetchPage> {
               alignment: Alignment.centerRight,
               child: TextButton.icon(
                 onPressed: _copyPayload,
-                icon: const Icon(Icons.copy_all_outlined, size: 16),
+                icon: const Icon(PhosphorIconsRegular.copy, size: 16),
                 label: const Text('复制原始 JSON'),
               ),
             ),

@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
+import '../phosphor_icons.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/file_pick.dart';
@@ -324,7 +326,7 @@ class _HistoryPageState extends State<HistoryPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.folder_off_outlined,
+              Icon(PhosphorIconsRegular.folderSimpleMinus,
                   size: 44, color: theme.colorScheme.outline),
               const SizedBox(height: 14),
               Text('记录没有加载出来', style: theme.textTheme.titleSmall),
@@ -338,7 +340,7 @@ class _HistoryPageState extends State<HistoryPage> {
               const SizedBox(height: 18),
               FilledButton.icon(
                 onPressed: _reload,
-                icon: const Icon(Icons.refresh, size: 18),
+                icon: const Icon(PhosphorIconsRegular.arrowClockwise, size: 18),
                 label: const Text('重试'),
               ),
             ],
@@ -404,10 +406,10 @@ class _HistoryPageState extends State<HistoryPage> {
             IconButton(
               tooltip: _selecting ? '取消选择' : '多选',
               onPressed: _toggleSelecting,
-              icon: Icon(_selecting ? Icons.close : Icons.checklist),
+              icon: Icon(_selecting ? PhosphorIconsRegular.x : PhosphorIconsRegular.checkSquare),
             ),
           if (!_selecting)
-            IconButton(onPressed: _reload, icon: const Icon(Icons.refresh)),
+            IconButton(onPressed: _reload, icon: const Icon(PhosphorIconsRegular.arrowClockwise)),
         ],
       ),
       // 底部 SafeArea：Scaffold 的 body 不会自动避让系统手势条 / 三键导航，
@@ -488,7 +490,7 @@ class _HistoryPageState extends State<HistoryPage> {
                     const Spacer(),
                     FilledButton.icon(
                       onPressed: _selected.isEmpty ? null : _deleteSelected,
-                      icon: const Icon(Icons.delete_outline, size: 18),
+                      icon: const Icon(PhosphorIconsRegular.trash, size: 18),
                       label: Text('删除 ${_selected.length} 项'),
                       style: FilledButton.styleFrom(
                         backgroundColor: theme.colorScheme.error,
@@ -526,12 +528,12 @@ class _HistoryPageState extends State<HistoryPage> {
                   iconSize: 18,
                   tooltip: '导出 CSV',
                   onPressed: () => _exportCsv(r),
-                  icon: const Icon(Icons.save_alt),
+                  icon: const Icon(PhosphorIconsRegular.floppyDisk),
                 ),
                 IconButton(
                   iconSize: 18,
                   onPressed: () => _delete(r),
-                  icon: Icon(Icons.close, color: theme.hintColor),
+                  icon: Icon(PhosphorIconsRegular.x, color: theme.hintColor),
                 ),
               ],
             ),
@@ -562,12 +564,12 @@ class _HistoryPageState extends State<HistoryPage> {
                   iconSize: 18,
                   tooltip: '导出 CSV',
                   onPressed: () => _exportCsv(r, remote: true),
-                  icon: const Icon(Icons.save_alt),
+                  icon: const Icon(PhosphorIconsRegular.floppyDisk),
                 ),
                 IconButton(
                   iconSize: 18,
                   onPressed: () => _delete(r),
-                  icon: Icon(Icons.close, color: theme.hintColor),
+                  icon: Icon(PhosphorIconsRegular.x, color: theme.hintColor),
                 ),
               ],
             ),
@@ -633,12 +635,12 @@ class _HistoryPageState extends State<HistoryPage> {
                   iconSize: 18,
                   tooltip: '导出 data.txt',
                   onPressed: () => _exportDataTxt(a),
-                  icon: const Icon(Icons.save_alt),
+                  icon: const Icon(PhosphorIconsRegular.floppyDisk),
                 ),
                 IconButton(
                   iconSize: 18,
                   onPressed: () => _delete(a),
-                  icon: Icon(Icons.close, color: theme.hintColor),
+                  icon: Icon(PhosphorIconsRegular.x, color: theme.hintColor),
                 ),
               ],
             ),
@@ -669,7 +671,7 @@ class _HistoryPageState extends State<HistoryPage> {
                 IconButton(
                   iconSize: 18,
                   onPressed: () => _deleteLinkRun(run),
-                  icon: Icon(Icons.close, color: theme.hintColor),
+                  icon: Icon(PhosphorIconsRegular.x, color: theme.hintColor),
                 ),
               ],
             ),

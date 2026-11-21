@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
+
+import '../phosphor_icons.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/file_pick.dart';
@@ -719,7 +721,7 @@ class _SettingsPageState extends State<SettingsPage> {
               _card([
                 _row(
                   theme,
-                  icon: Icons.route_outlined,
+                  icon: PhosphorIconsRegular.path,
                   title: 'VLESS 链接',
                   value: s.vlessLinks.isEmpty
                       ? '未配置'
@@ -728,7 +730,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 _row(
                   theme,
-                  icon: Icons.layers_outlined,
+                  icon: PhosphorIconsRegular.stack,
                   title: 'proxyip',
                   value: '${s.proxyIps.length} 条 · 替换回源 ip:port',
                   onTap: () => _openGroup(context, _Group.lines),
@@ -739,7 +741,7 @@ class _SettingsPageState extends State<SettingsPage> {
               _card([
                 _row(
                   theme,
-                  icon: Icons.speed_outlined,
+                  icon: PhosphorIconsRegular.gauge,
                   title: '并发',
                   value: '指纹 ${s.sha1Concurrency} · 延迟 ${s.latencyConcurrency}'
                       ' · 速度 ${s.speedConcurrency}',
@@ -747,21 +749,21 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 _row(
                   theme,
-                  icon: Icons.timer_outlined,
+                  icon: PhosphorIconsRegular.timer,
                   title: '超时',
                   value: '连接 ${s.dialTimeout}s · 下载 ${s.downloadTimeout}s',
                   onTap: () => _openGroup(context, _Group.timeouts),
                 ),
                 _row(
                   theme,
-                  icon: Icons.network_ping,
+                  icon: PhosphorIconsRegular.pulse,
                   title: '延迟测试地址',
                   value: s.latencyUrl.isEmpty ? '未配置' : s.latencyUrl,
                   onTap: () => _openGroup(context, _Group.latencyUrl),
                 ),
                 _row(
                   theme,
-                  icon: Icons.download_outlined,
+                  icon: PhosphorIconsRegular.downloadSimple,
                   title: '速度测试地址',
                   value: s.speedUrl.isEmpty ? '未配置' : s.speedUrl,
                   onTap: () => _openGroup(context, _Group.speedUrl),
@@ -772,14 +774,14 @@ class _SettingsPageState extends State<SettingsPage> {
               _card([
                 _row(
                   theme,
-                  icon: Icons.cloud_upload_outlined,
+                  icon: PhosphorIconsRegular.cloudArrowUp,
                   title: 'GitHub 推送',
                   value: s.githubRepo.isEmpty ? '未配置仓库' : s.githubRepo,
                   onTap: () => _openGroup(context, _Group.github),
                 ),
                 _row(
                   theme,
-                  icon: Icons.dns_outlined,
+                  icon: PhosphorIconsRegular.hardDrives,
                   title: '远程执行',
                   value: s.remoteHost.isEmpty
                       ? '未配置服务器'
@@ -835,7 +837,7 @@ class _SettingsPageState extends State<SettingsPage> {
           padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
           child: Row(
             children: [
-              Icon(Icons.hourglass_empty,
+              Icon(PhosphorIconsRegular.hourglass,
                   size: 16, color: theme.colorScheme.onSurfaceVariant),
               const SizedBox(width: 10),
               Expanded(
@@ -1000,7 +1002,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right,
+                Icon(PhosphorIconsRegular.caretRight,
                     size: 20, color: theme.colorScheme.outline),
               ],
             ),
@@ -1042,7 +1044,7 @@ class _SettingsPageState extends State<SettingsPage> {
         const Spacer(),
         TextButton.icon(
           onPressed: _importProxyIps,
-          icon: const Icon(Icons.file_open_outlined, size: 16),
+          icon: const Icon(PhosphorIconsRegular.file, size: 16),
           label: const Text('加载文件'),
           style: TextButton.styleFrom(
             visualDensity: VisualDensity.compact,
@@ -1052,7 +1054,7 @@ class _SettingsPageState extends State<SettingsPage> {
         IconButton(
           onPressed: count == 0 ? null : _clearProxyIps,
           tooltip: '清空 proxyip',
-          icon: const Icon(Icons.delete_outline, size: 18),
+          icon: const Icon(PhosphorIconsRegular.trash, size: 18),
           visualDensity: VisualDensity.compact,
           style: IconButton.styleFrom(
             minimumSize: const Size(34, 34),
@@ -1163,7 +1165,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ? null
                 : IconButton(
                     tooltip: pickTooltip ?? '选择文件',
-                    icon: const Icon(Icons.folder_open, size: 18),
+                    icon: const Icon(PhosphorIconsRegular.folderOpen, size: 18),
                     onPressed: onPick,
                   ),
           ),

@@ -51,6 +51,20 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # 只包含源码里出现的字符 + ASCII（约 220KB/字重），不是 6.5MB 全量字库。
+  # 动态内容里出现字库之外的汉字时，Flutter 会自动回退到系统字体。
+  fonts:
+    - family: MiSans
+      fonts:
+        - asset: assets/fonts/MiSans-Regular.otf
+          weight: 400
+        - asset: assets/fonts/MiSans-Medium.otf
+          weight: 500
+    # Phosphor 图标字体（Regular 线稿）。图标码点见 lib/ui/phosphor_icons.dart。
+    - family: Phosphor
+      fonts:
+        - asset: assets/fonts/Phosphor.ttf
   assets:
     # pipeline / xray 走 jniLibs（lib*.so），这里只保留远程执行用的 Linux 版
     - assets/pipeline-linux

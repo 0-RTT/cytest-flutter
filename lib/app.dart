@@ -26,6 +26,9 @@ class CytestApp extends StatelessWidget {
         );
     return ThemeData(
       colorScheme: scheme,
+      // 全局字体：MiSans（思源/系统黑体偏方正，MiSans 更几何、字重过渡更干净）。
+      // 字库只裁了源码用到的字符（见 pubspec），缺字回退系统字体。
+      fontFamily: 'MiSans',
       useMaterial3: true,
       brightness: b,
       // 所有 Scaffold 透明：背景统一由 MaterialApp.builder 里的

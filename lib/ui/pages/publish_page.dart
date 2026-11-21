@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../phosphor_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -269,7 +271,7 @@ class _PublishPageState extends State<PublishPage> {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.link,
+                          Icon(PhosphorIconsRegular.link,
                               size: 17, color: theme.colorScheme.primary),
                           const SizedBox(width: 6),
                           Text('vless 模板',
@@ -357,7 +359,7 @@ class _PublishPageState extends State<PublishPage> {
                       // 页面上只回显「会写到哪个文件」，避免用户以为还能改。
                       Row(
                         children: [
-                          Icon(Icons.description_outlined,
+                          Icon(PhosphorIconsRegular.fileText,
                               size: 14, color: theme.hintColor),
                           const SizedBox(width: 5),
                           Expanded(
@@ -389,8 +391,8 @@ class _PublishPageState extends State<PublishPage> {
                                 setState(() => _advanced = !_advanced),
                             icon: Icon(
                               _advanced
-                                  ? Icons.expand_less
-                                  : Icons.expand_more,
+                                  ? PhosphorIconsRegular.caretUp
+                                  : PhosphorIconsRegular.caretDown,
                               size: 18,
                             ),
                             label: const Text('高级选项'),
@@ -419,7 +421,7 @@ class _PublishPageState extends State<PublishPage> {
                                 child:
                                     CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : const Icon(Icons.upload, size: 17),
+                            : const Icon(PhosphorIconsRegular.uploadSimple, size: 17),
                         label: Text(_busy ? '推送中…' : '推送 GitHub'),
                       ),
                       if (_error != null) ...[

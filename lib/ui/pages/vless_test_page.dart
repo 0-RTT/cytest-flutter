@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../phosphor_icons.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -281,7 +283,7 @@ class _VlessTestPageState extends State<VlessTestPage> {
               onPressed: running || _invalid || selectedCount == 0
                   ? null
                   : () => _push(state.linkResults),
-              icon: const Icon(Icons.send_outlined, size: 18),
+              icon: const Icon(PhosphorIconsRegular.paperPlaneRight, size: 18),
               label: Text('推送 ($selectedCount)'),
             ),
           ),
@@ -304,7 +306,7 @@ class _VlessTestPageState extends State<VlessTestPage> {
         children: [
           Row(
             children: [
-              Icon(Icons.science_outlined,
+              Icon(PhosphorIconsRegular.flask,
                     size: 17, color: theme.colorScheme.primary),
                 const SizedBox(width: 6),
                 Text('VLESS 测试', style: theme.textTheme.titleSmall),
@@ -330,8 +332,8 @@ class _VlessTestPageState extends State<VlessTestPage> {
                   onPressed: running || _invalid ? null : _run,
                   icon: Icon(
                     state.linkResults.isEmpty
-                        ? Icons.play_arrow
-                        : Icons.refresh,
+                        ? PhosphorIconsRegular.play
+                        : PhosphorIconsRegular.arrowClockwise,
                     size: 18,
                   ),
                   label: Text(
