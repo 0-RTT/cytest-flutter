@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
-import 'ios.dart';
 import 'pages/fetch_page.dart';
 import 'pages/history_page.dart';
 import 'pages/remote_page.dart';
@@ -11,7 +10,15 @@ import 'pages/settings_page.dart';
 import 'pages/test_page.dart';
 import 'widgets/glass.dart';
 
-/// 主框架：首页 + 设置 两个 Tab（iOS 底部 Tab Bar）。
+/// 底部两 Tab：首页 / 设置。
+///
+/// 首页内容与之前完全一致：主流程 3 步 + 工具 2 项，文案与跳转不改。
+///
+/// 排布换了思路：不再「三张小卡并排 + Spacer 硬撑」，而是两组**整宽玻璃卡**，
+/// 每行 = 图标 + 标题 / 说明 + 箭头，主流程行额外带序号。
+/// - 行式排布没有横向挤压，360dp 窄屏也不必压缩副标题；
+/// - 内容整体在可用高度里垂直居中，屏幕再高也不会「上挤下空」；
+/// - 与设置页同一套分组语言，两个 Tab 的视觉是连续的。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -24,9 +31,10 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    // 根路由不走 GlassRoute，这里自己铺一层同样的渐变底：
+    // 底部导航栏也落在这一层之上，导航栏的磨砂才有东西可透。
     return GlassBackground(
       child: Scaffold(
-        backgroundColor: Colors.transparent,
         body: IndexedStack(
           index: _index,
           children: const [
@@ -34,6 +42,7 @@ class _HomeShellState extends State<HomeShell> {
             SettingsPage(),
           ],
         ),
+        // 底部导航也是一块玻璃：磨砂 + 顶部高光线，页面内容可透上来。
         bottomNavigationBar: GlassBar(
           child: NavigationBar(
             selectedIndex: _index,
@@ -57,324 +66,306 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
-/// 首页：iOS Large Title + Bento 便当盒 + 分组列表（Inset Grouped）。
 class _HomeTab extends StatelessWidget {
   const _HomeTab();
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final rows = state.rows;
-    final usable = state.usableCount;
-
-    // 最低延迟取「可用行」里的最小值（设计稿这块写的是最低，不是平均）。
-    var minLatency = 0;
-    for (final r in rows) {
-      if ((r['Reason'] ?? '').isNotEmpty) continue;
-      final v = int.tryParse(r['Latency (ms)'] ?? '') ?? 0;
-      if (v > 0 && (minLatency == 0 || v < minLatency)) minLatency = v;
-    }
-    final fastest = state.fastestSpeed;
-    final running = state.running;
-    final total = state.progressTotal;
-    final pct = total > 0 ? (state.progressCur / total).clamp(0.0, 1.0) : 0.0;
+    final theme = Theme.of(context);
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      appBar: GlassAppBar(
+        title: 'cytest',
+        automaticallyImplyLeading: false,
+        actions: [
+          IconButton(
+            onPressed: () => context.read<AppState>().boot(),
+            tooltip: '刷新状态',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.refresh, size: 20),
+          ),
+          const SizedBox(width: 6),
+        ],
+      ),
       body: SafeArea(
         top: false,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-          children: [
-            // iOS Large Title + 右侧圆形按钮
-            Padding(
-              padding: const EdgeInsets.only(top: 6, bottom: 14),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text('cytest', style: Ios.largeTitle(context)),
-                  const Spacer(),
-                  IosCircleButton(
-                    icon: Icons.refresh,
-                    color: Ios.ink(context),
-                    tooltip: '刷新状态',
-                    onPressed: () => context.read<AppState>().boot(),
-                  ),
-                ],
-              ),
-            ),
-
-            // ---- Bento 便当盒：左大卡 + 右双卡（等高） ----
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // 左：可用节点
-                  Expanded(
-                    child: IosBento(
-                      onTap: () => _push(context, const ResultPage()),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // 内容少（5 行）但屏幕高度差异大：
+            // - 高屏：整块内容垂直居中，上下留白均等，不再"上挤下空"；
+            // - 矮屏 / 横屏：内容超过可用高度时自动变成可滚动，不会溢出。
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: (constraints.maxHeight - 24).clamp(0, 9999),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 4),
+                    _label(theme, '主流程'),
+                    const SizedBox(height: 8),
+                    GlassCard(
+                      padding: EdgeInsets.zero,
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            children: [
-                              Text('可用节点',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: Ios.secondary(context),
-                                  )),
-                              const Spacer(),
-                              IosPill(
-                                running ? '测试中' : (usable > 0 ? '就绪' : '待测'),
-                                dot: true,
-                                color: running ? Ios.ink(context) : Ios.secondary(context),
-                              ),
-                            ],
+                          _StepRow(
+                            step: 1,
+                            icon: Icons.cloud_download_outlined,
+                            title: '获取数据',
+                            subtitle: 'Censys 拉候选',
+                            onTap: () => _push(context, const FetchPage()),
                           ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.baseline,
-                              textBaseline: TextBaseline.alphabetic,
-                              children: [
-                                Text('$usable',
-                                    style: Ios.metric(context, size: 40)),
-                                const SizedBox(width: 4),
-                                Text('条', style: Ios.rowSub(context)),
-                              ],
-                            ),
+                          _divider(theme),
+                          _StepRow(
+                            step: 2,
+                            icon: Icons.science_outlined,
+                            title: '本地测试',
+                            subtitle: '延迟 / 速度',
+                            onTap: () => _push(context, const TestPage()),
                           ),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  rows.isEmpty ? '还没有结果' : '共 ${rows.length} 条候选',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Ios.caption(context),
-                                ),
-                              ),
-                              SizedBox(
-                                height: 16,
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    for (final h in const [8.0, 12.0, 10.0, 14.0, 16.0])
-                                      Container(
-                                        width: 3,
-                                        height: h,
-                                        margin: const EdgeInsets.only(left: 3),
-                                        decoration: BoxDecoration(
-                                          color: IosChart.line(context)
-                                              .withValues(alpha: 0.25 + h / 50),
-                                          borderRadius: BorderRadius.circular(2),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ],
+                          _divider(theme),
+                          _StepRow(
+                            step: 3,
+                            icon: Icons.bar_chart_outlined,
+                            title: '结果',
+                            subtitle: state.rows.isEmpty
+                                ? '暂无数据'
+                                : '${state.usableCount} 条可用',
+                            onTap: () => _push(context, const ResultPage()),
                           ),
                         ],
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  // 右：最低延迟 / 峰值速率（平分高度，与左卡底边对齐）
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(
-                          child: IosBento(
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text('最低延迟',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: Ios.secondary(context),
-                                        )),
-                                    const Spacer(),
-                                    _iconChip(Icons.bolt, context),
-                                  ],
-                                ),
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                                  textBaseline: TextBaseline.alphabetic,
-                                  children: [
-                                    Text(minLatency > 0 ? '$minLatency' : '—',
-                                        style: Ios.metric(context)),
-                                    const SizedBox(width: 3),
-                                    Text('ms', style: Ios.caption(context)),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        Expanded(
-                          child: IosBento(
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text('峰值速率',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                          color: Ios.secondary(context),
-                                        )),
-                                    const Spacer(),
-                                    _iconChip(Icons.download_rounded, context),
-                                  ],
-                                ),
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                                  textBaseline: TextBaseline.alphabetic,
-                                  children: [
-                                    Text(
-                                        fastest > 0
-                                            ? fastest.toStringAsFixed(0)
-                                            : '—',
-                                        style: Ios.metric(context)),
-                                    const SizedBox(width: 3),
-                                    Text('MiB/s', style: Ios.caption(context)),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // ---- 主操作 ----
-            IosPrimaryButton(
-              label: running ? '测试进行中…' : '开始本地测试',
-              icon: running ? null : Icons.play_arrow_rounded,
-              busy: running,
-              onPressed:
-                  running ? null : () => _push(context, const TestPage()),
-            ),
-
-            // 进度（运行时才有）
-            if (running) ...[
-              const SizedBox(height: 10),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: Ios.card(context),
-                  borderRadius: BorderRadius.circular(Ios.buttonRadius),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            state.progressStage.isEmpty
-                                ? '准备中…'
-                                : state.progressStage,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Ios.rowSub(context)
-                                .copyWith(color: Ios.label(context)),
-                          ),
-                        ),
-                        Text('${(pct * 100).round()}%',
-                            style: Ios.caption(context)),
-                      ],
-                    ),
+                    const SizedBox(height: 20),
+                    _label(theme, '工具'),
                     const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        value: total > 0 ? pct : null,
-                        minHeight: 4,
-                        backgroundColor: Ios.fill(context),
+                    GlassCard(
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        children: [
+                          _ToolRow(
+                            icon: Icons.history,
+                            title: '记录',
+                            subtitle: '历史与存档',
+                            onTap: () => _push(context, const HistoryPage()),
+                          ),
+                          _divider(theme),
+                          _ToolRow(
+                            icon: Icons.dns_outlined,
+                            title: '远程执行',
+                            subtitle: '服务器跑三阶段',
+                            onTap: () => _push(context, const RemotePage()),
+                          ),
+                        ],
                       ),
                     ),
+                    const SizedBox(height: 4),
                   ],
                 ),
               ),
-            ],
-
-            const SizedBox(height: 22),
-            const IosSectionTitle('主流程', trailing: '三阶段流水线'),
-            IosGroup(children: [
-              IosRow(
-                icon: Icons.cloud_download_outlined,
-                title: '获取数据',
-                subtitle: 'Censys 拉候选',
-                onTap: () => _push(context, const FetchPage()),
-              ),
-              IosRow(
-                icon: Icons.science_outlined,
-                title: '本地测试',
-                subtitle: '延迟 / 速度',
-                onTap: () => _push(context, const TestPage()),
-              ),
-              IosRow(
-                icon: Icons.bar_chart_rounded,
-                title: '结果',
-                subtitle: rows.isEmpty ? '暂无数据' : '$usable 条可用',
-                onTap: () => _push(context, const ResultPage()),
-              ),
-            ]),
-
-            const SizedBox(height: 20),
-            const IosSectionTitle('工具'),
-            IosGroup(children: [
-              IosRow(
-                icon: Icons.history_rounded,
-                title: '记录',
-                subtitle: '历史与存档',
-                onTap: () => _push(context, const HistoryPage()),
-              ),
-              IosRow(
-                icon: Icons.dns_outlined,
-                title: '远程执行',
-                subtitle: '服务器跑三阶段',
-                onTap: () => _push(context, const RemotePage()),
-              ),
-            ]),
-          ],
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _iconChip(IconData icon, BuildContext context) => Container(
-        width: 24,
-        height: 24,
-        decoration: BoxDecoration(
-          color: Ios.fill(context),
-          borderRadius: BorderRadius.circular(7),
+  /// 行间分割线：从图标右侧起画，不切断左侧图标列。
+  Widget _divider(ThemeData theme) => Divider(
+        height: 0.5,
+        thickness: 0.5,
+        indent: 64,
+        endIndent: 14,
+        color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
+      );
+
+  Widget _label(ThemeData theme, String text) => Padding(
+        padding: const EdgeInsets.only(left: 4),
+        child: Text(
+          text,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            letterSpacing: 1.2,
+          ),
         ),
-        child: Icon(icon, size: 14, color: IosChart.line(context)),
       );
 
   void _push(BuildContext context, Widget page) {
     Navigator.of(context).push(GlassRoute(builder: (_) => page));
+  }
+}
+
+/// 图标方块：主色微光底 + 主色图标，是每一行左侧的视觉锚点。
+class _IconTile extends StatelessWidget {
+  const _IconTile({required this.icon});
+
+  final IconData icon;
+
+  /// 尺寸写死 40：主流程行与工具行同高，视觉才对得齐。
+  static const double size = 40;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primary.withValues(alpha: 0.13),
+        borderRadius: BorderRadius.circular(size * 0.3),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.10),
+          width: 0.5,
+        ),
+      ),
+      child: Icon(icon, size: size * 0.48, color: theme.colorScheme.primary),
+    );
+  }
+}
+
+/// 主流程行：序号徽标 + 图标 + 标题 / 说明 + 箭头。
+class _StepRow extends StatelessWidget {
+  const _StepRow({
+    required this.step,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final int step;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
+        child: Row(
+          children: [
+            _IconTile(icon: icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      // 序号用小程序徽标，和标题同一行：一眼看出步骤顺序，
+                      // 又不像「大数字」那样抢走标题的份量。
+                      Container(
+                        width: 16,
+                        height: 16,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: theme.colorScheme.primary,
+                        ),
+                        child: Text(
+                          '$step',
+                          style: TextStyle(
+                            fontSize: 10,
+                            height: 1,
+                            fontWeight: FontWeight.w600,
+                            color: theme.colorScheme.onPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 7),
+                      Flexible(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right,
+                size: 20, color: theme.colorScheme.outline),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 工具行：与主流程行同构，只是没有序号。
+class _ToolRow extends StatelessWidget {
+  const _ToolRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
+        child: Row(
+          children: [
+            _IconTile(icon: icon),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right,
+                size: 20, color: theme.colorScheme.outline),
+          ],
+        ),
+      ),
+    );
   }
 }

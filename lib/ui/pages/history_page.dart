@@ -8,7 +8,6 @@ import '../../data/history.dart';
 import '../../data/link_test.dart';
 import '../../data/link_test_store.dart';
 import '../../state/app_state.dart';
-import '../ios.dart';
 import '../widgets/glass.dart';
 import 'result_page.dart';
 import 'test_page.dart';
@@ -347,7 +346,7 @@ class _HistoryPageState extends State<HistoryPage> {
         ),
       );
 
-  /// 分组：小标题在卡片外，行在卡片内（iOS Inset Grouped 的同一套语言）。
+  /// 分组卡片：标题 + 条数 + （非选择态时的）单项删除入口。
   Widget _section({
     required ThemeData theme,
     required String title,
@@ -356,35 +355,31 @@ class _HistoryPageState extends State<HistoryPage> {
     required String emptyText,
     required List<Widget> rows,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        IosSectionTitle(title, trailing: '$count 条'),
-        GlassCard(
-          shadow: false,
-          padding: EdgeInsets.zero,
-          child: isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Text(emptyText, style: Ios.rowSub(context)),
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (var i = 0; i < rows.length; i++) ...[
-                      if (i > 0)
-                        Divider(
-                          height: 0.5,
-                          thickness: 0.5,
-                          indent: 14,
-                          color: Ios.separator(context),
-                        ),
-                      rows[i],
-                    ],
-                  ],
-                ),
-        ),
-      ],
+    return GlassCard(
+      shadow: false,
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+            child: Row(
+              children: [
+                Text(title, style: theme.textTheme.titleSmall),
+                const Spacer(),
+                Text('$count 条', style: theme.textTheme.labelSmall),
+              ],
+            ),
+          ),
+          if (isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+              child: Text(emptyText, style: const TextStyle(fontSize: 12.5)),
+            )
+          else
+            for (final row in rows) row,
+        ],
+      ),
     );
   }
 
@@ -507,20 +502,13 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  /// 行标题用短时间：右侧要放速率、导出、删除三个元素，带年份必被压成省略号。
-  static String _shortAt(String at) =>
-      at.length >= 16 ? at.substring(5) : at;
-
   Widget _runTile(ThemeData theme, RecordInfo r) {
     final pick = _Pick(_Kind.run, r.id);
     return ListTile(
       dense: true,
       leading: _leading(pick),
       onTap: () => _selecting ? _togglePick(pick) : _openRun(r),
-      title: Text(_shortAt(r.at),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13)),
+      title: Text(r.at, style: const TextStyle(fontSize: 13)),
       subtitle: Text(
         '${r.usable} / ${r.total} 可用',
         style: const TextStyle(fontSize: 11.5),
@@ -556,10 +544,7 @@ class _HistoryPageState extends State<HistoryPage> {
       dense: true,
       leading: _leading(pick),
       onTap: () => _selecting ? _togglePick(pick) : _openRemote(r),
-      title: Text(_shortAt(r.at),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13)),
+      title: Text(r.at, style: const TextStyle(fontSize: 13)),
       subtitle: Text(
         '服务器 · ${r.usable} / ${r.total} 可用',
         style: const TextStyle(fontSize: 11.5),
@@ -667,10 +652,7 @@ class _HistoryPageState extends State<HistoryPage> {
       dense: true,
       leading: _leading(pick),
       onTap: () => _selecting ? _togglePick(pick) : _openLinkRun(run),
-      title: Text(_shortAt(_fmtTime(run.createdAt)),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13)),
+      title: Text(_fmtTime(run.createdAt), style: const TextStyle(fontSize: 13)),
       subtitle: Text(
         '${_modeLabel(run.mode)} · ${run.okCount}/${run.results.length} 可用',
         style: const TextStyle(fontSize: 11.5),
