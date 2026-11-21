@@ -8,6 +8,7 @@ import '../../data/history.dart';
 import '../../data/link_test.dart';
 import '../../data/link_test_store.dart';
 import '../../state/app_state.dart';
+import '../ios.dart';
 import '../widgets/glass.dart';
 import 'result_page.dart';
 import 'test_page.dart';
@@ -346,7 +347,7 @@ class _HistoryPageState extends State<HistoryPage> {
         ),
       );
 
-  /// 分组卡片：标题 + 条数 + （非选择态时的）单项删除入口。
+  /// 分组：小标题在卡片外，行在卡片内（iOS Inset Grouped 的同一套语言）。
   Widget _section({
     required ThemeData theme,
     required String title,
@@ -355,31 +356,35 @@ class _HistoryPageState extends State<HistoryPage> {
     required String emptyText,
     required List<Widget> rows,
   }) {
-    return GlassCard(
-      shadow: false,
-      padding: EdgeInsets.zero,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-            child: Row(
-              children: [
-                Text(title, style: theme.textTheme.titleSmall),
-                const Spacer(),
-                Text('$count 条', style: theme.textTheme.labelSmall),
-              ],
-            ),
-          ),
-          if (isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
-              child: Text(emptyText, style: const TextStyle(fontSize: 12.5)),
-            )
-          else
-            for (final row in rows) row,
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        IosSectionTitle(title, trailing: '$count 条'),
+        GlassCard(
+          shadow: false,
+          padding: EdgeInsets.zero,
+          child: isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Text(emptyText, style: Ios.rowSub(context)),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var i = 0; i < rows.length; i++) ...[
+                      if (i > 0)
+                        Divider(
+                          height: 0.5,
+                          thickness: 0.5,
+                          indent: 14,
+                          color: Ios.separator(context),
+                        ),
+                      rows[i],
+                    ],
+                  ],
+                ),
+        ),
+      ],
     );
   }
 

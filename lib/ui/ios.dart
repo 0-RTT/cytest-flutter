@@ -6,21 +6,23 @@ import 'package:flutter/material.dart';
 /// - 浅色：页面 `#F2F2F7`、卡片 `#FFFFFF`、分割线 `#E5E5EA`、主标签 `#000000`、
 ///   次级文字 `#8E8E93`、三级 `#C7C7CC`
 /// - 深色：页面 `#000000`、卡片 `#1C1C1E`、浮起层 `#2C2C2E`、分割线 `#38383A`
-/// - 强调色：靛蓝 `#6366F1`（主操作，取代原来偏「运营商营业厅」的翠绿）、
-///   亮蓝 `#0A84FF`（信息/链接）、橙 `#FF9500`（进行中）、红 `#FF3B30`（危险）
+/// - 强调：**墨黑**。整屏只有灰阶 + 一个主按钮，彩色只留给「危险」。
+///   彩色图标徽章会让列表看起来像应用商店首页；单色反而更耐看，也更像系统原生。
 /// - 圆角：分组卡 22、便当卡 20、按钮 16、输入框 12
 /// - 阴影：`0 1px 2px rgba(0,0,0,0.03)` —— 几乎看不见，靠留白分层
 class Ios {
   Ios._();
 
   // ---- 颜色 ----
-  /// 主色：靛蓝。比绿色更中性，配浅灰底与白卡不会显得「廉价促销」。
-  static const Color accent = Color(0xFF6366F1);
+  /// 主色（墨黑）：浅色 `#111114`，深色反相为浅灰 —— 保证按钮对比度始终够。
+  static Color ink(BuildContext c) =>
+      _light(c) ? const Color(0xFF111114) : const Color(0xFFEDEDF0);
 
-  /// 次级强调：亮蓝，用于信息型图标（下载、链接、DNS）。
-  static const Color blue = Color(0xFF0A84FF);
-  static const Color orange = Color(0xFFFF9500);
-  static const Color indigo = Color(0xFF5856D6);
+  /// 墨黑上的文字色。
+  static Color onInk(BuildContext c) =>
+      _light(c) ? const Color(0xFFFFFFFF) : const Color(0xFF111114);
+
+  /// 唯一的彩色：危险操作（删除、错误）。
   static const Color red = Color(0xFFFF3B30);
 
   static bool _light(BuildContext c) =>
@@ -106,6 +108,7 @@ class Ios {
 
   static TextStyle caption(BuildContext c) =>
       TextStyle(fontSize: 11, color: secondary(c));
+
 }
 
 /// 分组卡（iOS Inset Grouped）：白底、22 圆角、行间 0.5px 分割线。
@@ -194,12 +197,12 @@ class IosRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final tint = iconColor ?? Ios.blue;
+    // 默认不再上色：灰底 + 墨黑图标，色块只留给调用方显式指定。
+    final tint = iconColor;
     return InkWell(
       onTap: onTap,
       splashColor: Colors.transparent,
-      highlightColor: tint.withValues(alpha: 0.06),
+      highlightColor: Ios.label(context).withValues(alpha: 0.05),
       child: Padding(
         padding: EdgeInsets.fromLTRB(14, dense ? 10 : 12, 12, dense ? 10 : 12),
         child: Row(
@@ -210,10 +213,14 @@ class IosRow extends StatelessWidget {
                     width: 36,
                     height: 36,
                     decoration: BoxDecoration(
-                      color: tint,
+                      color: tint ?? Ios.fill(context),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(icon, size: 19, color: Colors.white),
+                    child: Icon(icon,
+                        size: 19,
+                        color: tint == null
+                            ? Ios.label(context)
+                            : Ios.onInk(context)),
                   ),
               const SizedBox(width: 12),
             ],
@@ -297,7 +304,7 @@ class IosPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tint = color ?? Ios.accent;
+    final tint = color ?? Ios.secondary(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -315,13 +322,18 @@ class IosPill extends StatelessWidget {
             ),
             const SizedBox(width: 5),
           ],
-          Text(
-            text,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: tint,
-              letterSpacing: -0.1,
+          // 药丸可能被塞进很窄的列里：允许收缩并省略，不要撑破父级。
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: tint,
+                letterSpacing: -0.1,
+              ),
             ),
           ),
         ],
@@ -349,7 +361,8 @@ class IosPrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tint = color ?? Ios.accent;
+    final tint = color ?? Ios.ink(context);
+    final fg = Ios.onInk(context);
     return SizedBox(
       height: 48,
       child: FilledButton(
@@ -357,8 +370,8 @@ class IosPrimaryButton extends StatelessWidget {
         style: FilledButton.styleFrom(
           backgroundColor: tint,
           disabledBackgroundColor: tint.withValues(alpha: 0.35),
-          foregroundColor: Colors.white,
-          disabledForegroundColor: Colors.white70,
+          foregroundColor: fg,
+          disabledForegroundColor: fg.withValues(alpha: 0.7),
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(Ios.buttonRadius),
@@ -368,13 +381,10 @@ class IosPrimaryButton extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (busy)
-              const SizedBox(
+              SizedBox(
                 width: 16,
                 height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(Colors.white),
-                ),
+                child: CircularProgressIndicator(strokeWidth: 2, color: fg),
               )
             else if (icon != null)
               Icon(icon, size: 18),
@@ -426,4 +436,218 @@ class IosCircleButton extends StatelessWidget {
     );
     return tooltip == null ? btn : Tooltip(message: tooltip!, child: btn);
   }
+}
+
+/// 数据色：去饱和的深青（参考稿里的曲线色）。
+///
+/// 只用于**图表**（曲线、环形、柱），不用于按钮 —— 主操作保持墨黑，
+/// 这样页面只有一个「深色重点」，不会因为图表配色显得花。
+class IosChart {
+  IosChart._();
+
+  static Color line(BuildContext c) => Theme.of(c).brightness == Brightness.light
+      ? const Color(0xFF2E5B4F)
+      : const Color(0xFF8FC7B4);
+
+  static Color fill(BuildContext c) => Theme.of(c).brightness == Brightness.light
+      ? const Color(0xFFCFE3DA)
+      : const Color(0xFF24443C);
+
+  static Color track(BuildContext c) => Theme.of(c).brightness == Brightness.light
+      ? const Color(0xFFE3EDE8)
+      : const Color(0xFF2C2C2E);
+}
+
+/// 迷你折线图（CATR 平滑 + 底部渐隐填充）。
+///
+/// 只有一条线、没有坐标轴：它的作用是「一眼看出波动形状」，
+/// 精确数值由旁边的文字负责。
+class IosSparkline extends StatelessWidget {
+  const IosSparkline({
+    super.key,
+    required this.values,
+    this.height = 72,
+  });
+
+  final List<double> values;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    if (values.length < 2) {
+      return SizedBox(
+        height: height,
+        child: Center(
+          child: Text('数据不足', style: Ios.caption(context)),
+        ),
+      );
+    }
+    return SizedBox(
+      height: height,
+      width: double.infinity,
+      child: CustomPaint(
+        painter: _SparkPainter(
+          values: values,
+          line: IosChart.line(context),
+          fill: IosChart.fill(context),
+        ),
+      ),
+    );
+  }
+}
+
+class _SparkPainter extends CustomPainter {
+  _SparkPainter({required this.values, required this.line, required this.fill});
+
+  final List<double> values;
+  final Color line;
+  final Color fill;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final maxV = values.reduce((a, b) => a > b ? a : b);
+    final minV = values.reduce((a, b) => a < b ? a : b);
+    final span = (maxV - minV).abs() < 0.001 ? 1.0 : (maxV - minV);
+
+    final pts = <Offset>[];
+    for (var i = 0; i < values.length; i++) {
+      final x = size.width * i / (values.length - 1);
+      final norm = (values[i] - minV) / span;
+      final y = size.height - 6 - norm * (size.height - 18);
+      pts.add(Offset(x, y));
+    }
+
+    // 平滑曲线：相邻点用控制点连线（简化的 Catmull-Rom）
+    final path = Path()..moveTo(pts.first.dx, pts.first.dy);
+    for (var i = 0; i < pts.length - 1; i++) {
+      final p0 = pts[i];
+      final p1 = pts[i + 1];
+      final midX = (p0.dx + p1.dx) / 2;
+      path.cubicTo(midX, p0.dy, midX, p1.dy, p1.dx, p1.dy);
+    }
+
+    // 填充：曲线下方渐隐
+    final fillPath = Path.from(path)
+      ..lineTo(pts.last.dx, size.height)
+      ..lineTo(pts.first.dx, size.height)
+      ..close();
+    canvas.drawPath(
+      fillPath,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [fill.withValues(alpha: 0.85), fill.withValues(alpha: 0.05)],
+        ).createShader(Offset.zero & size),
+    );
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round
+        ..color = line,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SparkPainter old) =>
+      old.values != values || old.line != line;
+}
+
+/// 环形进度（可用/总数）。
+class IosRing extends StatelessWidget {
+  const IosRing({
+    super.key,
+    required this.value,
+    this.size = 84,
+    this.stroke = 11,
+    this.label,
+    this.sub,
+  });
+
+  /// 0~1。
+  final double value;
+  final double size;
+  final double stroke;
+  final String? label;
+  final String? sub;
+
+  @override
+  Widget build(BuildContext context) {
+    final v = value.clamp(0.0, 1.0);
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          CustomPaint(
+            size: Size.square(size),
+            painter: _RingPainter(
+              value: v,
+              stroke: stroke,
+              track: IosChart.track(context),
+              arc: IosChart.line(context),
+            ),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label ?? '${(v * 100).round()}%',
+                  style: Ios.metric(context, size: 19)),
+              if (sub != null) Text(sub!, style: Ios.caption(context)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RingPainter extends CustomPainter {
+  _RingPainter({
+    required this.value,
+    required this.stroke,
+    required this.track,
+    required this.arc,
+  });
+
+  final double value;
+  final double stroke;
+  final Color track;
+  final Color arc;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final center = rect.center;
+    final radius = (size.width - stroke) / 2;
+
+    canvas.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..color = track,
+    );
+    if (value <= 0) return;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -1.5708, // 12 点方向起
+      6.2832 * value,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = stroke
+        ..strokeCap = StrokeCap.round
+        ..color = arc,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_RingPainter old) =>
+      old.value != value || old.arc != arc || old.stroke != stroke;
 }

@@ -8,14 +8,28 @@ import 'ui/widgets/glass.dart';
 class CytestApp extends StatelessWidget {
   const CytestApp({super.key});
 
-  /// 主色：靛蓝（只用在行动点与选中态）。
-  static const _seed = Ios.accent;
+  /// 主色：墨黑（只用在行动点与选中态）。
+  static const _seed = Color(0xFF111114);
 
   ThemeData _theme(Brightness b) {
-    // 直接用设计稿色值，不走 fromSeed 的色调推导（推导出的 primary 偏暗偏灰）。
-    final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: b)
-        .copyWith(primary: Ios.accent, secondary: Ios.blue);
     final light = b == Brightness.light;
+    // 单色方案：primary 用墨黑（深色模式反相为浅灰），secondary 同色，
+    // 不留任何色相 —— 彩色只由「危险」按钮承担。
+    final ink = light ? const Color(0xFF111114) : const Color(0xFFEDEDF0);
+    final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: b)
+        .copyWith(
+          primary: ink,
+          onPrimary: light ? Colors.white : const Color(0xFF111114),
+          secondary: ink,
+          onSecondary: light ? Colors.white : const Color(0xFF111114),
+          // 由 seed 推导出的 surface/onSurface 会带一点蓝紫倾向，
+          // 单色方案里必须钉成纯灰阶，否则标题看起来「发蓝」。
+          onSurface: ink,
+          onSurfaceVariant: const Color(0xFF8E8E93),
+          surface: light ? const Color(0xFFFFFFFF) : const Color(0xFF1C1C1E),
+          outlineVariant:
+              light ? const Color(0xFFE5E5EA) : const Color(0xFF38383A),
+        );
     return ThemeData(
       colorScheme: scheme,
       useMaterial3: true,
@@ -112,7 +126,7 @@ class CytestApp extends StatelessWidget {
                 ? FontWeight.w600
                 : FontWeight.w500,
             color: states.contains(WidgetState.selected)
-                ? Ios.accent
+                ? (light ? const Color(0xFF111114) : const Color(0xFFEDEDF0))
                 : const Color(0xFF8E8E93),
           ),
         ),
