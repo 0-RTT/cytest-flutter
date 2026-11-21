@@ -41,3 +41,7 @@ _*.json
 
 # golden 失败时自动生成的对比图，不入库
 test/failures/
+
+# 本地预览工具：依赖 Windows 中文字体，CI 上必然缺字体，不进库
+test/goldens/
+test/history_preview_test.dart
