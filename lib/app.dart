@@ -11,7 +11,10 @@ class CytestApp extends StatelessWidget {
   /// 主色：墨黑（只用在行动点与选中态）。
   static const _seed = Color(0xFF111114);
 
-  ThemeData _theme(Brightness b) {
+  /// 公开给测试/预览使用：与线上同一套主题，避免预览图与真机不一致。
+  static ThemeData buildTheme(Brightness b) => _theme(b);
+
+  static ThemeData _theme(Brightness b) {
     final light = b == Brightness.light;
     // 单色方案：primary 用墨黑（深色模式反相为浅灰），secondary 同色，
     // 不留任何色相 —— 彩色只由「危险」按钮承担。
