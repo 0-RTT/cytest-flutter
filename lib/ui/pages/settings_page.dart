@@ -788,19 +788,38 @@ class _SettingsPageState extends State<SettingsPage> {
                   last: true,
                 ),
               ]),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
+              // 状态行取代原来的「保存」按钮：自动保存已经覆盖全部字段，
+              // 用户需要的只是「到底存没存」的确认，而不是一个要点的按钮。
               Center(
-                child: Text(
-                  '改动会自动保存到本机（停止输入约 0.6 秒后），下次启动自动恢复',
-                  style: theme.textTheme.labelSmall,
-                  textAlign: TextAlign.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _statusText.isEmpty
+                          ? '改动会自动保存到本机（停止输入约 0.6 秒）'
+                          : _statusText,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: _statusIsError
+                            ? theme.colorScheme.error
+                            : theme.colorScheme.onSurfaceVariant,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    // 写盘失败时给一个明确的重试入口：按钮去掉之后，
+                    // 用户不能只看到红字却没有下一步动作。
+                    if (_statusIsError)
+                      TextButton(
+                        onPressed: () => unawaited(_save(quiet: false)),
+                        child: const Text('重试'),
+                      ),
+                  ],
                 ),
               ),
             ],
           ),
         ),
       ),
-      bottomNavigationBar: _saveBar(theme),
     );
   }
 
@@ -847,9 +866,14 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (!mounted) return;
-    // 关掉弹层就是一次「编辑结束」：立刻保存，不等 600ms 去抖。
-    // 用户点「完成」往往紧接着切 Tab / 退到后台，这里顺手提交最稳。
-    _flushPending();
+    // 关掉弹层就是一次「编辑结束」：立刻保存并**等它落盘**，再回填归一化结果。
+    //
+    // 为什么回填必须放在这里（而不是每次自动保存都做）：自动保存时用户可能
+    // 还在别处继续输入，改写输入框会把光标挤走；弹层关掉时该字段已经失焦，
+    // 此时把 `https://github.com/o/r.git` 收成 `o/r` 才是安全的。
+    await _save(quiet: true);
+    if (!mounted) return;
+    _backfillNormalized(_readForm());
     setState(() {});
   }
 
@@ -992,41 +1016,6 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
-
-  /// 底部操作条：左边是保存状态（失败时红字），右边是「立刻保存」。
-  ///
-  /// 保留按钮是必要的：自动保存是兜底，用户按下去的那一刻要能立刻确认结果。
-  Widget _saveBar(ThemeData theme) => GlassBar(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _statusText,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: _statusIsError
-                        ? theme.colorScheme.error
-                        : theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 148,
-                height: 46,
-                child: FilledButton.icon(
-                  onPressed: () => unawaited(_save(quiet: false)),
-                  icon: const Icon(Icons.check_rounded, size: 18),
-                  label: const Text('保存'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
 
   List<String> _lines(String text) =>
       text.split('\n').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();

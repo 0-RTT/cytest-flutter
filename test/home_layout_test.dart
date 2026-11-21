@@ -27,9 +27,9 @@ void main() {
     expect(find.text('获取数据'), findsOneWidget);
     expect(find.text('本地测试'), findsOneWidget);
 
-    // 步骤徽章（01/02/03）
+    // 01/02/03 徽章已按设计要求移除，不该再出现
     for (final badge in ['01', '02', '03']) {
-      expect(find.text(badge), findsOneWidget, reason: '徽章 $badge');
+      expect(find.text(badge), findsNothing, reason: '徽章 $badge 应已移除');
     }
 
     // 工具在窄屏要能滚出来（ListView 懒构建）

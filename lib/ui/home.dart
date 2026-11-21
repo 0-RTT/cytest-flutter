@@ -180,7 +180,6 @@ class _HomeTab extends StatelessWidget {
                 Expanded(
                   child: _stepCard(
                     context,
-                    badge: '01',
                     icon: Icons.cloud_download_outlined,
                     title: '获取数据',
                     subtitle: 'Censys 拉候选',
@@ -191,7 +190,6 @@ class _HomeTab extends StatelessWidget {
                 Expanded(
                   child: _stepCard(
                     context,
-                    badge: '02',
                     icon: Icons.graphic_eq_rounded,
                     title: '本地测试',
                     subtitle: '延迟 / 速度',
@@ -214,13 +212,7 @@ class _HomeTab extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Row(
-                          children: [
-                            _badge(context, '03'),
-                            const SizedBox(width: 8),
-                            Text('结果', style: _titleStyle(context)),
-                          ],
-                        ),
+                        Text('结果', style: _titleStyle(context)),
                         const SizedBox(height: 3),
                         Text(
                           rows.isEmpty
@@ -404,7 +396,6 @@ class _HomeTab extends StatelessWidget {
   /// 主流程前两张：徽章 + 图标 + 标题 + 说明。
   Widget _stepCard(
     BuildContext context, {
-    required String badge,
     required IconData icon,
     required String title,
     required String subtitle,
@@ -421,7 +412,7 @@ class _HomeTab extends StatelessWidget {
         children: [
           Row(
             children: [
-              _badge(context, badge),
+              Icon(icon, size: 24, color: tint),
               const Spacer(),
               if (running)
                 Container(
@@ -432,8 +423,7 @@ class _HomeTab extends StatelessWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 12),
-          Icon(icon, size: 24, color: tint),
+          const SizedBox(height: 14),
           const SizedBox(height: 10),
           Text(title, style: _titleStyle(context)),
           const SizedBox(height: 3),

@@ -37,7 +37,14 @@ Future<void> _closeSheet(WidgetTester tester) async {
 }
 
 Future<void> _tapSave(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(FilledButton, '保存'));
+  // 「保存」按钮已移除：失败态下界面会露出「重试」，点它 = 原来的手动保存；
+  // 无失败态时等 600ms 去抖，等价于「输入完成后自动保存」。
+  final retry = find.widgetWithText(TextButton, '重试');
+  if (retry.evaluate().isNotEmpty) {
+    await tester.tap(retry.first);
+  } else {
+    await tester.pump(const Duration(milliseconds: 700));
+  }
   await tester.pumpAndSettle();
 }
 

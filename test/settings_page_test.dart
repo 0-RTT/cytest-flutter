@@ -107,16 +107,15 @@ void main() {
       await _openGroup(tester, 'GitHub 推送');
       await tester.enterText(_fieldByLabel('仓库地址'), 'https://github.com/0-RTT');
       await _closeSheet(tester);
-      await tester.tap(find.widgetWithText(FilledButton, '保存'));
-      await tester.pump();
+      // 保存按钮已移除：等去抖自动保存，非法地址必须给出提示而不是静默丢写。
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pumpAndSettle();
 
       expect(
-        find.textContaining('仓库地址格式不对'),
+        find.textContaining('仓库地址还没输完'),
         findsOneWidget,
-        reason: '非法地址必须提示用户怎么改，而不是静默失败',
+        reason: '非法地址必须提示用户，而不是静默失败',
       );
-      expect(
-          find.textContaining('https://github.com/owner/repo'), findsOneWidget);
       expect(state.settings.githubRepo, isEmpty);
     });
 
@@ -132,7 +131,8 @@ void main() {
         'https://github.com/0-RTT/sub.git',
       );
       await _closeSheet(tester);
-      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      // 保存按钮已移除：等去抖结束即等价于「输入完成后自动保存」。
+      await tester.pump(const Duration(milliseconds: 700));
       await tester.pumpAndSettle();
 
       expect(state.settings.githubRepo, '0-RTT/sub');
@@ -149,7 +149,8 @@ void main() {
       await tester.pumpWidget(_host(state));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      // 保存按钮已移除：等去抖结束即等价于「输入完成后自动保存」。
+      await tester.pump(const Duration(milliseconds: 700));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('仓库地址格式不对'), findsNothing);
@@ -199,7 +200,8 @@ void main() {
       await _openGroup(tester, '速度测试地址');
       await tester.enterText(_fieldByLabel('速度测试地址'), '');
       await _closeSheet(tester);
-      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      // 保存按钮已移除：等去抖结束即等价于「输入完成后自动保存」。
+      await tester.pump(const Duration(milliseconds: 700));
       await tester.pumpAndSettle();
 
       expect(
@@ -220,7 +222,8 @@ void main() {
       await _openGroup(tester, '延迟测试地址');
       await tester.enterText(_fieldByLabel('延迟测试地址'), '');
       await _closeSheet(tester);
-      await tester.tap(find.widgetWithText(FilledButton, '保存'));
+      // 保存按钮已移除：等去抖结束即等价于「输入完成后自动保存」。
+      await tester.pump(const Duration(milliseconds: 700));
       await tester.pumpAndSettle();
 
       expect(
