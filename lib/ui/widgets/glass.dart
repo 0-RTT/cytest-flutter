@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../ios.dart';
+
 /// 视觉系统：实心卡片 + 柔和渐变底 + 轻量转场。
 ///
 /// **刻意不用 BackdropFilter（毛玻璃）**：它每帧都要 saveLayer + 高斯模糊，
@@ -19,10 +21,10 @@ class Glass {
   Glass._();
 
   /// 卡片圆角：比 M3 默认更大，接近 iOS 连续曲率的观感。
-  static const double cardRadius = 22;
+  static const double cardRadius = Ios.cardRadius;
 
   /// 小组件（统计卡、日志面板）用的小圆角。
-  static const double smallRadius = 16;
+  static const double smallRadius = Ios.bentoRadius;
 
   /// 描边宽度：物理 1px 左右。
   static const double strokeWidth = 0.8;
@@ -31,90 +33,52 @@ class Glass {
 
   /// 卡片填充：实心，浅色近白、深色近黑，保证任何背景上都清晰。
   static Color fill(ThemeData theme) =>
-      _light(theme) ? const Color(0xFFFDFDFB) : const Color(0xFF1D1F1A);
+      _light(theme) ? const Color(0xFFFFFFFF) : const Color(0xFF1C1C1E);
 
   /// 卡片描边：实心细线，比渐变描边少一次 shader 计算。
-  static Color stroke(ThemeData theme) => _light(theme)
-      ? const Color(0xFF000000).withValues(alpha: 0.07)
-      : Colors.white.withValues(alpha: 0.08);
+  /// iOS 卡片没有描边，靠底色与阴影分层。
+  static Color stroke(ThemeData theme) => Colors.transparent;
 
   /// 顶栏 / 底栏：透明，让渐变底直接透出来（不做任何合成）。
-  static Color barFill(ThemeData theme) => Colors.transparent;
+  /// 顶栏用页面底色（iOS 导航栏默认无分割线），底栏用卡片色。
+  static Color barFill(ThemeData theme) =>
+      _light(theme) ? const Color(0xFFF2F2F7) : const Color(0xFF000000);
 
   /// 柔和投影：幅度小、半径大，给「浮起」而不是「贴纸」的感觉。
   static List<BoxShadow> shadow(ThemeData theme) => [
         BoxShadow(
-          color: Colors.black.withValues(alpha: _light(theme) ? 0.05 : 0.28),
-          blurRadius: 18,
-          offset: const Offset(0, 8),
+          color: Colors.black.withValues(alpha: _light(theme) ? 0.04 : 0.5),
+          blurRadius: 2,
+          offset: const Offset(0, 1),
         ),
       ];
 
   /// 细分割线（顶栏底部、底栏顶部的高光线）。
   static BorderSide hairline(ThemeData theme) => BorderSide(
-        color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+        color: _light(theme)
+            ? const Color(0xFFE5E5EA)
+            : const Color(0xFF38383A),
         width: 0.5,
       );
 }
 
-/// 全 App 背景：浅暖灰渐变 + 两团低饱和色晕。
+/// 全 App 背景：iOS 系统分组底色（浅 `#F2F2F7` / 深 `#000000`）。
 ///
-/// 纯静态绘制，Flutter 会缓存成一层纹理，滚动 / 转场时只是复用，不重绘。
+/// 设计稿是纯色背景 + 白卡片，不再用渐变与色晕：iOS 的层次靠「卡片比背景亮」
+/// 建立，多一层渐变反而让卡片边界发灰。
 class GlassBackground extends StatelessWidget {
   const GlassBackground({super.key, required this.child});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    final light = Theme.of(context).brightness == Brightness.light;
-    final primary = Theme.of(context).colorScheme.primary;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: light
-              ? const [Color(0xFFF5F4EF), Color(0xFFEBEAE3)]
-              : const [Color(0xFF161814), Color(0xFF0D0F0C)],
-        ),
-      ),
-      child: Stack(
-        children: [
-          // 顶部偏右：主色色晕。
-          Positioned(
-            top: -140,
-            right: -100,
-            width: 340,
-            height: 340,
-            child: _blob(primary.withValues(alpha: light ? 0.10 : 0.16)),
-          ),
-          // 底部偏左：暖色色晕，避免整页只有青色调显得冷。
-          Positioned(
-            bottom: -120,
-            left: -110,
-            width: 320,
-            height: 320,
-            child: _blob(const Color(0xFFC9A86A)
-                .withValues(alpha: light ? 0.10 : 0.07)),
-          ),
-          child,
-        ],
-      ),
-    );
-  }
-
-  Widget _blob(Color color) => Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [color, color.withValues(alpha: 0)],
-          ),
-        ),
+  Widget build(BuildContext context) => ColoredBox(
+        color: Ios.bg(context),
+        child: child,
       );
 }
 
-/// 实心卡片：细描边 + 柔和投影 + 大圆角。
+/// iOS 分组卡：白底 + 22 圆角 + 几乎看不见的投影（无描边）。
 ///
 /// [onTap] 非空时整卡可点，带按下缩放（[GlassPressable]）与涟漪。
 /// 列表容器卡可以关掉投影（[shadow] = false），避免长列表边缘发灰。
@@ -147,10 +111,6 @@ class GlassCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Glass.fill(theme),
         borderRadius: borderRadius,
-        border: Border.all(
-          color: Glass.stroke(theme),
-          width: Glass.strokeWidth,
-        ),
       ),
       // 透明 Material：ListTile / InkWell 的涟漪画在最近的上层 Material 上。
       // 没有这层，卡片底色会藏在 Ink 与 ListTile 之间，debug 模式直接抛
@@ -261,16 +221,22 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      decoration: BoxDecoration(
-        color: Glass.barFill(theme),
-        border: Border(bottom: Glass.hairline(theme)),
-      ),
+      decoration: BoxDecoration(color: Glass.barFill(theme)),
       child: AppBar(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         scrolledUnderElevation: 0,
-        centerTitle: centerTitle,
+        // iOS 导航栏标题一律居中、17pt w600。
+        centerTitle: true,
+        // 基于 textTheme 派生：直接写字面量 TextStyle 会丢掉字体族，
+        // 中文在没有系统回退的环境（预览、个别机型）会变方块。
+        titleTextStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.3,
+              color: Ios.label(context),
+            ),
         automaticallyImplyLeading: automaticallyImplyLeading,
         leading: leading,
         title: titleWidget ?? Text(title ?? ''),
@@ -280,7 +246,7 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-/// 底栏（保存条 / 推送条 / 底部导航的容器）：透明 + 顶部高光线。
+/// 底栏（保存条 / 推送条 / 底部导航的容器）：卡片色 + 顶部 0.5px 分割线。
 class GlassBar extends StatelessWidget {
   const GlassBar({super.key, required this.child});
 
@@ -290,11 +256,13 @@ class GlassBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      decoration: BoxDecoration(
-        color: Glass.barFill(theme),
-        border: Border(top: Glass.hairline(theme)),
+      color: Ios.card(context),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(top: Glass.hairline(theme)),
+        ),
+        child: child,
       ),
-      child: child,
     );
   }
 }

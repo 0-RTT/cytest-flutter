@@ -502,13 +502,20 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
+  /// 行标题用短时间：右侧要放速率、导出、删除三个元素，带年份必被压成省略号。
+  static String _shortAt(String at) =>
+      at.length >= 16 ? at.substring(5) : at;
+
   Widget _runTile(ThemeData theme, RecordInfo r) {
     final pick = _Pick(_Kind.run, r.id);
     return ListTile(
       dense: true,
       leading: _leading(pick),
       onTap: () => _selecting ? _togglePick(pick) : _openRun(r),
-      title: Text(r.at, style: const TextStyle(fontSize: 13)),
+      title: Text(_shortAt(r.at),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13)),
       subtitle: Text(
         '${r.usable} / ${r.total} 可用',
         style: const TextStyle(fontSize: 11.5),
@@ -544,7 +551,10 @@ class _HistoryPageState extends State<HistoryPage> {
       dense: true,
       leading: _leading(pick),
       onTap: () => _selecting ? _togglePick(pick) : _openRemote(r),
-      title: Text(r.at, style: const TextStyle(fontSize: 13)),
+      title: Text(_shortAt(r.at),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13)),
       subtitle: Text(
         '服务器 · ${r.usable} / ${r.total} 可用',
         style: const TextStyle(fontSize: 11.5),
@@ -652,7 +662,10 @@ class _HistoryPageState extends State<HistoryPage> {
       dense: true,
       leading: _leading(pick),
       onTap: () => _selecting ? _togglePick(pick) : _openLinkRun(run),
-      title: Text(_fmtTime(run.createdAt), style: const TextStyle(fontSize: 13)),
+      title: Text(_shortAt(_fmtTime(run.createdAt)),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13)),
       subtitle: Text(
         '${_modeLabel(run.mode)} · ${run.okCount}/${run.results.length} 可用',
         style: const TextStyle(fontSize: 11.5),
