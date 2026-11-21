@@ -457,7 +457,6 @@ class _HomeTab extends StatelessWidget {
     bool chevron = false,
   }) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
     return _card(
       context,
       onTap: onTap,
