@@ -20,6 +20,13 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - 查 CI/GitHub API：`curl --ssl-no-revoke --socks5-hostname 127.0.0.1:10808`（schannel 吊销检查离线会报 `CRYPT_E_REVOCATION_OFFLINE`）。
 - 现在基线 **v1.0.48**；APK 28.6 MB（27.31 MiB）。
 
+## 2.1 推送前 / 推送后（2026-11-21 定）
+
+- **推送前必须跑 `tool/precheck.sh`**（= CI 同口径 `flutter analyze --no-fatal-infos`，
+  **warning 也是致命的** + `flutter test`）。只跑 `dart analyze lib` 会漏：
+  v1.0.70 就因为 `lib/ui/home.dart` 一个 `unused_local_variable` 直接把 CI 打红。
+- **打完 tag 必须等 CI 跑完并确认 success 才算结束回合**，不能推完就退。
+
 ## 2. 工作方式（用户明确要求）
 
 - **小 bug：直接改 → 只对改动文件 `dart analyze` → 提交 → 推 CI。** 不建团队、不跑本地全量、不冻结 md5、不写变异测试。
