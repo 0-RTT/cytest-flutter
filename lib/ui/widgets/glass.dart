@@ -45,7 +45,20 @@ class Glass {
   /// 柔和投影：幅度小、半径大，给「浮起」而不是「贴纸」的感觉。
   /// 不用投影：白卡贴在冷灰底上，1px 浅灰边框已经能分层，
   /// 再加模糊阴影会显得脏（设计稿就是无阴影的）。
-  static List<BoxShadow> shadow(ThemeData theme) => const [];
+  static List<BoxShadow> shadow(ThemeData theme) => [
+        BoxShadow(
+          color: const Color(0xFF1F2937)
+              .withValues(alpha: _light(theme) ? 0.04 : 0.40),
+          blurRadius: 2,
+          offset: const Offset(0, 1),
+        ),
+        BoxShadow(
+          color: const Color(0xFF1F2937)
+              .withValues(alpha: _light(theme) ? 0.03 : 0.28),
+          blurRadius: 12,
+          offset: const Offset(0, 4),
+        ),
+      ];
 
   /// 细分割线（顶栏底部、底栏顶部的高光线）。
   static BorderSide hairline(ThemeData theme) => BorderSide(
@@ -63,7 +76,7 @@ class GlassBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ColoredBox(
         color: Theme.of(context).brightness == Brightness.light
-            ? const Color(0xFFF6F7F9)
+            ? const Color(0xFFF4F5F7)
             : const Color(0xFF0B0C0E),
         child: child,
       );

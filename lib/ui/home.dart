@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
@@ -14,10 +15,10 @@ import 'widgets/glass.dart';
 class _C {
   static const card = Color(0xFFFFFFFF);
   static const border = Color(0xFFE5E7EB);
-  static const ink = Color(0xFF111827);
+  static const ink = Color(0xFF1F2937);
   static const sub = Color(0xFF6B7280);
-  static const blue = Color(0xFF2563EB);
-  static const blueSoft = Color(0xFFEFF4FF);
+  static const accent = Color(0xFF374151);
+  static const accentSoft = Color(0xFFF3F4F6);
   static const radius = 20.0;
 }
 
@@ -66,7 +67,7 @@ class _BottomNav extends StatelessWidget {
       (Icons.home_rounded, '首页'),
       (Icons.settings_outlined, '设置'),
     ];
-    final active = dark ? const Color(0xFF60A5FA) : _C.blue;
+    final active = dark ? const Color(0xFFCBD5E1) : _C.accent;
     final idle = dark ? const Color(0xFF9CA3AF) : _C.sub;
 
     return Container(
@@ -130,8 +131,18 @@ class _HomeTab extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: SafeArea(
-        top: false,
+      // 首页没有 AppBar，必须自己避让状态栏（top: true）；
+      // 之前写 top: false 是照抄子页面的写法（那些页面有 GlassAppBar 兜着）。
+      // 没有 AppBar 就没有系统 UI 样式来源：显式声明状态栏图标明暗，
+      // 否则深色模式下白色图标贴在浅色背景上会看不见。
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+          statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+        ),
+        child: SafeArea(
+        top: true,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           children: [
@@ -259,6 +270,7 @@ class _HomeTab extends StatelessWidget {
               ],
             ),
           ],
+          ),
         ),
       ),
     );
@@ -301,6 +313,22 @@ class _HomeTab extends StatelessWidget {
           color: dark ? const Color(0xFF2A2A2E) : _C.border,
           width: 1,
         ),
+        // 两层微投影：贴边 1px 定边界，12px 扩散出层次。
+        // 全用纯黑阴影会发脏，这里用带蓝调的炭灰，和冷灰底同色系。
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF1F2937)
+                .withValues(alpha: dark ? 0.40 : 0.04),
+            blurRadius: 2,
+            offset: const Offset(0, 1),
+          ),
+          BoxShadow(
+            color: const Color(0xFF1F2937)
+                .withValues(alpha: dark ? 0.28 : 0.03),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: child,
     );
@@ -317,11 +345,11 @@ class _HomeTab extends StatelessWidget {
 
   Widget _badge(BuildContext context, String text) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final blue = dark ? const Color(0xFF60A5FA) : _C.blue;
+    final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: dark ? blue.withValues(alpha: 0.16) : _C.blueSoft,
+        color: dark ? tint.withValues(alpha: 0.16) : _C.accentSoft,
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
@@ -330,7 +358,7 @@ class _HomeTab extends StatelessWidget {
           fontSize: 10.5,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.2,
-          color: blue,
+          color: tint,
         ),
       ),
     );
@@ -338,15 +366,15 @@ class _HomeTab extends StatelessWidget {
 
   Widget _iconChip(BuildContext context, IconData icon) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final blue = dark ? const Color(0xFF60A5FA) : _C.blue;
+    final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
     return Container(
       width: 34,
       height: 34,
       decoration: BoxDecoration(
-        color: dark ? blue.withValues(alpha: 0.16) : _C.blueSoft,
+        color: dark ? tint.withValues(alpha: 0.16) : _C.accentSoft,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Icon(icon, size: 18, color: blue),
+      child: Icon(icon, size: 18, color: tint),
     );
   }
 
@@ -380,7 +408,7 @@ class _HomeTab extends StatelessWidget {
     bool running = false,
   }) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final blue = dark ? const Color(0xFF60A5FA) : _C.blue;
+    final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
     return _card(
       context,
       onTap: onTap,
@@ -396,12 +424,12 @@ class _HomeTab extends StatelessWidget {
                   width: 6,
                   height: 6,
                   decoration:
-                      BoxDecoration(color: blue, shape: BoxShape.circle),
+                      BoxDecoration(color: tint, shape: BoxShape.circle),
                 ),
             ],
           ),
           const SizedBox(height: 12),
-          Icon(icon, size: 22, color: blue),
+          Icon(icon, size: 22, color: tint),
           const SizedBox(height: 10),
           Text(title, style: _titleStyle(context)),
           const SizedBox(height: 3),
@@ -425,7 +453,7 @@ class _HomeTab extends StatelessWidget {
     bool chevron = false,
   }) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final blue = dark ? const Color(0xFF60A5FA) : _C.blue;
+    final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
     return _card(
       context,
       onTap: onTap,
@@ -443,7 +471,7 @@ class _HomeTab extends StatelessWidget {
                     width: 7,
                     height: 7,
                     decoration:
-                        BoxDecoration(color: blue, shape: BoxShape.circle),
+                        BoxDecoration(color: tint, shape: BoxShape.circle),
                   ),
                 ),
             ],

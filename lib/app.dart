@@ -7,9 +7,9 @@ import 'ui/widgets/glass.dart';
 class CytestApp extends StatelessWidget {
   const CytestApp({super.key});
 
-  /// 岩板蓝：只用于「行动点」（选中态、徽章、状态点、主按钮）。
-  /// 不用绿、不用紫 —— 整屏是冷灰 + 白 + 一点蓝。
-  static const _seed = Color(0xFF2563EB);
+  /// 主色：墨黑。整屏只有灰阶（冷灰底 + 白卡 + 深灰字），
+  /// 不用绿、不用蓝、不用紫 —— 彩色只留给危险操作。
+  static const _seed = Color(0xFF374151);
 
   /// 公开给测试/预览使用：与线上同一套主题。
   static ThemeData buildTheme(Brightness b) => _theme(b);
@@ -18,8 +18,8 @@ class CytestApp extends StatelessWidget {
     final light = b == Brightness.light;
     final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: b)
         .copyWith(
-          primary: light ? const Color(0xFF2563EB) : const Color(0xFF60A5FA),
-          onSurface: light ? const Color(0xFF111827) : const Color(0xFFF3F4F6),
+          primary: light ? const Color(0xFF374151) : const Color(0xFFCBD5E1),
+          onSurface: light ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6),
           onSurfaceVariant: const Color(0xFF6B7280),
           outlineVariant:
               light ? const Color(0xFFE5E7EB) : const Color(0xFF2A2A2E),
