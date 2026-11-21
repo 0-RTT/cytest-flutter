@@ -7,19 +7,23 @@ import 'ui/widgets/glass.dart';
 class CytestApp extends StatelessWidget {
   const CytestApp({super.key});
 
-  /// 深青主色：液态玻璃体系里主色只用在「行动点」（按钮、选中态、状态点），
-  /// 大面积铺色交给渐变底和半透明白，主色才不会脏。
-  static const _seed = Color(0xFF0E7C66);
+  /// 岩板蓝：只用于「行动点」（选中态、徽章、状态点、主按钮）。
+  /// 不用绿、不用紫 —— 整屏是冷灰 + 白 + 一点蓝。
+  static const _seed = Color(0xFF2563EB);
 
   /// 公开给测试/预览使用：与线上同一套主题。
   static ThemeData buildTheme(Brightness b) => _theme(b);
 
   static ThemeData _theme(Brightness b) {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: _seed,
-      brightness: b,
-    );
     final light = b == Brightness.light;
+    final scheme = ColorScheme.fromSeed(seedColor: _seed, brightness: b)
+        .copyWith(
+          primary: light ? const Color(0xFF2563EB) : const Color(0xFF60A5FA),
+          onSurface: light ? const Color(0xFF111827) : const Color(0xFFF3F4F6),
+          onSurfaceVariant: const Color(0xFF6B7280),
+          outlineVariant:
+              light ? const Color(0xFFE5E7EB) : const Color(0xFF2A2A2E),
+        );
     return ThemeData(
       colorScheme: scheme,
       useMaterial3: true,
@@ -30,17 +34,16 @@ class CytestApp extends StatelessWidget {
       // 普通卡片统一走实心材质：近白填充 + 细描边 + 18 圆角。
       // 刻意不用毛玻璃：BackdropFilter 每帧 saveLayer，转场时逐帧重算，
       // 是「点进子页卡顿 + 闪烁」的根源（见 ui/widgets/glass.dart 顶部说明）。
+      // 白卡 + 20 圆角 + 1px 极浅灰边框（不用阴影：靠边框分层更干净）。
       cardTheme: CardThemeData(
         margin: EdgeInsets.zero,
         elevation: 0,
-        color: light ? const Color(0xFFFDFDFB) : const Color(0xFF1D1F1A),
+        color: light ? const Color(0xFFFFFFFF) : const Color(0xFF1C1C1E),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
           side: BorderSide(
-            color: light
-                ? const Color(0xFF000000).withValues(alpha: 0.07)
-                : Colors.white.withValues(alpha: 0.08),
-            width: 0.8,
+            color: light ? const Color(0xFFE5E7EB) : const Color(0xFF2A2A2E),
+            width: 1,
           ),
         ),
       ),
@@ -73,9 +76,7 @@ class CytestApp extends StatelessWidget {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         isDense: true,
-        fillColor: light
-            ? Colors.white.withValues(alpha: 0.55)
-            : Colors.white.withValues(alpha: 0.06),
+        fillColor: light ? const Color(0xFFF3F4F6) : const Color(0xFF2C2C2E),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -93,27 +94,25 @@ class CytestApp extends StatelessWidget {
       ),
       // 弹层 / 对话框：接近不透明的磨砂面，内容可读优先。
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: light
-            ? Colors.white.withValues(alpha: 0.96)
-            : const Color(0xFF1D1F1A).withValues(alpha: 0.96),
+        backgroundColor: light ? Colors.white : const Color(0xFF1C1C1E),
+        surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: light
-            ? Colors.white.withValues(alpha: 0.96)
-            : const Color(0xFF1D1F1A).withValues(alpha: 0.96),
+        backgroundColor: light ? Colors.white : const Color(0xFF1C1C1E),
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
+          borderRadius: BorderRadius.circular(20),
         ),
       ),
       // 底部导航：交给 GlassBar 包外层，这里只定指示器与透明度。
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
-        indicatorColor: scheme.primary.withValues(alpha: 0.16),
-        height: 62,
+        indicatorColor: Colors.transparent,
+        height: 60,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
       ),
       // 按钮：主按钮用实心主色（玻璃世界里唯一的「实体」行动点），

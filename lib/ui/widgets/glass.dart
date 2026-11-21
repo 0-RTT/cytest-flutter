@@ -19,10 +19,10 @@ class Glass {
   Glass._();
 
   /// 卡片圆角：比 M3 默认更大，接近 iOS 连续曲率的观感。
-  static const double cardRadius = 22;
+  static const double cardRadius = 20;
 
   /// 小组件（统计卡、日志面板）用的小圆角。
-  static const double smallRadius = 16;
+  static const double smallRadius = 14;
 
   /// 描边宽度：物理 1px 左右。
   static const double strokeWidth = 0.8;
@@ -31,24 +31,21 @@ class Glass {
 
   /// 卡片填充：实心，浅色近白、深色近黑，保证任何背景上都清晰。
   static Color fill(ThemeData theme) =>
-      _light(theme) ? const Color(0xFFFDFDFB) : const Color(0xFF1D1F1A);
+      _light(theme) ? const Color(0xFFFFFFFF) : const Color(0xFF1C1C1E);
 
   /// 卡片描边：实心细线，比渐变描边少一次 shader 计算。
   static Color stroke(ThemeData theme) => _light(theme)
-      ? const Color(0xFF000000).withValues(alpha: 0.07)
-      : Colors.white.withValues(alpha: 0.08);
+      ? const Color(0xFFE5E7EB)
+      : const Color(0xFF2A2A2E);
 
   /// 顶栏 / 底栏：透明，让渐变底直接透出来（不做任何合成）。
-  static Color barFill(ThemeData theme) => Colors.transparent;
+  static Color barFill(ThemeData theme) =>
+      _light(theme) ? const Color(0xFFF6F7F9) : const Color(0xFF0B0C0E);
 
   /// 柔和投影：幅度小、半径大，给「浮起」而不是「贴纸」的感觉。
-  static List<BoxShadow> shadow(ThemeData theme) => [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: _light(theme) ? 0.05 : 0.28),
-          blurRadius: 18,
-          offset: const Offset(0, 8),
-        ),
-      ];
+  /// 不用投影：白卡贴在冷灰底上，1px 浅灰边框已经能分层，
+  /// 再加模糊阴影会显得脏（设计稿就是无阴影的）。
+  static List<BoxShadow> shadow(ThemeData theme) => const [];
 
   /// 细分割线（顶栏底部、底栏顶部的高光线）。
   static BorderSide hairline(ThemeData theme) => BorderSide(
@@ -57,60 +54,18 @@ class Glass {
       );
 }
 
-/// 全 App 背景：浅暖灰渐变 + 两团低饱和色晕。
-///
-/// 纯静态绘制，Flutter 会缓存成一层纹理，滚动 / 转场时只是复用，不重绘。
+/// 全 App 背景：冷灰 `#F6F7F9`（深色 `#0B0C0E`），纯色不渐变。
 class GlassBackground extends StatelessWidget {
   const GlassBackground({super.key, required this.child});
 
   final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    final light = Theme.of(context).brightness == Brightness.light;
-    final primary = Theme.of(context).colorScheme.primary;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: light
-              ? const [Color(0xFFF5F4EF), Color(0xFFEBEAE3)]
-              : const [Color(0xFF161814), Color(0xFF0D0F0C)],
-        ),
-      ),
-      child: Stack(
-        children: [
-          // 顶部偏右：主色色晕。
-          Positioned(
-            top: -140,
-            right: -100,
-            width: 340,
-            height: 340,
-            child: _blob(primary.withValues(alpha: light ? 0.10 : 0.16)),
-          ),
-          // 底部偏左：暖色色晕，避免整页只有青色调显得冷。
-          Positioned(
-            bottom: -120,
-            left: -110,
-            width: 320,
-            height: 320,
-            child: _blob(const Color(0xFFC9A86A)
-                .withValues(alpha: light ? 0.10 : 0.07)),
-          ),
-          child,
-        ],
-      ),
-    );
-  }
-
-  Widget _blob(Color color) => Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: [color, color.withValues(alpha: 0)],
-          ),
-        ),
+  Widget build(BuildContext context) => ColoredBox(
+        color: Theme.of(context).brightness == Brightness.light
+            ? const Color(0xFFF6F7F9)
+            : const Color(0xFF0B0C0E),
+        child: child,
       );
 }
 

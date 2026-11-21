@@ -10,15 +10,18 @@ import 'pages/settings_page.dart';
 import 'pages/test_page.dart';
 import 'widgets/glass.dart';
 
-/// 底部两 Tab：首页 / 设置。
-///
-/// 首页内容与之前完全一致：主流程 3 步 + 工具 2 项，文案与跳转不改。
-///
-/// 排布换了思路：不再「三张小卡并排 + Spacer 硬撑」，而是两组**整宽玻璃卡**，
-/// 每行 = 图标 + 标题 / 说明 + 箭头，主流程行额外带序号。
-/// - 行式排布没有横向挤压，360dp 窄屏也不必压缩副标题；
-/// - 内容整体在可用高度里垂直居中，屏幕再高也不会「上挤下空」；
-/// - 与设置页同一套分组语言，两个 Tab 的视觉是连续的。
+/// 视觉常量：冷灰底 + 白卡 + 岩板蓝（不用绿、不用紫）。
+class _C {
+  static const card = Color(0xFFFFFFFF);
+  static const border = Color(0xFFE5E7EB);
+  static const ink = Color(0xFF111827);
+  static const sub = Color(0xFF6B7280);
+  static const blue = Color(0xFF2563EB);
+  static const blueSoft = Color(0xFFEFF4FF);
+  static const radius = 20.0;
+}
+
+/// 主框架：首页 + 设置（底部白色导航栏）。
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -31,10 +34,9 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    // 根路由不走 GlassRoute，这里自己铺一层同样的渐变底：
-    // 底部导航栏也落在这一层之上，导航栏的磨砂才有东西可透。
     return GlassBackground(
       child: Scaffold(
+        backgroundColor: Colors.transparent,
         body: IndexedStack(
           index: _index,
           children: const [
@@ -42,22 +44,70 @@ class _HomeShellState extends State<HomeShell> {
             SettingsPage(),
           ],
         ),
-        // 底部导航也是一块玻璃：磨砂 + 顶部高光线，页面内容可透上来。
-        bottomNavigationBar: GlassBar(
-          child: NavigationBar(
-            selectedIndex: _index,
-            onDestinationSelected: (i) => setState(() => _index = i),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.home_outlined),
-                selectedIcon: Icon(Icons.home_rounded),
-                label: '首页',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.tune_outlined),
-                selectedIcon: Icon(Icons.tune_rounded),
-                label: '设置',
-              ),
+        bottomNavigationBar: _BottomNav(
+          index: _index,
+          onChanged: (i) => setState(() => _index = i),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNav extends StatelessWidget {
+  const _BottomNav({required this.index, required this.onChanged});
+
+  final int index;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final items = const [
+      (Icons.home_rounded, '首页'),
+      (Icons.settings_outlined, '设置'),
+    ];
+    final active = dark ? const Color(0xFF60A5FA) : _C.blue;
+    final idle = dark ? const Color(0xFF9CA3AF) : _C.sub;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: dark ? const Color(0xFF111214) : _C.card,
+        border: Border(
+          top: BorderSide(
+            color: dark ? const Color(0xFF2A2A2E) : _C.border,
+            width: 1,
+          ),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 58,
+          child: Row(
+            children: [
+              for (var i = 0; i < items.length; i++)
+                Expanded(
+                  child: InkWell(
+                    onTap: () => onChanged(i),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(items[i].$1,
+                            size: 21, color: i == index ? active : idle),
+                        const SizedBox(height: 3),
+                        Text(
+                          items[i].$2,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight:
+                                i == index ? FontWeight.w600 : FontWeight.w500,
+                            color: i == index ? active : idle,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -66,306 +116,361 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
+/// 首页：标题栏 + 主流程 2+1 + 工具双列。
 class _HomeTab extends StatelessWidget {
   const _HomeTab();
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final theme = Theme.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final usable = state.usableCount;
+    final rows = state.rows;
+    final running = state.running;
 
     return Scaffold(
-      appBar: GlassAppBar(
-        title: 'cytest',
-        automaticallyImplyLeading: false,
-        actions: [
-          IconButton(
-            onPressed: () => context.read<AppState>().boot(),
-            tooltip: '刷新状态',
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.refresh, size: 20),
-          ),
-          const SizedBox(width: 6),
-        ],
-      ),
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         top: false,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            // 内容少（5 行）但屏幕高度差异大：
-            // - 高屏：整块内容垂直居中，上下留白均等，不再"上挤下空"；
-            // - 矮屏 / 横屏：内容超过可用高度时自动变成可滚动，不会溢出。
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: (constraints.maxHeight - 24).clamp(0, 9999),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+          children: [
+            // ---- 标题栏 ----
+            Row(
+              children: [
+                Text(
+                  'cytest',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.6,
+                    color: dark ? const Color(0xFFF3F4F6) : _C.ink,
+                  ),
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 4),
-                    _label(theme, '主流程'),
-                    const SizedBox(height: 8),
-                    GlassCard(
-                      padding: EdgeInsets.zero,
-                      child: Column(
-                        children: [
-                          _StepRow(
-                            step: 1,
-                            icon: Icons.cloud_download_outlined,
-                            title: '获取数据',
-                            subtitle: 'Censys 拉候选',
-                            onTap: () => _push(context, const FetchPage()),
-                          ),
-                          _divider(theme),
-                          _StepRow(
-                            step: 2,
-                            icon: Icons.science_outlined,
-                            title: '本地测试',
-                            subtitle: '延迟 / 速度',
-                            onTap: () => _push(context, const TestPage()),
-                          ),
-                          _divider(theme),
-                          _StepRow(
-                            step: 3,
-                            icon: Icons.bar_chart_outlined,
-                            title: '结果',
-                            subtitle: state.rows.isEmpty
-                                ? '暂无数据'
-                                : '${state.usableCount} 条可用',
-                            onTap: () => _push(context, const ResultPage()),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    _label(theme, '工具'),
-                    const SizedBox(height: 8),
-                    GlassCard(
-                      padding: EdgeInsets.zero,
-                      child: Column(
-                        children: [
-                          _ToolRow(
-                            icon: Icons.history,
-                            title: '记录',
-                            subtitle: '历史与存档',
-                            onTap: () => _push(context, const HistoryPage()),
-                          ),
-                          _divider(theme),
-                          _ToolRow(
-                            icon: Icons.dns_outlined,
-                            title: '远程执行',
-                            subtitle: '服务器跑三阶段',
-                            onTap: () => _push(context, const RemotePage()),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                  ],
+                const Spacer(),
+                IconButton(
+                  onPressed: () => context.read<AppState>().boot(),
+                  tooltip: '刷新状态',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.refresh_rounded,
+                      size: 22,
+                      color: dark ? const Color(0xFF9CA3AF) : _C.sub),
                 ),
+              ],
+            ),
+            const SizedBox(height: 14),
+
+            // ---- 主流程 ----
+            _sectionLabel(context, '主流程', trailing: '三阶段流水线'),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _stepCard(
+                    context,
+                    badge: '01',
+                    icon: Icons.cloud_download_outlined,
+                    title: '获取数据',
+                    subtitle: 'Censys 拉候选',
+                    onTap: () => _push(context, const FetchPage()),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _stepCard(
+                    context,
+                    badge: '02',
+                    icon: Icons.graphic_eq_rounded,
+                    title: '本地测试',
+                    subtitle: '延迟 / 速度',
+                    onTap: () => _push(context, const TestPage()),
+                    running: running,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            // 03 结果：通栏卡片
+            _card(
+              context,
+              onTap: () => _push(context, const ResultPage()),
+              child: Row(
+                children: [
+                  _iconChip(context, Icons.bar_chart_rounded),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            _badge(context, '03'),
+                            const SizedBox(width: 8),
+                            Text('结果', style: _titleStyle(context)),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          rows.isEmpty
+                              ? '暂无数据 · 跑一轮本地测试'
+                              : '$usable 条可用 · 点击查看与导出',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: _subStyle(context),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(Icons.chevron_right_rounded,
+                      size: 20,
+                      color: dark ? const Color(0xFF6B7280) : _C.sub),
+                ],
               ),
-            );
-          },
+            ),
+
+            const SizedBox(height: 20),
+
+            // ---- 工具 ----
+            _sectionLabel(context, '工具'),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _toolCard(
+                    context,
+                    icon: Icons.history_rounded,
+                    title: '记录',
+                    subtitle: '历史与存档',
+                    chevron: true,
+                    onTap: () => _push(context, const HistoryPage()),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _toolCard(
+                    context,
+                    icon: Icons.dns_outlined,
+                    title: '远程执行',
+                    subtitle: '服务器跑三阶段',
+                    dot: true,
+                    onTap: () => _push(context, const RemotePage()),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
 
-  /// 行间分割线：从图标右侧起画，不切断左侧图标列。
-  Widget _divider(ThemeData theme) => Divider(
-        height: 0.5,
-        thickness: 0.5,
-        indent: 64,
-        endIndent: 14,
-        color: theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
-      );
+  // ---------- 组件 ----------
 
-  Widget _label(ThemeData theme, String text) => Padding(
-        padding: const EdgeInsets.only(left: 4),
-        child: Text(
+  Widget _sectionLabel(BuildContext context, String text, {String? trailing}) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Row(
+      children: [
+        Text(
           text,
-          style: theme.textTheme.labelMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            letterSpacing: 1.2,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: dark ? const Color(0xFF9CA3AF) : _C.sub,
           ),
         ),
-      );
+        const Spacer(),
+        if (trailing != null)
+          Text(trailing,
+              style: TextStyle(
+                fontSize: 11.5,
+                color: dark ? const Color(0xFF6B7280) : _C.sub,
+              )),
+      ],
+    );
+  }
+
+  Widget _card(BuildContext context,
+      {required Widget child, VoidCallback? onTap}) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final body = Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: dark ? const Color(0xFF1C1C1E) : _C.card,
+        borderRadius: BorderRadius.circular(_C.radius),
+        border: Border.all(
+          color: dark ? const Color(0xFF2A2A2E) : _C.border,
+          width: 1,
+        ),
+      ),
+      child: child,
+    );
+    if (onTap == null) return body;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(_C.radius),
+        child: body,
+      ),
+    );
+  }
+
+  Widget _badge(BuildContext context, String text) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final blue = dark ? const Color(0xFF60A5FA) : _C.blue;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: dark ? blue.withValues(alpha: 0.16) : _C.blueSoft,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.2,
+          color: blue,
+        ),
+      ),
+    );
+  }
+
+  Widget _iconChip(BuildContext context, IconData icon) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final blue = dark ? const Color(0xFF60A5FA) : _C.blue;
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: dark ? blue.withValues(alpha: 0.16) : _C.blueSoft,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, size: 18, color: blue),
+    );
+  }
+
+  TextStyle _titleStyle(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return TextStyle(
+      fontSize: 15,
+      fontWeight: FontWeight.w600,
+      letterSpacing: -0.2,
+      color: dark ? const Color(0xFFF3F4F6) : _C.ink,
+    );
+  }
+
+  TextStyle _subStyle(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return TextStyle(
+      fontSize: 12,
+      height: 1.3,
+      color: dark ? const Color(0xFF9CA3AF) : _C.sub,
+    );
+  }
+
+  /// 主流程前两张：徽章 + 图标 + 标题 + 说明。
+  Widget _stepCard(
+    BuildContext context, {
+    required String badge,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    bool running = false,
+  }) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final blue = dark ? const Color(0xFF60A5FA) : _C.blue;
+    return _card(
+      context,
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _badge(context, badge),
+              const Spacer(),
+              if (running)
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration:
+                      BoxDecoration(color: blue, shape: BoxShape.circle),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Icon(icon, size: 22, color: blue),
+          const SizedBox(height: 10),
+          Text(title, style: _titleStyle(context)),
+          const SizedBox(height: 3),
+          Text(subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: _subStyle(context)),
+        ],
+      ),
+    );
+  }
+
+  /// 工具卡片：图标 + 标题 + 说明，右上角可带状态点。
+  Widget _toolCard(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    bool dot = false,
+    bool chevron = false,
+  }) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final blue = dark ? const Color(0xFF60A5FA) : _C.blue;
+    return _card(
+      context,
+      onTap: onTap,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _iconChip(context, icon),
+              const Spacer(),
+              if (dot)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration:
+                        BoxDecoration(color: blue, shape: BoxShape.circle),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(title, style: _titleStyle(context)),
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              Expanded(
+                child: Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _subStyle(context)),
+              ),
+              if (chevron)
+                Icon(Icons.chevron_right_rounded,
+                    size: 18,
+                    color: dark ? const Color(0xFF6B7280) : _C.sub),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 
   void _push(BuildContext context, Widget page) {
     Navigator.of(context).push(GlassRoute(builder: (_) => page));
-  }
-}
-
-/// 图标方块：主色微光底 + 主色图标，是每一行左侧的视觉锚点。
-class _IconTile extends StatelessWidget {
-  const _IconTile({required this.icon});
-
-  final IconData icon;
-
-  /// 尺寸写死 40：主流程行与工具行同高，视觉才对得齐。
-  static const double size = 40;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.13),
-        borderRadius: BorderRadius.circular(size * 0.3),
-        border: Border.all(
-          color: theme.colorScheme.primary.withValues(alpha: 0.10),
-          width: 0.5,
-        ),
-      ),
-      child: Icon(icon, size: size * 0.48, color: theme.colorScheme.primary),
-    );
-  }
-}
-
-/// 主流程行：序号徽标 + 图标 + 标题 / 说明 + 箭头。
-class _StepRow extends StatelessWidget {
-  const _StepRow({
-    required this.step,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  final int step;
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
-        child: Row(
-          children: [
-            _IconTile(icon: icon),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      // 序号用小程序徽标，和标题同一行：一眼看出步骤顺序，
-                      // 又不像「大数字」那样抢走标题的份量。
-                      Container(
-                        width: 16,
-                        height: 16,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: theme.colorScheme.primary,
-                        ),
-                        child: Text(
-                          '$step',
-                          style: TextStyle(
-                            fontSize: 10,
-                            height: 1,
-                            fontWeight: FontWeight.w600,
-                            color: theme.colorScheme.onPrimary,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 7),
-                      Flexible(
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleSmall,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 6),
-            Icon(Icons.chevron_right,
-                size: 20, color: theme.colorScheme.outline),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 工具行：与主流程行同构，只是没有序号。
-class _ToolRow extends StatelessWidget {
-  const _ToolRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 11, 8, 11),
-        child: Row(
-          children: [
-            _IconTile(icon: icon),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 6),
-            Icon(Icons.chevron_right,
-                size: 20, color: theme.colorScheme.outline),
-          ],
-        ),
-      ),
-    );
   }
 }
