@@ -155,9 +155,9 @@ class _HomeTab extends StatelessWidget {
                 Text(
                   'cytest',
                   style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.6,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.3,
                     color: dark ? const Color(0xFFF3F4F6) : _C.ink,
                   ),
                 ),
@@ -287,8 +287,8 @@ class _HomeTab extends StatelessWidget {
         Text(
           text,
           style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
+            fontSize: 12.5,
+            fontWeight: FontWeight.w500,
             color: dark ? const Color(0xFF9CA3AF) : _C.sub,
           ),
         ),
@@ -351,16 +351,16 @@ class _HomeTab extends StatelessWidget {
         color: dark ? tint.withValues(alpha: 0.16) : _C.accentSoft,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Icon(icon, size: 20, color: tint),
+      child: Icon(icon, size: 18, color: tint),
     );
   }
 
   TextStyle _titleStyle(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
-      fontSize: 17,
-      fontWeight: FontWeight.w600,
-      letterSpacing: -0.4,
+      fontSize: 14.5,
+      fontWeight: FontWeight.w500,
+      letterSpacing: -0.1,
       color: dark ? const Color(0xFFF3F4F6) : _C.ink,
     );
   }
@@ -368,8 +368,8 @@ class _HomeTab extends StatelessWidget {
   TextStyle _subStyle(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
-      fontSize: 12.5,
-      height: 1.35,
+      fontSize: 12,
+      height: 1.32,
       color: dark ? const Color(0xFF9CA3AF) : _C.sub,
     );
   }
@@ -393,7 +393,7 @@ class _HomeTab extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 24, color: tint),
+              Icon(icon, size: 19, color: tint),
               const Spacer(),
               if (running)
                 Container(
@@ -437,8 +437,8 @@ class _HomeTab extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 22, color: tint),
-              const SizedBox(width: 9),
+              Icon(icon, size: 19, color: tint),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(title,
                     maxLines: 1,
@@ -462,7 +462,7 @@ class _HomeTab extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Padding(
-            padding: const EdgeInsets.only(left: 31),
+            padding: const EdgeInsets.only(left: 27),
             child: Text(subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
