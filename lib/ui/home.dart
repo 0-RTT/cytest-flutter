@@ -339,27 +339,6 @@ class _HomeTab extends StatelessWidget {
     );
   }
 
-  Widget _badge(BuildContext context, String text) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: dark ? tint.withValues(alpha: 0.16) : _C.accentSoft,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 10.5,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.2,
-          color: tint,
-        ),
-      ),
-    );
-  }
-
   Widget _iconChip(BuildContext context, IconData icon) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;

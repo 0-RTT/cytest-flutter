@@ -5,8 +5,10 @@
 set -euo pipefail
 source toolchain.sh >/dev/null 2>&1
 echo "== flutter analyze (warning 致命)"
-flutter analyze --no-fatal-infos | grep -E "^\s+(warning|error)" && {
-  echo "✗ 有 warning/error，停止推送"; exit 1;
-} || echo "✓ 0 warning / 0 error"
+if flutter analyze --no-fatal-infos | grep -E "^(warning|error) [-•]"; then
+  echo "✗ 有 warning/error，停止推送"
+  exit 1
+fi
+echo "✓ 0 warning / 0 error"
 echo "== flutter test"
 flutter test 2>&1 | tail -3
