@@ -18,8 +18,9 @@ class _C {
   static const ink = Color(0xFF1F2937);
   static const sub = Color(0xFF6B7280);
   static const accent = Color(0xFF374151);
+  static const teal = Color(0xFF2F5D50);
   static const accentSoft = Color(0xFFF3F4F6);
-  static const radius = 20.0;
+  static const radius = 26.0;
 }
 
 /// 主框架：首页 + 设置（底部白色导航栏）。
@@ -227,7 +228,14 @@ class _HomeTab extends StatelessWidget {
                               : '$usable 条可用 · 点击查看与导出',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: _subStyle(context),
+                          style: rows.isEmpty
+                              ? _subStyle(context)
+                              : _subStyle(context).copyWith(
+                                  color: dark
+                                      ? const Color(0xFF7FBFA8)
+                                      : _C.teal,
+                                  fontWeight: FontWeight.w500,
+                                ),
                         ),
                       ],
                     ),
@@ -305,28 +313,24 @@ class _HomeTab extends StatelessWidget {
       {required Widget child, VoidCallback? onTap}) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final body = Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: dark ? const Color(0xFF1C1C1E) : _C.card,
         borderRadius: BorderRadius.circular(_C.radius),
-        border: Border.all(
-          color: dark ? const Color(0xFF2A2A2E) : _C.border,
-          width: 1,
-        ),
-        // 两层微投影：贴边 1px 定边界，12px 扩散出层次。
-        // 全用纯黑阴影会发脏，这里用带蓝调的炭灰，和冷灰底同色系。
+        // 参考稿是无边框 + 柔和投影：去掉 1px 描边，靠投影分层，
+        // 卡片边缘更干净（描边会让大圆角看起来有「双重轮廓」）。
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF1F2937)
-                .withValues(alpha: dark ? 0.40 : 0.04),
-            blurRadius: 2,
-            offset: const Offset(0, 1),
+                .withValues(alpha: dark ? 0.45 : 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
           BoxShadow(
             color: const Color(0xFF1F2937)
-                .withValues(alpha: dark ? 0.28 : 0.03),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+                .withValues(alpha: dark ? 0.30 : 0.03),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -374,16 +378,16 @@ class _HomeTab extends StatelessWidget {
         color: dark ? tint.withValues(alpha: 0.16) : _C.accentSoft,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Icon(icon, size: 18, color: tint),
+      child: Icon(icon, size: 20, color: tint),
     );
   }
 
   TextStyle _titleStyle(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
-      fontSize: 15,
+      fontSize: 16,
       fontWeight: FontWeight.w600,
-      letterSpacing: -0.2,
+      letterSpacing: -0.3,
       color: dark ? const Color(0xFFF3F4F6) : _C.ink,
     );
   }
@@ -391,8 +395,8 @@ class _HomeTab extends StatelessWidget {
   TextStyle _subStyle(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
-      fontSize: 12,
-      height: 1.3,
+      fontSize: 12.5,
+      height: 1.35,
       color: dark ? const Color(0xFF9CA3AF) : _C.sub,
     );
   }
@@ -429,7 +433,7 @@ class _HomeTab extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          Icon(icon, size: 22, color: tint),
+          Icon(icon, size: 24, color: tint),
           const SizedBox(height: 10),
           Text(title, style: _titleStyle(context)),
           const SizedBox(height: 3),
@@ -470,8 +474,10 @@ class _HomeTab extends StatelessWidget {
                   child: Container(
                     width: 7,
                     height: 7,
-                    decoration:
-                        BoxDecoration(color: tint, shape: BoxShape.circle),
+                    decoration: BoxDecoration(
+                      color: dark ? const Color(0xFF7FBFA8) : _C.teal,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 ),
             ],

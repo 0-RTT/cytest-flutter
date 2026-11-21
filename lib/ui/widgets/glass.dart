@@ -19,7 +19,7 @@ class Glass {
   Glass._();
 
   /// 卡片圆角：比 M3 默认更大，接近 iOS 连续曲率的观感。
-  static const double cardRadius = 20;
+  static const double cardRadius = 24;
 
   /// 小组件（统计卡、日志面板）用的小圆角。
   static const double smallRadius = 14;
@@ -48,15 +48,15 @@ class Glass {
   static List<BoxShadow> shadow(ThemeData theme) => [
         BoxShadow(
           color: const Color(0xFF1F2937)
-              .withValues(alpha: _light(theme) ? 0.04 : 0.40),
-          blurRadius: 2,
-          offset: const Offset(0, 1),
+              .withValues(alpha: _light(theme) ? 0.05 : 0.45),
+          blurRadius: 10,
+          offset: const Offset(0, 2),
         ),
         BoxShadow(
           color: const Color(0xFF1F2937)
-              .withValues(alpha: _light(theme) ? 0.03 : 0.28),
-          blurRadius: 12,
-          offset: const Offset(0, 4),
+              .withValues(alpha: _light(theme) ? 0.03 : 0.30),
+          blurRadius: 24,
+          offset: const Offset(0, 8),
         ),
       ];
 

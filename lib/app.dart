@@ -40,11 +40,7 @@ class CytestApp extends StatelessWidget {
         elevation: 0,
         color: light ? const Color(0xFFFFFFFF) : const Color(0xFF1C1C1E),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: BorderSide(
-            color: light ? const Color(0xFFE5E7EB) : const Color(0xFF2A2A2E),
-            width: 1,
-          ),
+          borderRadius: BorderRadius.circular(24),
         ),
       ),
       appBarTheme: const AppBarTheme(
