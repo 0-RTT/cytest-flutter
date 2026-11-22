@@ -336,3 +336,63 @@ class GlassRoute<T> extends MaterialPageRoute<T> {
     );
   }
 }
+
+/// 顶栏/页面上的浅色动作按钮。
+///
+/// 为什么不用实心深色：整屏是冷灰 + 白卡，一个深色胶囊在顶栏会显得很「重」，
+/// 而且和正文的字重抢注意力。这里用「白底 + 1px 浅灰边 + 深灰字」，
+/// 需要时靠字重（w600）而不是色块来表达「可点」。
+class GlassActionButton extends StatelessWidget {
+  const GlassActionButton({
+    super.key,
+    required this.label,
+    this.icon,
+    this.onPressed,
+  });
+
+  final String label;
+  final IconData? icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final light = theme.brightness == Brightness.light;
+    final enabled = onPressed != null;
+    final ink = light ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6);
+
+    return SizedBox(
+      height: 32,
+      child: FilledButton(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: light ? Colors.white : const Color(0xFF2C2C2E),
+          foregroundColor: enabled ? ink : ink.withValues(alpha: 0.4),
+          disabledBackgroundColor:
+              light ? Colors.white : const Color(0xFF2C2C2E),
+          side: BorderSide(color: Glass.stroke(theme)),
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          textStyle: theme.textTheme.labelLarge?.copyWith(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 15),
+              const SizedBox(width: 5),
+            ],
+            Text(label),
+          ],
+        ),
+      ),
+    );
+  }
+}

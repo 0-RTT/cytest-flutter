@@ -345,9 +345,12 @@ class _FetchPageState extends State<FetchPage> {
           const SizedBox(width: 4),
           Padding(
             padding: const EdgeInsets.only(right: 10),
-            child: FilledButton(
+            child: GlassActionButton(
+              label: _fetching ? '获取中…' : '获取',
+              icon: _fetching
+                  ? null
+                  : PhosphorIconsRegular.cloudArrowDown,
               onPressed: _fetching ? null : _fetch,
-              child: Text(_fetching ? '获取中…' : '获取'),
             ),
           ),
         ],
