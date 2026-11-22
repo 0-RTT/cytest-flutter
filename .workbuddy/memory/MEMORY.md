@@ -119,6 +119,19 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - golden 预览图：`flutter test --update-goldens` 要 `FontLoader` 加载 `msyh.ttc` + `materialicons-regular.otf`，否则全是方块；**不要提交到 CI**（平台字体差异）。
 - 后台 `curl` 卡住会被转后台并留下 `flutter_tester.exe`，收尾 `taskkill`。
 
+## 8. Windows 桌面（2026-11-22 起）
+
+- 工具链：VS **生成工具 2022**（`C:\BuildTools`，VCTools 工作负载）+ Win SDK + CMake，
+  由 `C:\cytest-toolchainin
+uget.exe` 配合编译。不装完整 VS IDE。
+- **必须把 `C:\cytest-toolchainin` 加进 PATH 再 build**，否则
+  `flutter_inappwebview_windows` 的 CMake 报 `NUGET-NOTFOUND`（exit 9009）。
+- 装 VS 时若父进程环境里同时有 `PATH` 和 `Path`，bootstrapper 会
+  `0x80070057` 直接失败 —— 用 `schtasks /RU SYSTEM` 起安装器可绕过（SYSTEM 环境干净）。
+- 构建：`flutter build windows --release` → `build/windows/x64/runner/Release/cytest.exe`（约 38MB）。
+- 引擎二进制走 **exe 不释放**：程序目录 `bin/` 或 `%APPDATA%\cytestin\`，
+  `Bins._windowsPath` 负责查；Windows 上没有 chmod。
+
 ## 7. 已知遗留
 
 1. 设置「切走就丢」依赖 `AppLifecycleListener(onHide/onPause)`；`SettingsPage` 在 IndexedStack 常驻几乎不 dispose → **必须真机验**（改一项 → 杀进程 → 冷启动看还在不在）。
