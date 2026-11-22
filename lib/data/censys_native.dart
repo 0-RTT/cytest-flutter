@@ -1,19 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 
+import 'censys_exception.dart';
 import 'censys_json.dart' show censysJsonOrNull;
+import 'censys_windows.dart';
 
-/// 原生 WebView 抓取的失败原因，`toString()` 直接可展示给用户。
-class CensysNativeException implements Exception {
-  const CensysNativeException(this.message, {this.details = const {}});
-
-  final String message;
-
-  /// 原生侧回传的诊断信息（proxyMode / sawChallenge / preview）。
-  final Map<Object?, Object?> details;
-
-  @override
-  String toString() => message;
-}
+// 异常类在 censys_exception.dart：两套平台实现都要抛它，放这里会循环依赖。
+export 'censys_exception.dart';
 
 /// 与 `MainActivity` 的 `cytest/censys` channel 对应。
 const MethodChannel _channel = MethodChannel('cytest/censys');
@@ -33,6 +27,20 @@ Future<String> fetchCensysSearch({
   int? proxyPort,
   Duration timeout = const Duration(seconds: 25),
 }) async {
+  // Windows 走进程内 Headless WebView2（没有原生通道）。
+  //
+  // 但 `flutter test` 本身就跑在 Windows 上：测试里必须继续走 MethodChannel，
+  // 否则 mock 的通道永远收不到调用，所有用例都会「静默走真浏览器」。
+  // FLUTTER_TEST 是 flutter_test 注入的环境变量，用它区分「真机」与「测试进程」。
+  final underTest = Platform.environment['FLUTTER_TEST'] == 'true';
+  if (Platform.isWindows && !underTest) {
+    return fetchCensysSearchWindows(
+      query: query,
+      proxyPort: proxyPort,
+      timeout: timeout,
+    );
+  }
+
   final String? text;
   try {
     text = await _channel.invokeMethod<String>('fetchSearch', <String, Object?>{
