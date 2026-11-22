@@ -439,8 +439,8 @@ class _DataPickerSheetState extends State<_DataPickerSheet> {
       }
       final targets = extractTargets(content).length;
       final label = targets > 0
-          ? '${info.at} · $targets 个候选'
-          : '${info.at} · ${(content.length / 1024).toStringAsFixed(1)} KB';
+          ? '${info.label} · $targets 个候选'
+          : '${info.label} · ${(content.length / 1024).toStringAsFixed(1)} KB';
       Navigator.of(context).pop(_PickedData(label, content));
     } catch (e) {
       if (!mounted) return;

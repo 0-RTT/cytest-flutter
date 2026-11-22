@@ -367,7 +367,7 @@ class _RecordPickerSheetState extends State<_RecordPickerSheet> {
         return;
       }
       Navigator.of(context)
-          .pop(_PickedRecord(label: info.at, targets: targets));
+          .pop(_PickedRecord(label: info.label, targets: targets));
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingId = null);
@@ -463,8 +463,10 @@ class _RecordPickerSheetState extends State<_RecordPickerSheet> {
 
   Widget _tile(ThemeData theme, RecordInfo info) {
     final loading = _loadingId == info.id;
+    // 存档要用 label（`AS13335 · 11-20 09:10`）：只显示时间的话，
+    // 同一时段抓的几份数据在列表里长得一模一样，根本分不出是哪一份。
     final subtitle = info.isArchive
-        ? '${info.at} · ${info.total} 条'
+        ? '${info.label} · ${info.total} 条'
         : '${info.at} · ${info.total} 条 · ${info.usable} 可用';
     return ListTile(
       dense: true,
