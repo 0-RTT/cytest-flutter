@@ -427,23 +427,34 @@ jobs:
             --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
           ls -lh build/windows/x64/runner/Release/
 
+      # 打包不用 PowerShell（连踩三个坑，见 tool/zipdir.go 头部注释）：
+      # 1) runner 把 PS 脚本按 UTF-8 落盘、Windows PowerShell 5.1 按 ANSI 解码，
+      #    中文注释变乱码后引号配对错位，报「The string is missing the terminator」；
+      # 2) Compress-Archive 写的条目用 `\` 做分隔符，unzip 直接解不开；
+      # 3) 用 Get-ChildItem 管道喂进去会把一级目录摊平，bin\ / data\ 全跑到根目录。
       - name: Package Windows build
         if: github.event_name != 'pull_request'
-        shell: powershell
+        shell: bash
         run: |
+          set -euo pipefail
           # 引擎必须在包里：缺了 xray/pipeline，程序能开但一跑就提示「引擎不可用」。
           # 这类「包看起来正常、功能全废」的问题只能靠打包前断言拦住。
-          foreach ($n in @('xray.exe','pipeline.exe')) {
-            $p = "build\windows\x64\runner\Release\bin\$n"
-            if (-not (Test-Path $p)) {
-              Write-Error "缺少引擎 $n（tool/fetch_win_engine.sh 没有跑成功？）"
-              exit 1
-            }
-          }
-          $src = 'build\windows\x64\runner\Release'
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path "$src\*" -DestinationPath 'dist\cytest-windows-x64.zip' -Force
-          Get-Item 'dist\cytest-windows-x64.zip' | Select-Object Name, Length
+          for n in xray.exe pipeline.exe; do
+            p="build/windows/x64/runner/Release/bin/$n"
+            [[ -f "$p" ]] || { echo "missing engine: $p (fetch_win_engine.sh failed?)"; exit 1; }
+            ls -l "$p"
+          done
+          # cytest.exe.WebView2 是本机跑过程序后 WebView2 落的用户数据（40MB+），不打包
+          GO111MODULE=off go run tool/zipdir.go \
+            build/windows/x64/runner/Release dist/cytest-windows-x64.zip cytest.exe.WebView2
+          # 结构断言：这个包是「解压就能跑」，目录层级错了程序起来就是白屏/报缺资源。
+          # 只断言 build 目录查不出这类问题，必须断言 zip 里的真实路径。
+          unzip -l dist/cytest-windows-x64.zip > zip.txt
+          for f in 'bin/xray.exe' 'bin/pipeline.exe' 'cytest.exe' \
+                   'data/flutter_assets/AssetManifest.bin'; do
+            grep -qiF "$f" zip.txt || { echo "zip 结构不对，缺少 $f"; cat zip.txt; exit 1; }
+          done
+          ls -lh dist/cytest-windows-x64.zip
 
       - name: Record versions (windows)
         if: github.event_name != 'pull_request'

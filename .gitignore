@@ -48,3 +48,7 @@ test/history_preview_test.dart
 
 # Windows 引擎二进制（用 tool/fetch_win_engine.sh 现取，不进仓库）
 windows/bin/
+
+# CI/本地打包产物
+dist/
+zip.txt
