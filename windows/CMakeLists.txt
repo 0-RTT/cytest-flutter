@@ -55,6 +55,17 @@ add_subdirectory("runner")
 
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
+#
+# MSVC 14.52（VS 2026 / windows-latest runner）把 <experimental/coroutine>
+# 从「警告」升级成了硬错误 C2338（STL1011）。flutter_inappwebview_windows 会
+# 间接包含这个头（实际只用 C++20 的 <coroutine>，这个头根本没用上），
+# 于是 CI 直接红在编译阶段 —— 而本地 VS 2022（14.4x）只打个警告，看不出问题。
+# 官方给的缓解宏就是这个（错误信息里点名了）。放在 include 之前：
+#   add_compile_definitions 写的是**目录属性**，后续 add_subdirectory 进来的
+#   插件子项目才会继承；写成 target_compile_definitions 只能作用于本 target，
+#   插件那个 vcxproj 拿不到。
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 include(flutter/generated_plugins.cmake)
 
 
