@@ -106,3 +106,13 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# 引擎二进制（xray.exe / pipeline.exe）：放在 windows/bin/ 下，构建时原样拷到
+# 可执行文件旁边的 bin/ 目录 —— Bins._windowsPath 就是在那里找。
+# 二进制不进 git（体积大），用 tool/fetch_win_engine.sh 现取。
+set(CYTEST_BIN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/bin")
+if(EXISTS "${CYTEST_BIN_SRC}")
+  install(DIRECTORY "${CYTEST_BIN_SRC}/"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/bin"
+    COMPONENT Runtime)
+endif()
