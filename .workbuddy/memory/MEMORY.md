@@ -127,6 +127,20 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - 构建：`flutter build windows --release` → `build\windows\x64\runner\Release\cytest.exe`（约 38MB）。
 - 引擎二进制不释放到临时目录：程序目录 `bin\` 或 `%APPDATA%\cytest\bin\`，由 `Bins._windowsPath` 查找；Windows 上没有 chmod。
 
+### 性能排查：三个「无限重绘」（2026-11-22 实测）
+
+- 现象：Windows 上跑测试时 cytest.exe CPU 高、动画卡；pipeline 很低。
+- **教训：先确认测量路径真的包含目标页面**。前几轮探针没把测试页推到前台
+  （日志面板 `LogPanel.build=0`），优化的是根本不参与渲染的代码。
+  用 `CYTEST_PROBE_OPEN=test` 打开页面后才量到真实数字。
+- 三个真凶（都藏在「看起来无害」的控件里）：
+  1. `CircularProgressIndicator()` 不给 value = 60fps 永久重绘；
+  2. 自动滚动写在 `build` 里 → postFrame → jumpTo → 布局 → build 成环；
+  3. 桌面默认 `Scrollbar` 每次程序化 jump 都淡入淡出（关掉：`CytestScrollBehavior`）。
+- 量化：同一场景 250.1s → 97.1s → 55.5s → **9.7s CPU**（帧数 1169 → 45）。
+- 这台机器显卡是虚拟适配器（Ctyun CVGDOD，AdapterRAM=0），软光栅化一帧 30~300ms，
+  所以「多出帧」在这类环境里代价极高；任何常驻动画都要先算一遍帧成本。
+
 ### Windows 引擎二进制（2026-11-22 补全）
 
 - 位置：`windows/bin/`（gitignore）→ 构建时 CMake 拷到产物 `bin/`，
