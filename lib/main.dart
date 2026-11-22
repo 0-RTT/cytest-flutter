@@ -52,8 +52,27 @@ Future<void> _runFetchProbe(String query, AppState state) async {
   }
 
   final useProxyLine = Platform.environment['CYTEST_PROBE_PROXYLINE'] == '1';
+  final runLocal = Platform.environment['CYTEST_PROBE_LOCAL'] == '1';
 
   try {
+    if (runLocal) {
+      // 与界面「本地测试」按钮同一个入口：写 input/config → 起 pipeline.exe → 读 CSV。
+      await trace('local:start');
+      final ok = await state.runLocal(
+        mode: 'latency',
+        input: '104.16.0.1:443\n104.16.0.2:443',
+      );
+      await trace('local:done ok=$ok rows=${state.rows.length}');
+      for (final row in state.rows.take(4)) {
+        await trace('row ${row['IP']}:${row['Port']} '
+            'latency=${row['Latency (ms)']} reason=${row['Reason']}');
+      }
+      for (final line in state.logs.skip(state.logs.length > 12 ? state.logs.length - 12 : 0)) {
+        await trace('log $line');
+      }
+      return;
+    }
+
     if (!useProxyLine) {
       final body = await fetchCensysSearchWindows(
         query: query,
