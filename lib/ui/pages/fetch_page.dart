@@ -14,6 +14,7 @@ import '../../data/censys_json.dart';
 import '../../data/censys_native.dart';
 import '../../data/vless.dart';
 import '../../state/app_state.dart';
+import '../../core/bin.dart';
 import '../widgets/glass.dart';
 import 'test_page.dart';
 
@@ -123,7 +124,19 @@ class _FetchPageState extends State<FetchPage> {
       // 编排：有 Cookie 先走快路径，失败按状态码分流，必要时回退 WebView：
       // - 走代理 + 有线路：逐条出口轮换；
       // - 直连（或没配线路）：只试一次，完全不碰 Xray。
-      final hasLine = _useProxy && state.settings.vlessLinks.isNotEmpty;
+      // 引擎缺失时（典型场景：Windows 上还没放 xray.exe）**提前降级为直连**。
+      // 以前是每轮都去 startProxy → 抛错 → continue，全部线路轮完 body 仍为 null，
+      // 用户只看到「没有拿到数据」，完全不知道是引擎没装。
+      var hasLine = _useProxy && state.settings.vlessLinks.isNotEmpty;
+      if (hasLine) {
+        try {
+          await Bins.path('xray');
+        } on Object catch (e) {
+          hasLine = false;
+          state.pushLog('未找到 xray 引擎（$e），本次改为直连');
+          if (mounted) setState(() => _diag = '引擎未就绪，直连抓取');
+        }
+      }
       final candidates = hasLine ? state.orderedProxyPool : const <ProxyIp>[];
       final attempts = candidates.isEmpty
           ? const <ProxyIp?>[null] // 没有 proxyip：链接原样，只试一次

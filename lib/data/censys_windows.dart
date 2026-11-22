@@ -59,8 +59,12 @@ Future<WebViewEnvironment> _environment(int proxyPort, {String? proxyServer}) as
     settings: WebViewEnvironmentSettings(
       userDataFolder: profile.path,
       additionalBrowserArguments: () {
-        final proxy = proxyServer ??
-            (proxyPort > 0 ? 'http://127.0.0.1:$proxyPort' : null);
+        // 空串要当「没传」：探针里 `CYTEST_PROBE_PROXY=` 会给出空串，
+        // 拼成 `--proxy-server=` 会让 WebView2 直接加载不出任何页面。
+        final raw = proxyServer?.trim();
+        final proxy = (raw != null && raw.isNotEmpty)
+            ? raw
+            : (proxyPort > 0 ? 'http://127.0.0.1:$proxyPort' : null);
         return proxy == null
             ? '--disable-features=msWebOOUI,msPdfOOUI'
             : '--proxy-server=$proxy --disable-features=msWebOOUI,msPdfOOUI';

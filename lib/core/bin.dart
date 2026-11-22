@@ -47,15 +47,18 @@ class Bins {
   /// Windows：直接找 `name.exe`，**不从 assets 释放、也不 chmod**。
   ///
   /// 顺序：程序目录下的 `bin/`（安装包内置，最稳，杀软对 APPDATA 里的自发
-  /// 可执行文件很敏感）→ `%APPDATA%\cytestin\`（用户手动放置）。
+  /// 可执行文件很敏感）→ `%APPDATA%/cytest/bin/`（用户手动放置）。
+  ///
+  /// 路径统一用正斜杠：Dart 在 Windows 上也接受 `/`，而写成 `\b`、`\c` 会被
+  /// 当成转义序列（`\b` 是退格），日志里会变成乱码，排查时极易看错。
   static Future<String> _windowsPath(String name) async {
     final candidates = <String>[];
     final exeDir = File(Platform.resolvedExecutable).parent.path;
-    candidates.add('$exeDir\bin\$name.exe');
+    candidates.add('$exeDir/bin/$name.exe');
 
     final appData = Platform.environment['APPDATA'];
     if (appData != null && appData.isNotEmpty) {
-      candidates.add('$appData\cytest\bin\$name.exe');
+      candidates.add('$appData/cytest/bin/$name.exe');
     }
 
     for (final path in candidates) {
@@ -63,7 +66,7 @@ class Bins {
     }
     throw Exception(
       'Windows 版缺少 $name.exe（应放在程序目录的 bin/ 下，'
-      '或 %APPDATA%\cytest\bin\）',
+      '或 %APPDATA%/cytest/bin/）',
     );
   }
 

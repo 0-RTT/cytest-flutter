@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'app.dart';
+import 'core/bin.dart';
 import 'data/censys_windows.dart';
 import 'state/app_state.dart';
 
@@ -32,6 +33,17 @@ Future<void> _runFetchProbe(String query) async {
 
   Future<void> trace(String stage) async {
     await log.writeAsString('$stage\n', mode: FileMode.append);
+  }
+
+  // 先记录引擎可用性：UI 里「获取不到数据」最常见的原因就是 xray/pipeline
+  // 不存在（Windows 上还没放 exe），这条日志能一眼区分「引擎缺失」与「抓取失败」。
+  for (final name in const ['xray', 'pipeline']) {
+    try {
+      final path = await Bins.path(name);
+      await trace('bin:$name=$path');
+    } on Object catch (e) {
+      await trace('bin:$name MISSING ($e)');
+    }
   }
 
   try {
