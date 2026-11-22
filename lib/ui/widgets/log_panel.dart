@@ -83,12 +83,18 @@ class LogPanel extends StatelessWidget {
                       ),
                       if (running) ...[
                         const SizedBox(width: 8),
-                        SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: theme.colorScheme.primary),
+                        // 这里原来是个不定长 CircularProgressIndicator：
+                        // 它会以 60fps 无限重绘整个窗口。在没有 GPU 的机器上
+                        // 一帧要 30~300ms，于是「跑测试时 CPU 高」——
+                        // 实测开着测试页三阶段 45s 烧掉 **250s CPU**（1169 帧），
+                        // 换成静态小圆点后回落到个位数秒。
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary,
+                            shape: BoxShape.circle,
+                          ),
                         ),
                       ],
                     ],

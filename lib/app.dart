@@ -153,6 +153,10 @@ class CytestApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'cytest',
+      // 关掉桌面端默认的滚动条：它在每次程序化 jumpTo（日志自动跟随）时
+      // 都会播放一次淡入淡出动画，一帧 30ms 的软件光栅化下就是持续掉帧/吃 CPU。
+      // 界面本身就是「无滚动条」的移动端风格，去掉也一致。
+      scrollBehavior: const CytestScrollBehavior(),
       debugShowCheckedModeBanner: false,
       theme: _theme(Brightness.light),
       darkTheme: _theme(Brightness.dark),
@@ -174,4 +178,14 @@ class CytestApp extends StatelessWidget {
       home: const HomeShell(),
     );
   }
+}
+
+/// 无滚动条的滚动行为（见 MaterialApp.scrollBehavior 的注释）。
+class CytestScrollBehavior extends MaterialScrollBehavior {
+  const CytestScrollBehavior();
+
+  @override
+  Widget buildScrollbar(
+          BuildContext context, Widget child, ScrollableDetails details) =>
+      child;
 }

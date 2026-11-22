@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import 'phosphor_icons.dart';
@@ -46,6 +48,22 @@ class _HomeShellState extends State<HomeShell> {
   /// 占用高的主因：120 目标三阶段，UI 进程 12.3s CPU，静默后只有 2.7s。
   /// 惰性创建后，没点过「设置」就不会有这棵子树。
   bool _settingsVisited = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 诊断用：让探针能把「本地测试页」真的推到前台，
+    // 否则压测时日志面板根本没被构建（LogPanel.build=0），
+    // 量到的 CPU 不是用户看到的那个场景。
+    if (Platform.environment['CYTEST_PROBE_OPEN'] == 'test') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).push(
+          MaterialPageRoute<void>(builder: (_) => const TestPage(autoStart: false)),
+        );
+      });
+    }
+  }
 
   void _select(int i) {
     setState(() {

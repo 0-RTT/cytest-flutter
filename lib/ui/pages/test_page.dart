@@ -128,6 +128,8 @@ class _TestPageState extends State<TestPage> {
   }
 
   void _autoScrollLogs() {
+    // 诊断开关：关掉自动滚动，用来判断「滚动 → 布局 → 再滚动」是否成环。
+    if (Platform.environment['CYTEST_PROBE_NOAUTOSCROLL'] == '1') return;
     if (!_stickToBottom || !_logScroll.hasClients) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_logScroll.hasClients) {
@@ -304,7 +306,7 @@ class _PickedRecord {
 ///
 /// 单独成 widget 的意义：`context.watch` 的作用域只到这一层，
 /// 页面骨架与输入卡不再跟着日志刷新。
-class _RunLogCard extends StatelessWidget {
+class _RunLogCard extends StatefulWidget {
   const _RunLogCard({
     required this.scrollController,
     required this.onJumpToLatest,
@@ -318,10 +320,34 @@ class _RunLogCard extends StatelessWidget {
   final VoidCallback onAutoScroll;
 
   @override
+  State<_RunLogCard> createState() => _RunLogCardState();
+}
+
+class _RunLogCardState extends State<_RunLogCard> {
+  int _lastLines = 0;
+
+  /// 自动滚动只在「日志真的变多了」时滚一次。
+  ///
+  /// 之前是在 build 里调（每帧都排一个 postFrameCallback → jumpTo），
+  /// 而 jumpTo 会触发滚动通知与布局，于是「build → 滚 → 布局 → build」
+  /// 形成闭环：实测开着测试页跑三阶段，**495 帧 / 101s CPU**；
+  /// 关掉自动滚动后只有 21 帧 / 5.7s。改成事件驱动后帧数回到个位数量级。
+  void _maybeAutoScroll(int lineCount) {
+    if (lineCount == _lastLines) return;
+    _lastLines = lineCount;
+    final c = widget.scrollController;
+    if (!c.hasClients) return;
+    // 已经在底部就不要重复 jumpTo（差 1px 也算到底）。
+    final target = c.position.maxScrollExtent;
+    if ((c.position.pixels - target).abs() < 1.5) return;
+    widget.onAutoScroll();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final theme = Theme.of(context);
-    onAutoScroll();
+    _maybeAutoScroll(state.logs.length);
 
     final pct = state.progressTotal > 0
         ? (state.progressCur / state.progressTotal).clamp(0.0, 1.0)
@@ -337,9 +363,9 @@ class _RunLogCard extends StatelessWidget {
               title: '日志',
               lines: state.logs,
               running: state.running,
-              scrollController: scrollController,
-              onJumpToLatest: onJumpToLatest,
-              onCopy: onCopy,
+              scrollController: widget.scrollController,
+              onJumpToLatest: widget.onJumpToLatest,
+              onCopy: widget.onCopy,
               // 进度条并入日志卡片：进度与明细是同一件事的两种表达。
               progress: pct,
               progressLabel: state.progressTotal > 0
