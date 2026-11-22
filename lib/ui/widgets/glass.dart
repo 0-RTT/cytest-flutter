@@ -269,23 +269,17 @@ class GlassBar extends StatelessWidget {
   }
 }
 
-/// 轻量的页面转场：淡入 + 3% 的轻微上滑，260ms。
+/// 零动画的页面转场：点完直接显示目标页。
 ///
-/// 与系统默认的 Zoom（整页缩放 + 阴影）相比：
-/// - 不缩放整页，卡片边缘不会抖；
-/// - 不加阴影，省掉一次全屏合成；
-/// - 时长 260ms，点下去更快有反馈（「跟手」）。
-///
-/// 只动**新进入**的那一页（返回时它自己反向淡出），底下的页面保持不动，
-/// 所以看不到两页同时移动的"重影"。
-class GlassPageTransitionsBuilder extends PageTransitionsBuilder {
-  const GlassPageTransitionsBuilder();
-
-  /// 260ms：比 M3 FadeForwards 的 450ms 短，接近 iOS 的手感。
-  static const Duration duration = Duration(milliseconds: 260);
+/// 为什么不保留淡入/上滑：
+/// * 桌面端的页面切换没有「物理惯性」隐喻，动画只会延迟内容出现；
+/// * 无 GPU 的环境（云主机/WARP 软光栅化）一帧 30~250ms，260ms 的转场
+///   实际会表现为「一卡一卡地浮上来」，比直接切更难用。
+class InstantPageTransitionsBuilder extends PageTransitionsBuilder {
+  const InstantPageTransitionsBuilder();
 
   @override
-  Duration get transitionDuration => duration;
+  Duration get transitionDuration => Duration.zero;
 
   @override
   Widget buildTransitions<T>(
@@ -294,23 +288,8 @@ class GlassPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> animation,
     Animation<double> secondaryAnimation,
     Widget child,
-  ) {
-    final curved = CurvedAnimation(
-      parent: animation,
-      curve: Curves.easeOutCubic,
-      reverseCurve: Curves.easeInCubic,
-    );
-    return FadeTransition(
-      opacity: curved,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, 0.03),
-          end: Offset.zero,
-        ).animate(curved),
-        child: child,
-      ),
-    );
-  }
+  ) =>
+      child;
 }
 
 /// 带「自有背景」的路由。

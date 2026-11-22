@@ -57,18 +57,19 @@ class CytestApp extends StatelessWidget {
         thickness: 0.5,
         space: 0.5,
       ),
-      // 转场：自定义轻量淡入（260ms）。系统默认的 Zoom 会整页缩放并加阴影，
-      // 玻璃层每帧被重采样，是「点进子页卡顿 + 闪烁」的主要来源。
-      // 本 App 只发 Android（arm64），所以四个平台统一走同一套转场，
-      // 不引 cupertino 依赖，也就不存在"两套转场代码各养一套"的问题。
+      // 转场：**零时长**，点完立刻是新页面。
+      //
+      // 之前是 260ms 的淡入 + 上滑。在没有 GPU 的机器上一帧要 30~250ms，
+      // 这段动画反而变成「卡着慢慢浮上来」；桌面端的操作用户也不期待页面动画。
+      // 时长设成 0 之后 Flutter 直接切页，不再请求中间帧。
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: {
-          TargetPlatform.android: GlassPageTransitionsBuilder(),
-          TargetPlatform.fuchsia: GlassPageTransitionsBuilder(),
-          TargetPlatform.linux: GlassPageTransitionsBuilder(),
-          TargetPlatform.windows: GlassPageTransitionsBuilder(),
-          TargetPlatform.iOS: GlassPageTransitionsBuilder(),
-          TargetPlatform.macOS: GlassPageTransitionsBuilder(),
+          TargetPlatform.android: InstantPageTransitionsBuilder(),
+          TargetPlatform.fuchsia: InstantPageTransitionsBuilder(),
+          TargetPlatform.linux: InstantPageTransitionsBuilder(),
+          TargetPlatform.windows: InstantPageTransitionsBuilder(),
+          TargetPlatform.iOS: InstantPageTransitionsBuilder(),
+          TargetPlatform.macOS: InstantPageTransitionsBuilder(),
         },
       ),
       // 输入框：不铺灰底（灰块在灰底+白卡的页面里像补丁），

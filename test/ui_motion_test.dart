@@ -46,17 +46,17 @@ void main() {
         reason: '子页面稳定后也不应有 BackdropFilter');
   });
 
-  testWidgets('转场使用 260ms 轻量淡入，而不是默认 Zoom', (tester) async {
+  testWidgets('转场为零时长：点完直接显示，不做动画', (tester) async {
     await pumpApp(tester);
 
     final context = tester.element(find.byType(HomeShell));
     final builders = Theme.of(context).pageTransitionsTheme.builders;
     final android = builders[TargetPlatform.android];
 
-    expect(android, isA<GlassPageTransitionsBuilder>(),
-        reason: 'Android 必须走自定义轻量转场（默认 Zoom 会整页缩放 + 阴影）');
-    expect(android!.transitionDuration, const Duration(milliseconds: 260),
-        reason: '转场时长应为 260ms');
+    expect(android, isA<InstantPageTransitionsBuilder>(),
+        reason: '必须走零动画转场（淡入/缩放都会让桌面端「点完还要等一下」）');
+    expect(android!.transitionDuration, Duration.zero,
+        reason: '转场时长必须为 0：无 GPU 机器上一帧 30~250ms，动画只会更卡');
   });
 
   testWidgets('子页面自带同款渐变底（避免转场透出上一页造成重影）',

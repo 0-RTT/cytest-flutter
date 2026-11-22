@@ -460,6 +460,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
     final list = files;
     final picked = await showModalBottomSheet<KeyFileCandidate>(
+      // 弹层不做滑入/滑出动画：桌面上每次弹都要等 250ms，
+      // 无 GPU 机器上还会抖一帧。
+      sheetAnimationStyle: AnimationStyle.noAnimation,
       context: context,
       showDragHandle: true,
       builder: (ctx) {
@@ -858,6 +861,8 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _openGroup(BuildContext context, _Group group) async {
     await showModalBottomSheet<void>(
       context: context,
+      // 与其它弹层一致：不播滑入动画。
+      sheetAnimationStyle: AnimationStyle.noAnimation,
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,

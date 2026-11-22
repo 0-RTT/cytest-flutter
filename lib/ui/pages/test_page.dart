@@ -90,6 +90,9 @@ class _TestPageState extends State<TestPage> {
 
   Future<void> _pickRecord() async {
     final picked = await showModalBottomSheet<_PickedRecord>(
+      // 弹层不做滑入/滑出动画：桌面上每次弹都要等 250ms，
+      // 无 GPU 机器上还会抖一帧。
+      sheetAnimationStyle: AnimationStyle.noAnimation,
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
