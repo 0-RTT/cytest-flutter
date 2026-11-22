@@ -127,6 +127,19 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - 构建：`flutter build windows --release` → `build\windows\x64\runner\Release\cytest.exe`（约 38MB）。
 - 引擎二进制不释放到临时目录：程序目录 `bin\` 或 `%APPDATA%\cytest\bin\`，由 `Bins._windowsPath` 查找；Windows 上没有 chmod。
 
+### Windows 抓取：Headless WebView2（2026-11-22 实测通过）
+
+- 实现：`lib/data/censys_windows.dart`（`HeadlessInAppWebView` + 环境级 `--proxy-server`）。
+- 实测：本机直连 / 经 `socks5://127.0.0.1:10808` 各跑一次，均拿到 283,570 字节 JSON
+  （`total_hits=1521102`），挑战页在 1~3 轮内自动放行。
+- **每个代理端口一个 userDataFolder**：同一目录不能挂两套 `--proxy-server`。
+- **`evaluateJavascript` 必须自带超时**：WebView2 在重定向/渲染进程切换时可能永不回调，
+  裸 await 会让整轮卡死在轮询里（实测复现）。统一 4s 兜底。
+- `Platform.isWindows` 分派要排除测试进程：`flutter test` 也跑在 Windows 上，
+  否则 mock 的 `cytest/censys` 通道收不到调用，4 个用例全挂（已用 `FLUTTER_TEST` 区分）。
+- 验证手段：`main.dart` 的开发探针 —— 设 `CYTEST_PROBE_QUERY`（可选 `CYTEST_PROBE_PROXY`）
+  启动 exe，结果写到 `%TEMP%\cytest_probe.txt`（GUI 无控制台）。
+
 ## 7. 已知遗留
 
 1. 设置「切走就丢」依赖 `AppLifecycleListener(onHide/onPause)`；`SettingsPage` 在 IndexedStack 常驻几乎不 dispose → **必须真机验**（改一项 → 杀进程 → 冷启动看还在不在）。
