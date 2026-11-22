@@ -128,10 +128,22 @@ class _HomeTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
+    // 只订阅首页真正会变的几个值：
+    // 跑测试时日志每秒几十次变化，`watch<AppState>()` 会让整个首页跟着重建
+    // （实测一次 notify ≈ 80ms，CPU 就是这么吃掉的）。record 是值比较，
+    // 日志变化不影响这里。
+    final (usable, rowCount, running, fetching, remoteRunning) =
+        context.select<AppState, (int, int, bool, bool, bool)>(
+      (s) => (
+        s.usableCount,
+        s.rows.length,
+        s.running,
+        s.fetching,
+        s.remoteRunning,
+      ),
+    );
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final usable = state.usableCount;
-    final rows = state.rows;
+    final rows = context.read<AppState>().rows;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -177,7 +189,7 @@ class _HomeTab extends StatelessWidget {
               title: '获取数据',
               subtitle: 'Censys 拉候选',
               onTap: () => _push(context, const FetchPage()),
-              running: state.fetching,
+              running: fetching,
             ),
             const SizedBox(height: 10),
             _wideCard(
@@ -186,7 +198,7 @@ class _HomeTab extends StatelessWidget {
               title: '本地测试',
               subtitle: '延迟 / 速度',
               onTap: () => _push(context, const TestPage()),
-              running: state.running,
+              running: running,
             ),
             const SizedBox(height: 10),
             _wideCard(
@@ -195,7 +207,7 @@ class _HomeTab extends StatelessWidget {
               title: '远程测试',
               subtitle: '服务器跑三阶段',
               onTap: () => _push(context, const RemotePage()),
-              running: state.remoteRunning,
+              running: remoteRunning,
             ),
 
             const SizedBox(height: 20),

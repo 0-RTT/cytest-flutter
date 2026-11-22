@@ -91,6 +91,11 @@ Future<void> _runFetchProbe(String query, AppState state) async {
           : '104.16.0.1:443\n104.16.0.2:443';
       await trace('local:start targets=${input.split('\n').where((l) => l.trim().isNotEmpty).length}');
       _startFrameStats(log);
+      // 诊断：静默模式丢弃所有 UI 通知，用来判断 CPU 到底花在 UI 刷新还是别处。
+      if (Platform.environment['CYTEST_PROBE_SILENT'] == '1') {
+        state.suppressUiNotifications = true;
+        await trace('silent:on');
+      }
       final sw = Stopwatch()..start();
       final ok = await state.runLocal(mode: 'latency', input: input);
       sw.stop();

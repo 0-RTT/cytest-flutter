@@ -317,7 +317,12 @@ class AppState extends ChangeNotifier {
 
   Timer? _notifyTimer;
 
-  void _notifySoon([Duration delay = const Duration(milliseconds: 100)]) {
+  /// 诊断开关：置真后所有「合并通知」直接丢弃（探针用来区分
+  /// 「UI 刷新太贵」与「别的什么在吃 CPU」）。正常运行时永远为假。
+  bool suppressUiNotifications = false;
+
+  void _notifySoon([Duration delay = const Duration(milliseconds: 200)]) {
+    if (suppressUiNotifications) return;
     if (!_coalesce) {
       notifyListeners();
       return;
@@ -338,7 +343,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 进度变化的通知入口（供测试探针/页面复用）。进度比日志更「值钱」，16Hz。
-  void notifyProgress() => _notifySoon(const Duration(milliseconds: 60));
+  void notifyProgress() => _notifySoon(const Duration(milliseconds: 120));
 
   void clearLogs() {
     logs.clear();
@@ -415,7 +420,9 @@ class AppState extends ChangeNotifier {
           progressCur = cur;
           progressTotal = total;
           progressStage = stage;
-          notifyListeners();
+          // 与日志同一套节流：这里原来每行一次 notifyListeners()，
+          // 是「跑测试时 CPU 高」的第二个来源。
+          _notifySoon(const Duration(milliseconds: 120));
         },
       );
       rows = out.rows;

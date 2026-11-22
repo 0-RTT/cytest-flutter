@@ -149,6 +149,8 @@ class LogPanel extends StatelessWidget {
                       // 底部 12 让最后一行远离卡片圆角，不再像被切掉
                       padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
                       itemCount: lines.length,
+                      // 固定行高：省掉每帧的文本测量，日志上千行时差别明显。
+                      itemExtent: 18,
                       itemBuilder: (_, i) {
                         final line = lines[i];
                         return Text(
