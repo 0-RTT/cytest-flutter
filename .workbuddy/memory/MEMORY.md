@@ -127,6 +127,17 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - 构建：`flutter build windows --release` → `build\windows\x64\runner\Release\cytest.exe`（约 38MB）。
 - 引擎二进制不释放到临时目录：程序目录 `bin\` 或 `%APPDATA%\cytest\bin\`，由 `Bins._windowsPath` 查找；Windows 上没有 chmod。
 
+### Windows 引擎二进制（2026-11-22 补全）
+
+- 位置：`windows/bin/`（gitignore）→ 构建时 CMake 拷到产物 `bin/`，
+  即 `<exe>\bin\xray.exe`、`<exe>\bin\pipeline.exe`（`Bins._windowsPath` 在此查找）。
+- 取法：`bash tool/fetch_win_engine.sh`（xray 从 XTLS 官方 release；pipeline 用 Go 编）。
+- Go 装在 `C:\cytest-toolchain\go\go\bin`（1.27.4）。编译命令：
+  `cd engine && GO111MODULE=off GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+   go build -trimpath -ldflags "-s -w" -o ../windows/bin/pipeline.exe pipeline.go`
+- `engine/pipeline.go` 只用标准库，没有 go.mod，必须 `GO111MODULE=off`。
+- 实测：延迟模式 2/2 出数（190ms/1158ms），速度模式能跑（测试 IP 不是代理 → 0 MiB/s，属正常）。
+
 ### Windows 抓取：Headless WebView2（2026-11-22 实测通过）
 
 - 实现：`lib/data/censys_windows.dart`（`HeadlessInAppWebView` + 环境级 `--proxy-server`）。
