@@ -51,6 +51,14 @@ class AppState extends ChangeNotifier {
 
   final List<String> logs = [];
   bool running = false;
+
+  /// 抓取 / 远程执行是否在跑。
+  ///
+  /// 这两个流程原有的「进行中」标志是页面局部的 `_fetching` / `_running`，
+  /// 用户一退回首页页面就被销毁，标志跟着没了 —— 首页无法显示「还在跑」。
+  /// 提到 AppState 后，页面负责置位/复位，首页只读。
+  bool fetching = false;
+  bool remoteRunning = false;
   int progressCur = 0;
   int progressTotal = 0;
   String progressStage = '';
@@ -582,6 +590,18 @@ class AppState extends ChangeNotifier {
   Future<void> loadRemoteRun(String id) async {
     final text = await History.readCsv(id, remote: true);
     rows = parseCsv(text);
+    notifyListeners();
+  }
+
+  void setFetching(bool v) {
+    if (fetching == v) return;
+    fetching = v;
+    notifyListeners();
+  }
+
+  void setRemoteRunning(bool v) {
+    if (remoteRunning == v) return;
+    remoteRunning = v;
     notifyListeners();
   }
 

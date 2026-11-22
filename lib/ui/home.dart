@@ -21,7 +21,9 @@ class _C {
   static const sub = Color(0xFF6B7280);
   static const accent = Color(0xFF374151);
   static const teal = Color(0xFF2F5D50);
-  static const accentSoft = Color(0xFFF3F4F6);
+
+  /// 运行中指示点（系统绿）。只做「正在跑」的信号，不参与品牌配色。
+  static const live = Color(0xFF34C759);
   static const radius = 26.0;
 }
 
@@ -130,7 +132,6 @@ class _HomeTab extends StatelessWidget {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final usable = state.usableCount;
     final rows = state.rows;
-    final running = state.running;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -167,70 +168,34 @@ class _HomeTab extends StatelessWidget {
             const SizedBox(height: 14),
 
             // ---- 主流程 ----
-            _sectionLabel(context, '主流程', trailing: '三阶段流水线'),
+            _sectionLabel(context, '主流程'),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: _stepCard(
-                    context,
-                    icon: PhosphorIconsRegular.cloudArrowDown,
-                    title: '获取数据',
-                    subtitle: 'Censys 拉候选',
-                    onTap: () => _push(context, const FetchPage()),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _stepCard(
-                    context,
-                    icon: PhosphorIconsRegular.waveform,
-                    title: '本地测试',
-                    subtitle: '延迟 / 速度',
-                    onTap: () => _push(context, const TestPage()),
-                    running: running,
-                  ),
-                ),
-              ],
+            // 三步都是通栏长条：同一套视觉，扫读顺序也更清楚。
+            _wideCard(
+              context,
+              icon: PhosphorIconsRegular.cloudArrowDown,
+              title: '获取数据',
+              subtitle: 'Censys 拉候选',
+              onTap: () => _push(context, const FetchPage()),
+              running: state.fetching,
             ),
             const SizedBox(height: 10),
-            // 03 结果：通栏卡片
-            _card(
+            _wideCard(
               context,
-              onTap: () => _push(context, const ResultPage()),
-              child: Row(
-                children: [
-                  _iconChip(context, PhosphorIconsRegular.chartBar),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('结果', style: _titleStyle(context)),
-                        const SizedBox(height: 3),
-                        Text(
-                          rows.isEmpty
-                              ? '暂无数据 · 跑一轮本地测试'
-                              : '$usable 条可用 · 点击查看与导出',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: rows.isEmpty
-                              ? _subStyle(context)
-                              : _subStyle(context).copyWith(
-                                  color: dark
-                                      ? const Color(0xFF7FBFA8)
-                                      : _C.teal,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Icon(PhosphorIconsRegular.caretRight,
-                      size: 18,
-                      color: dark ? const Color(0xFF6B7280) : _C.sub),
-                ],
-              ),
+              icon: PhosphorIconsRegular.waveform,
+              title: '本地测试',
+              subtitle: '延迟 / 速度',
+              onTap: () => _push(context, const TestPage()),
+              running: state.running,
+            ),
+            const SizedBox(height: 10),
+            _wideCard(
+              context,
+              icon: PhosphorIconsRegular.hardDrives,
+              title: '远程测试',
+              subtitle: '服务器跑三阶段',
+              onTap: () => _push(context, const RemotePage()),
+              running: state.remoteRunning,
             ),
 
             const SizedBox(height: 20),
@@ -238,8 +203,22 @@ class _HomeTab extends StatelessWidget {
             // ---- 工具 ----
             _sectionLabel(context, '工具'),
             const SizedBox(height: 8),
-            Row(
+            // 等高：两张卡内容行数不同（结果有长说明），不拉平会一高一矮。
+            IntrinsicHeight(
+              child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                Expanded(
+                  child: _toolCard(
+                    context,
+                    icon: PhosphorIconsRegular.chartBar,
+                    title: '结果',
+                    subtitle: rows.isEmpty ? '暂无数据' : '$usable 条可用',
+                    highlight: rows.isNotEmpty,
+                    onTap: () => _push(context, const ResultPage()),
+                  ),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: _toolCard(
                     context,
@@ -250,18 +229,8 @@ class _HomeTab extends StatelessWidget {
                     onTap: () => _push(context, const HistoryPage()),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _toolCard(
-                    context,
-                    icon: PhosphorIconsRegular.hardDrives,
-                    title: '远程执行',
-                    subtitle: '服务器跑三阶段',
-                    dot: true,
-                    onTap: () => _push(context, const RemotePage()),
-                  ),
-                ),
               ],
+              ),
             ),
           ],
           ),
@@ -272,7 +241,7 @@ class _HomeTab extends StatelessWidget {
 
   // ---------- 组件 ----------
 
-  Widget _sectionLabel(BuildContext context, String text, {String? trailing}) {
+  Widget _sectionLabel(BuildContext context, String text) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return Row(
       children: [
@@ -284,13 +253,6 @@ class _HomeTab extends StatelessWidget {
             color: dark ? const Color(0xFF9CA3AF) : _C.sub,
           ),
         ),
-        const Spacer(),
-        if (trailing != null)
-          Text(trailing,
-              style: TextStyle(
-                fontSize: 11.5,
-                color: dark ? const Color(0xFF6B7280) : _C.sub,
-              )),
       ],
     );
   }
@@ -333,20 +295,6 @@ class _HomeTab extends StatelessWidget {
     );
   }
 
-  Widget _iconChip(BuildContext context, IconData icon) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
-    return Container(
-      width: 34,
-      height: 34,
-      decoration: BoxDecoration(
-        color: dark ? tint.withValues(alpha: 0.16) : _C.accentSoft,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Icon(icon, size: 18, color: tint),
-    );
-  }
-
   TextStyle _titleStyle(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     return TextStyle(
@@ -366,8 +314,8 @@ class _HomeTab extends StatelessWidget {
     );
   }
 
-  /// 主流程前两张：徽章 + 图标 + 标题 + 说明。
-  Widget _stepCard(
+  /// 通栏卡：图标 + 标题 / 说明 + 箭头（远程测试用）。
+  Widget _wideCard(
     BuildContext context, {
     required IconData icon,
     required String title,
@@ -380,44 +328,50 @@ class _HomeTab extends StatelessWidget {
     return _card(
       context,
       onTap: onTap,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 19, color: tint),
-              const Spacer(),
-              if (running)
-                Container(
-                  width: 6,
-                  height: 6,
-                  decoration:
-                      BoxDecoration(color: tint, shape: BoxShape.circle),
-                ),
-            ],
+          Icon(icon, size: 20, color: tint),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: _titleStyle(context)),
+                const SizedBox(height: 3),
+                Text(subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _subStyle(context)),
+              ],
+            ),
           ),
-          const SizedBox(height: 14),
-          const SizedBox(height: 10),
-          Text(title, style: _titleStyle(context)),
-          const SizedBox(height: 3),
-          Text(subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: _subStyle(context)),
+          if (running)
+            Container(
+              width: 7,
+              height: 7,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: dark ? const Color(0xFF30D158) : _C.live,
+                shape: BoxShape.circle,
+              ),
+            ),
+          Icon(PhosphorIconsRegular.caretRight,
+              size: 16,
+              color: dark ? const Color(0xFF6B7280) : _C.sub),
         ],
       ),
     );
   }
 
-  /// 工具卡片：图标 + 标题 + 说明，右上角可带状态点。
+  /// 工具卡片：图标 + 标题 + 说明。
   Widget _toolCard(
     BuildContext context, {
     required IconData icon,
     required String title,
     required String subtitle,
     required VoidCallback onTap,
-    bool dot = false,
     bool chevron = false,
+    bool highlight = false,
   }) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final tint = dark ? const Color(0xFFCBD5E1) : _C.accent;
@@ -437,16 +391,7 @@ class _HomeTab extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: _titleStyle(context)),
               ),
-              if (dot)
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: dark ? const Color(0xFF7FBFA8) : _C.teal,
-                    shape: BoxShape.circle,
-                  ),
-                )
-              else if (chevron)
+              if (chevron)
                 Icon(PhosphorIconsRegular.caretRight,
                     size: 16,
                     color: dark ? const Color(0xFF6B7280) : _C.sub),
@@ -458,7 +403,12 @@ class _HomeTab extends StatelessWidget {
             child: Text(subtitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: _subStyle(context)),
+                style: highlight
+                    ? _subStyle(context).copyWith(
+                        color: dark ? const Color(0xFF7FBFA8) : _C.teal,
+                        fontWeight: FontWeight.w500,
+                      )
+                    : _subStyle(context)),
           ),
         ],
       ),

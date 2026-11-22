@@ -100,107 +100,114 @@ class _FetchPageState extends State<FetchPage> {
       return;
     }
 
-    setState(() {
-      _fetching = true;
-      _error = null;
-      _payload = null;
-      _hits = 0;
-      _bytes = 0;
-      _costMs = 0;
-      _previewTargets = const [];
-      _previewRaw = '';
-      _usedProxy = null;
-      _diag = '准备中…';
-    });
+    appState.setFetching(true);
+    try {
+      setState(() {
+        _fetching = true;
+        _error = null;
+        _payload = null;
+        _hits = 0;
+        _bytes = 0;
+        _costMs = 0;
+        _previewTargets = const [];
+        _previewRaw = '';
+        _usedProxy = null;
+        _diag = '准备中…';
+      });
 
-    final state = context.read<AppState>();
-    final started = DateTime.now();
+      final state = context.read<AppState>();
+      final started = DateTime.now();
 
-    // 按 ordered 顺序轮换 proxyip；每条出口重启一次 Xray，把 proxyip
-    // 替换进 vless 的回源 path，再让原生 WebView 走本地 Xray 端口。
-    // 编排：有 Cookie 先走快路径，失败按状态码分流，必要时回退 WebView：
-    // - 走代理 + 有线路：逐条出口轮换；
-    // - 直连（或没配线路）：只试一次，完全不碰 Xray。
-    final hasLine = _useProxy && state.settings.vlessLinks.isNotEmpty;
-    final candidates = hasLine ? state.orderedProxyPool : const <ProxyIp>[];
-    final attempts = candidates.isEmpty
-        ? const <ProxyIp?>[null] // 没有 proxyip：链接原样，只试一次
-        : candidates.map<ProxyIp?>((item) => item).toList(growable: false);
+      // 按 ordered 顺序轮换 proxyip；每条出口重启一次 Xray，把 proxyip
+      // 替换进 vless 的回源 path，再让原生 WebView 走本地 Xray 端口。
+      // 编排：有 Cookie 先走快路径，失败按状态码分流，必要时回退 WebView：
+      // - 走代理 + 有线路：逐条出口轮换；
+      // - 直连（或没配线路）：只试一次，完全不碰 Xray。
+      final hasLine = _useProxy && state.settings.vlessLinks.isNotEmpty;
+      final candidates = hasLine ? state.orderedProxyPool : const <ProxyIp>[];
+      final attempts = candidates.isEmpty
+          ? const <ProxyIp?>[null] // 没有 proxyip：链接原样，只试一次
+          : candidates.map<ProxyIp?>((item) => item).toList(growable: false);
 
-    String? body;
-    String? lastError;
+      String? body;
+      String? lastError;
 
-    for (final proxy in attempts) {
-      final port = await _startProxy(state, proxy, hasLine);
-      if (hasLine && port == null) {
-        await state.recordProxyResult(proxy, false);
-        continue;
+      for (final proxy in attempts) {
+        final port = await _startProxy(state, proxy, hasLine);
+        if (hasLine && port == null) {
+          await state.recordProxyResult(proxy, false);
+          continue;
+        }
+        if (mounted) {
+          setState(() {
+            _diag = '抓取中…'
+                '${proxy == null ? '' : '（proxyip ${proxy.key}）'}';
+          });
+        }
+        try {
+          body = await fetchCensysSearch(query: query, proxyPort: port);
+          _usedProxy = proxy?.key;
+          await state.recordProxyResult(proxy, true);
+          break;
+        } on CensysNativeException catch (e) {
+          lastError = e.message;
+          final detail = e.details.isEmpty ? '' : '｜$e';
+          // 出口诊断：失败时把「这次到底用哪条线路、回源 path 换成什么」打出来，
+          // 失败日志必须带上状态码/错误类别 —— 否则只能看到「挑战未过」，
+          // 无从判断是出口 IP 脏、path 没换成功、还是 Host/SNI 配错。
+          state.pushLog(
+            '原生抓取失败（proxyip=${proxy?.key ?? "原样"}）：${e.message}$detail',
+          );
+          state.pushLog(censysRouteDiagnosis(state.primaryLine, proxy));
+          await state.recordProxyResult(proxy, false);
+        } finally {
+          await _clearProxy();
+        }
+        if (!mounted) break;
       }
-      if (mounted) {
+
+      if (!mounted) return;
+      if (body == null) {
         setState(() {
-          _diag = '抓取中…'
-              '${proxy == null ? '' : '（proxyip ${proxy.key}）'}';
+          _fetching = false;
+          _error = lastError ?? '没有拿到数据';
+          _diag = '失败';
         });
+        return;
       }
-      try {
-        body = await fetchCensysSearch(query: query, proxyPort: port);
-        _usedProxy = proxy?.key;
-        await state.recordProxyResult(proxy, true);
-        break;
-      } on CensysNativeException catch (e) {
-        lastError = e.message;
-        final detail = e.details.isEmpty ? '' : '｜$e';
-        // 出口诊断：失败时把「这次到底用哪条线路、回源 path 换成什么」打出来，
-        // 失败日志必须带上状态码/错误类别 —— 否则只能看到「挑战未过」，
-        // 无从判断是出口 IP 脏、path 没换成功、还是 Host/SNI 配错。
-        state.pushLog(
-          '原生抓取失败（proxyip=${proxy?.key ?? "原样"}）：${e.message}$detail',
-        );
-        state.pushLog(censysRouteDiagnosis(state.primaryLine, proxy));
-        await state.recordProxyResult(proxy, false);
-      } finally {
-        await _clearProxy();
-      }
-      if (!mounted) break;
-    }
 
-    if (!mounted) return;
-    if (body == null) {
+      var hits = 0;
+      try {
+        final obj = jsonDecode(body) as Map<String, dynamic>;
+        final results = obj['results'] as Map<String, dynamic>?;
+        hits = (results?['total_hits'] as num?)?.toInt() ?? 0;
+      } catch (_) {}
+
+      final targets = _parseHits(body);
+      final rawHead = _head(body, 200);
+
+      await state.saveArchive(body);
+
+      if (!mounted) return;
       setState(() {
         _fetching = false;
-        _error = lastError ?? '没有拿到数据';
-        _diag = '失败';
+        _payload = body;
+        _hits = hits;
+        _bytes = body!.length;
+        _costMs = DateTime.now().difference(started).inMilliseconds;
+        _previewTargets = targets;
+        _previewRaw = rawHead;
+        // 不能写成 `(cond ? 'a' : 'b') '${...}'`：括号表达式之后不能接相邻字符串，
+        // 那会被解析成两个并列的表达式（analyze 报 expected_token）。
+        _diag = '原生 WebView 完成 · ${_useProxy ? '走代理' : '直连'}';
+        if (_usedProxy != null) _diag = '$_diag · proxyip $_usedProxy';
       });
-      return;
+      _toast('获取成功：$hits 条');
+    } finally {
+      // 任何异常（含 _clearProxy 抛错）都要复位，否则首页的「运行中」
+      // 绿点会一直亮着，用户以为还在抓。
+      appState.setFetching(false);
     }
-
-    var hits = 0;
-    try {
-      final obj = jsonDecode(body) as Map<String, dynamic>;
-      final results = obj['results'] as Map<String, dynamic>?;
-      hits = (results?['total_hits'] as num?)?.toInt() ?? 0;
-    } catch (_) {}
-
-    final targets = _parseHits(body);
-    final rawHead = _head(body, 200);
-
-    await state.saveArchive(body);
-
-    if (!mounted) return;
-    setState(() {
-      _fetching = false;
-      _payload = body;
-      _hits = hits;
-      _bytes = body!.length;
-      _costMs = DateTime.now().difference(started).inMilliseconds;
-      _previewTargets = targets;
-      _previewRaw = rawHead;
-      // 不能写成 `(cond ? 'a' : 'b') '${...}'`：括号表达式之后不能接相邻字符串，
-      // 那会被解析成两个并列的表达式（analyze 报 expected_token）。
-      _diag = '原生 WebView 完成 · ${_useProxy ? '走代理' : '直连'}';
-      if (_usedProxy != null) _diag = '$_diag · proxyip $_usedProxy';
-    });
-    _toast('获取成功：$hits 条');
   }
 
   /// 复制 API 链接到剪贴板。
@@ -393,8 +400,7 @@ class _FetchPageState extends State<FetchPage> {
                     const SizedBox(height: 10),
                     Row(
                       children: [
-                        Text('访问方式',
-                            style: theme.textTheme.labelLarge),
+                        Text('访问方式', style: theme.textTheme.labelLarge),
                         const SizedBox(width: 10),
                         Expanded(
                           child: SegmentedButton<bool>(

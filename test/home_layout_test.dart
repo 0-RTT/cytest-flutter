@@ -33,12 +33,12 @@ void main() {
     }
 
     // 工具在窄屏要能滚出来（ListView 懒构建）
-    await tester.scrollUntilVisible(find.text('远程执行'), 200,
+    await tester.scrollUntilVisible(find.text('远程测试'), 200,
         scrollable: find.byType(Scrollable).first);
     expect(find.text('工具'), findsOneWidget);
     expect(find.text('结果'), findsOneWidget);
     expect(find.text('记录'), findsOneWidget);
-    expect(find.text('远程执行'), findsOneWidget);
+    expect(find.text('远程测试'), findsOneWidget);
 
     // 线路配置仍在设置里，首页不该出现
     expect(find.text('线路与代理'), findsNothing);
@@ -56,11 +56,11 @@ void main() {
     await tester.pump();
 
     await tester.scrollUntilVisible(
-      find.text('远程执行'),
+      find.text('远程测试'),
       200,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('远程执行'), findsOneWidget);
+    expect(find.text('远程测试'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

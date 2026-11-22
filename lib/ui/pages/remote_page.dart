@@ -86,6 +86,7 @@ class _RemotePageState extends State<RemotePage> {
 
     setState(() {
       _running = true;
+      state.setRemoteRunning(true);
       _error = null;
       _log.clear();
     });
@@ -141,6 +142,7 @@ class _RemotePageState extends State<RemotePage> {
         await state.stopProxyLine();
         if (mounted) setState(() => _log.add('已关闭本次临时拉起的代理'));
       }
+      state.setRemoteRunning(false);
       if (mounted) setState(() => _running = false);
     }
   }
