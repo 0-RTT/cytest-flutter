@@ -56,7 +56,6 @@ class LogPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final light = theme.brightness == Brightness.light;
     return GlassCard(
       radius: Glass.smallRadius,
       shadow: false,
@@ -135,12 +134,10 @@ class LogPanel extends StatelessWidget {
           Expanded(
             child: Container(
               width: double.infinity,
-              // 日志区：比卡片更深一层的半透明底，滚动的文字在玻璃里
-              // 有自己的「内腔」，不会和卡面文字糊在一起。
-              color: light
-                  ? theme.colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.55)
-                  : Colors.black.withValues(alpha: 0.28),
+              // 日志区不再铺一整块灰：大块灰底在「灰底 + 白卡」的界面里
+              // 像一块补丁。改成与卡面同色的内腔，只靠上方 1px 分割线与
+              // 等宽字体的字色区分层次。
+              color: Colors.transparent,
               child: lines.isEmpty
                   ? Center(
                       child: Text(emptyText,

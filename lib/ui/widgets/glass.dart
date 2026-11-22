@@ -40,7 +40,7 @@ class Glass {
 
   /// 顶栏 / 底栏：透明，让渐变底直接透出来（不做任何合成）。
   static Color barFill(ThemeData theme) =>
-      _light(theme) ? const Color(0xFFF6F7F9) : const Color(0xFF0B0C0E);
+      _light(theme) ? const Color(0xFFFFFFFF) : const Color(0xFF141517);
 
   /// 柔和投影：幅度小、半径大，给「浮起」而不是「贴纸」的感觉。
   /// 不用投影：白卡贴在冷灰底上，1px 浅灰边框已经能分层，
@@ -76,7 +76,7 @@ class GlassBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ColoredBox(
         color: Theme.of(context).brightness == Brightness.light
-            ? const Color(0xFFF4F5F7)
+            ? const Color(0xFFF6F7F9)
             : const Color(0xFF0B0C0E),
         child: child,
       );
@@ -366,10 +366,9 @@ class GlassActionButton extends StatelessWidget {
       child: FilledButton(
         onPressed: onPressed,
         style: FilledButton.styleFrom(
-          backgroundColor: light ? Colors.white : const Color(0xFF2C2C2E),
+          backgroundColor: Colors.transparent,
           foregroundColor: enabled ? ink : ink.withValues(alpha: 0.4),
-          disabledBackgroundColor:
-              light ? Colors.white : const Color(0xFF2C2C2E),
+          disabledBackgroundColor: Colors.transparent,
           side: BorderSide(color: Glass.stroke(theme)),
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 14),

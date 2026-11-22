@@ -261,10 +261,14 @@ class _TestPageState extends State<TestPage> {
                   constraints: const BoxConstraints(minHeight: 52),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  // 与输入框同一套语言：细边白底，不再铺灰块。
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.55),
+                    color: Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: theme.colorScheme.outlineVariant
+                          .withValues(alpha: 0.9),
+                    ),
                   ),
                   child: Row(
                     children: [

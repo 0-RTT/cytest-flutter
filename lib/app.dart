@@ -71,18 +71,18 @@ class CytestApp extends StatelessWidget {
           TargetPlatform.macOS: GlassPageTransitionsBuilder(),
         },
       ),
-      // 输入框：半透填充 + 聚焦时主色描边，去掉默认的重边框。
+      // 输入框：不铺灰底（灰块在灰底+白卡的页面里像补丁），
+      // 只留 1px 细边表示「这里是可输入的内腔」，聚焦时才用主色描边。
       inputDecorationTheme: InputDecorationTheme(
-        filled: true,
+        filled: false,
         isDense: true,
-        fillColor: light ? const Color(0xFFF3F4F6) : const Color(0xFF2C2C2E),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
+          borderSide: BorderSide(color: light ? const Color(0xFFDDE1E6) : const Color(0xFF3A3A3E)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide.none,
+          borderSide: BorderSide(color: light ? const Color(0xFFDDE1E6) : const Color(0xFF3A3A3E)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -116,8 +116,22 @@ class CytestApp extends StatelessWidget {
       ),
       // 按钮：主按钮用实心主色（玻璃世界里唯一的「实体」行动点），
       // 其余按钮弱化背景，让玻璃层级不被按钮色块切碎。
+      // 按钮不再用实心色块：透明底 + 1px 细边 + 深灰字。
+      // 色块在灰底/白卡的界面里像一块「补丁」，透明底则与所在容器自然贴合，
+      // 「可点」靠边框与字重表达，不靠颜色。
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          foregroundColor:
+              light ? const Color(0xFF1F2937) : const Color(0xFFF3F4F6),
+          disabledBackgroundColor: Colors.transparent,
+          disabledForegroundColor:
+              light ? const Color(0xFFB6BCC4) : const Color(0xFF5B6068),
+          side: BorderSide(
+            color: light ? const Color(0xFFDDE1E6) : const Color(0xFF3A3A3E),
+          ),
+          elevation: 0,
+          shadowColor: Colors.transparent,
           shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         ),
