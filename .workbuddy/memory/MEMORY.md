@@ -18,7 +18,13 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - **CI 只监听 `v*` tag**：push main 不出包，要出包必须打 tag。
 - 本机 v2rayN 只有 **SOCKS 10808**（无 HTTP 入站）→ git 必须 `socks5h://`（`h` 让代理解析域名）。
 - 查 CI/GitHub API：`curl --ssl-no-revoke --socks5-hostname 127.0.0.1:10808`（schannel 吊销检查离线会报 `CRYPT_E_REVOCATION_OFFLINE`）。
-- 现在基线 **v1.0.82**；APK 27.8 MB。仓库同时含 Windows 桌面工程（本地构建，CI 只出 APK）。
+- **一个 tag 出两个包**：`build`（APK，ubuntu）+ `build-windows`（windows-latest）+ `release`
+  （`needs: [build, build-windows]`，把两个 artifact 收进同一个 Release）。
+  所以「两个平台一致」是结构性保证：同一 commit、两边各跑一遍 analyze/test，任一边红就发不出去。
+- 现在基线 **v1.0.83**；APK 27.8 MiB / Windows zip 33.2 MiB。
+- 不想发版、只想验 Windows job：`workflow_dispatch`（`{"ref":"main"}`），release 因 `if: refs/tags/v*` 自动跳过。
+- Release 直链可匿名下载：`https://github.com/0-RTT/cytest-flutter/releases/download/v1.0.NN/cytest-windows-x64.zip`
+  （走 API assets 端点要 `Accept: application/octet-stream`，否则拿到 1.8K 的错误页）。
 
 ## 2.1 推送前 / 推送后（2026-11-21 定）
 
@@ -151,6 +157,22 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
    go build -trimpath -ldflags "-s -w" -o ../windows/bin/pipeline.exe pipeline.go`
 - `engine/pipeline.go` 只用标准库，没有 go.mod，必须 `GO111MODULE=off`。
 - 实测：延迟模式 2/2 出数（190ms/1158ms），速度模式能跑（测试 IP 不是代理 → 0 MiB/s，属正常）。
+
+### Windows 进 CI 的三个坑（2026-11-22，三轮返工才绿）
+
+细节见 `.workbuddy/memory/2026-11-22.md`，结论先记这里：
+
+1. **本机 MSVC 14.44 / runner 14.52**：新版把 `<experimental/coroutine>` 从警告升级成
+   硬错误 C2338。`windows/CMakeLists.txt` 在 `include(flutter/generated_plugins.cmake)`
+   **之前** `add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)`
+   —— 必须目录级，target 级传不进插件子工程。
+2. **PowerShell 5.1 读 UTF-8 脚本按 ANSI 解码**：中文注释变乱码后引号配对错位。
+   `shell: powershell` 的步骤里**不要出现非 ASCII 字符**。
+3. **`Compress-Archive` 不适合作产物打包**：条目用 `\` 分隔（unzip 解不开），
+   管道喂 `Get-ChildItem` 还会把一级目录摊平。改用 `tool/zipdir.go`
+   （Go 标准库，`GO111MODULE=off go run`），并断言 zip 内真实路径。
+4. **CI≠本机的不止编译器版本**：`pub get` 在 Windows 宿主会剔除 android 平台实现，
+   lock 文件是 CRLF。测试里读 lock 一律 `readAsLinesSync()` 按行解析，别用带 `\n` 的正则。
 
 ### Windows 抓取：Headless WebView2（2026-11-22 实测通过）
 
