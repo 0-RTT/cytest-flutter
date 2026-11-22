@@ -228,22 +228,22 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: Glass.barFill(theme),
-        border: Border(bottom: Glass.hairline(theme)),
-      ),
-      child: AppBar(
-        backgroundColor: Colors.transparent,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        centerTitle: centerTitle,
-        automaticallyImplyLeading: automaticallyImplyLeading,
-        leading: leading,
-        title: titleWidget ?? Text(title ?? ''),
-        actions: actions,
-      ),
+    // 直接把 AppBar 交给 Scaffold，不要再包一层定高的 Container：
+    // Scaffold 会按 `preferredSize.height + 状态栏高度` 预留空间，而 AppBar 自己
+    // 也会吃一次顶部安全区 —— 外包 Container 等于把这段高度裁掉，
+    // 结果标题被往下推、我们画的那条底线跑到了状态栏下面（看起来像和状态栏粘连）。
+    // 底线改用 AppBar 的 shape，它参与的是 AppBar 自己的布局。
+    return AppBar(
+      backgroundColor: Glass.barFill(theme),
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      shape: Border(bottom: Glass.hairline(theme)),
+      centerTitle: centerTitle,
+      automaticallyImplyLeading: automaticallyImplyLeading,
+      leading: leading,
+      title: titleWidget ?? Text(title ?? ''),
+      actions: actions,
     );
   }
 }
