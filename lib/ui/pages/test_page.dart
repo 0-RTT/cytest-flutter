@@ -155,21 +155,20 @@ class _TestPageState extends State<TestPage> {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
+    // 关键：页面本身不 watch AppState。跑测试时日志每秒刷几次，
+    // 整页 watch 会把 Scaffold / AppBar / 输入卡（含 TextField）一起重建，
+    // 实测这就是 cytest.exe 吃 CPU 的主因（一次重建 ~80ms）。
+    // 现在只有 running 变化（开始/结束）才重建页面，日志区自己订阅。
+    final state = context.read<AppState>();
+    final running = context.select<AppState, bool>((s) => s.running);
     final theme = Theme.of(context);
     final hasTargets = _targets.isNotEmpty;
-
-    _autoScrollLogs();
-
-    final pct = state.progressTotal > 0
-        ? (state.progressCur / state.progressTotal).clamp(0.0, 1.0)
-        : 0.0;
 
     return Scaffold(
       appBar: GlassAppBar(
         title: '本地测试',
         actions: [
-          if (state.running)
+          if (running)
             TextButton(
               onPressed: () => state.cancel(),
               child:
@@ -189,7 +188,7 @@ class _TestPageState extends State<TestPage> {
             // 那三项在日志里本来就逐行可见，占着首屏只会挤压日志。
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
-              child: _inputCard(theme, state, hasTargets),
+              child: _inputCard(theme, state, hasTargets, running),
             ),
             const SizedBox(height: 10),
             // 日志模块：吃掉剩余空间、独立滚动，永远在首屏。
@@ -197,32 +196,11 @@ class _TestPageState extends State<TestPage> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: LogPanel(
-                        key: const ValueKey('test_page_log_card'),
-                        title: '日志',
-                        lines: state.logs,
-                        running: state.running,
-                        scrollController: _logScroll,
-                        onJumpToLatest: _jumpToLatest,
-                        onCopy: _copyLogs,
-                        // 进度条并入日志卡片：进度与明细是同一件事的两种表达。
-                        progress: pct,
-                        progressLabel: state.progressTotal > 0
-                            ? '${state.progressCur} / ${state.progressTotal}'
-                            : null,
-                      ),
-                    ),
-                    if (state.lastError != null) ...[
-                      const SizedBox(height: 8),
-                      Text(state.lastError!,
-                          style: TextStyle(
-                              color: theme.colorScheme.error, fontSize: 12)),
-                    ],
-                  ],
+                child: _RunLogCard(
+                  scrollController: _logScroll,
+                  onJumpToLatest: _jumpToLatest,
+                  onCopy: _copyLogs,
+                  onAutoScroll: _autoScrollLogs,
                 ),
               ),
             ),
@@ -232,7 +210,8 @@ class _TestPageState extends State<TestPage> {
     );
   }
 
-  Widget _inputCard(ThemeData theme, AppState state, bool hasTargets) =>
+  Widget _inputCard(
+    ThemeData theme, AppState state, bool hasTargets, bool running) =>
       GlassCard(
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
         child: Column(
@@ -247,14 +226,14 @@ class _TestPageState extends State<TestPage> {
                   const Spacer(),
                   if (hasTargets)
                     TextButton(
-                      onPressed: state.running ? null : _clearTargets,
+                      onPressed: running ? null : _clearTargets,
                       child: const Text('清空'),
                     ),
                 ],
               ),
               const SizedBox(height: 8),
               InkWell(
-                onTap: state.running ? null : _pickRecord,
+                onTap: running ? null : _pickRecord,
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
                   width: double.infinity,
@@ -321,6 +300,64 @@ class _PickedRecord {
 /// 两类记录共用 [RecordInfo]，靠 [RecordInfo.isArchive] 区分读取方式：
 /// - 存档是 JSON 文件；
 /// - 历史结果要读目录内的 `result.csv` 原文（再交给 [extractTargets]）。
+/// 日志 + 进度：唯一会随「每批日志」重建的子树。
+///
+/// 单独成 widget 的意义：`context.watch` 的作用域只到这一层，
+/// 页面骨架与输入卡不再跟着日志刷新。
+class _RunLogCard extends StatelessWidget {
+  const _RunLogCard({
+    required this.scrollController,
+    required this.onJumpToLatest,
+    required this.onCopy,
+    required this.onAutoScroll,
+  });
+
+  final ScrollController scrollController;
+  final VoidCallback onJumpToLatest;
+  final Future<void> Function() onCopy;
+  final VoidCallback onAutoScroll;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final theme = Theme.of(context);
+    onAutoScroll();
+
+    final pct = state.progressTotal > 0
+        ? (state.progressCur / state.progressTotal).clamp(0.0, 1.0)
+        : 0.0;
+
+    return RepaintBoundary(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: LogPanel(
+              key: const ValueKey('test_page_log_card'),
+              title: '日志',
+              lines: state.logs,
+              running: state.running,
+              scrollController: scrollController,
+              onJumpToLatest: onJumpToLatest,
+              onCopy: onCopy,
+              // 进度条并入日志卡片：进度与明细是同一件事的两种表达。
+              progress: pct,
+              progressLabel: state.progressTotal > 0
+                  ? '${state.progressCur} / ${state.progressTotal}'
+                  : null,
+            ),
+          ),
+          if (state.lastError != null) ...[
+            const SizedBox(height: 8),
+            Text(state.lastError!,
+                style: TextStyle(color: theme.colorScheme.error, fontSize: 12)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _RecordPickerSheet extends StatefulWidget {
   const _RecordPickerSheet();
 
