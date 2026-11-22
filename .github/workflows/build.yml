@@ -505,6 +505,13 @@ jobs:
       - name: Rename & list
         run: |
           set -euo pipefail
+          # download-artifact 落盘的层级随版本变过：即使指定了 name，也可能再套一层
+          # 同名子目录（v1.0.83 就因此 `mv dist/app-release.apk` 直接失败）。
+          # 所以不猜布局：把子目录里的文件全部提到 dist/ 根下，再按文件名断言。
+          find dist -mindepth 2 -type f -exec mv -f -t dist {} +
+          find dist -mindepth 1 -type d -empty -delete
+          [[ -f dist/app-release.apk ]] || { echo "dist 里没有 APK"; find dist -type f; exit 1; }
+          [[ -f dist/cytest-windows-x64.zip ]] || { echo "dist 里没有 Windows 包"; find dist -type f; exit 1; }
           mv dist/app-release.apk dist/cytest-flutter.apk
           ls -lh dist/
 
