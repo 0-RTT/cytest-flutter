@@ -83,6 +83,9 @@ Future<void> _runFetchProbe(String query, AppState state) async {
       proxyPort: port,
       timeout: const Duration(seconds: 40),
     );
+    // 走完界面在抓取成功后的那一步：落存档。这一步跑通，界面里就只剩 setState。
+    await state.saveArchive(body);
+    await trace('archive:saved');
     final head = body.substring(0, body.length > 200 ? 200 : body.length);
     await log.writeAsString('OK len=${body.length} port=$port\nhead=$head\n',
         mode: FileMode.append);
