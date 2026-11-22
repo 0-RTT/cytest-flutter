@@ -293,10 +293,10 @@ jobs:
           cat versions.txt
           { echo '### 本次构建版本'; echo '```'; cat versions.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
-      # 非 tag 构建（PR / 手动触发）仍然留一份 artifact 方便下载排查；
-      # tag 构建直接进下一步发版，省掉上传+下载的往返。
-      - name: Upload APK (non-tag)
-        if: ${{ github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/v') }}
+      # 两平台都要出包，所以 APK 一律上传成 artifact，
+      # 由最后的 release job 统一发（避免两个 job 并发去改同一个 Release）。
+      - name: Upload APK
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v7
         with:
           name: cytest-flutter-apk
@@ -306,21 +306,191 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  # ----------------------------------------------------------------------
+  # Windows 桌面版
+  #
+  # 与 APK 用**同一个 commit、同一份 Dart 代码、同一套 analyze/test**：
+  # 任何改动都会在两边各跑一遍闸门，任何一边红都发不出去，
+  # 这就是「两个平台保持一致」的机制保证。
+  # ----------------------------------------------------------------------
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve toolchain versions
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/cytest-flutter.apk
-          cp versions.txt dist/versions.txt
+          FL=""
+          XR=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.latest }}" == "true" ]]; then
+            FL=$(curl -fsSL --retry 3 --retry-delay 2 https://storage.googleapis.com/flutter_infra_release/releases/releases_windows.json |
+              python -c "import json,sys;d=json.load(sys.stdin);h={r['hash']:r for r in d['releases']};print(h[d['current_release']['stable']]['version'])")
+            XR=$(curl -fsSL --retry 3 --retry-delay 2 -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/XTLS/Xray-core/releases/latest |
+              python -c "import json,sys;print(json.load(sys.stdin)['tag_name'])")
+          fi
+          FL=${FL:-$PINNED_FLUTTER_VERSION}
+          XR=${XR:-$PINNED_XRAY_VERSION}
+          echo "FLUTTER_VERSION=$FL" >> "$GITHUB_ENV"
+          echo "XRAY_VERSION=$XR" >> "$GITHUB_ENV"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.PINNED_GO_VERSION }}
+          cache: false
+
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/Pub/Cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      # 插件 flutter_inappwebview_windows 的 CMake 会调 nuget.exe 拉 WebView2 依赖，
+      # runner 上不一定有；缺了会直接 NUGET-NOTFOUND（exit 9009）。
+      - name: Ensure nuget.exe on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tools"
+          if ! command -v nuget.exe >/dev/null 2>&1; then
+            curl -fsSL -o "$RUNNER_TEMP/tools/nuget.exe" https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
+          fi
+          echo "$RUNNER_TEMP/tools" >> "$GITHUB_PATH"
+
+      - name: Resolve version
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "BUILD_NAME=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_NAME=1.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+          echo "BUILD_NUMBER=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Flutter pub get
+        shell: bash
+        run: flutter pub get
+
+      - name: Analyze
+        shell: bash
+        run: flutter analyze --no-fatal-infos
+
+      - name: Unit tests
+        shell: bash
+        run: flutter test
+
+      # 引擎二进制不进仓库（34MB + 7MB），构建时现取：
+      # xray 用钉死版本，pipeline 由 engine/pipeline.go 编译。
+      - name: Fetch Windows engines
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          CYTEST_HTTP_PROXY: ''
+        run: bash tool/fetch_win_engine.sh all
+
+      - name: Build Windows release
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build windows --release \
+            --build-name="${BUILD_NAME}" --build-number="${BUILD_NUMBER}"
+          ls -lh build/windows/x64/runner/Release/
+
+      - name: Package Windows build
+        if: github.event_name != 'pull_request'
+        shell: powershell
+        run: |
+          # 引擎必须在包里：缺了 xray/pipeline，程序能开但一跑就提示「引擎不可用」。
+          # 这类「包看起来正常、功能全废」的问题只能靠打包前断言拦住。
+          foreach ($n in @('xray.exe','pipeline.exe')) {
+            $p = "build\windows\x64\runner\Release\bin\$n"
+            if (-not (Test-Path $p)) {
+              Write-Error "缺少引擎 $n（tool/fetch_win_engine.sh 没有跑成功？）"
+              exit 1
+            }
+          }
+          $src = 'build\windows\x64\runner\Release'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$src\*" -DestinationPath 'dist\cytest-windows-x64.zip' -Force
+          Get-Item 'dist\cytest-windows-x64.zip' | Select-Object Name, Length
+
+      - name: Record versions (windows)
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "platform: windows-x64"
+            echo "flutter: $(flutter --version | head -1)"
+            echo "xray: ${XRAY_VERSION}"
+            echo "go: $(go version)"
+          } > dist/versions-windows.txt
+          cat dist/versions-windows.txt
+
+      - name: Upload Windows build
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: cytest-windows-x64
+          path: |
+            dist/cytest-windows-x64.zip
+            dist/versions-windows.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  # ----------------------------------------------------------------------
+  # 发版：两个平台的产物在同一个 Release 里，杜绝「一边发了另一边没发」。
+  # ----------------------------------------------------------------------
+  release:
+    name: Publish release (APK + Windows)
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: [build, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v5
+        with:
+          name: cytest-flutter-apk
+          path: dist
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v5
+        with:
+          name: cytest-windows-x64
+          path: dist
+
+      - name: Rename & list
+        run: |
+          set -euo pipefail
+          mv dist/app-release.apk dist/cytest-flutter.apk
           ls -lh dist/
 
       - name: Upload to GitHub Release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/cytest-flutter.apk
+            dist/cytest-windows-x64.zip
             dist/versions.txt
+            dist/versions-windows.txt
           generate_release_notes: true
           fail_on_unmatched_files: true
