@@ -301,12 +301,55 @@ class AppState extends ChangeNotifier {
     if (logs.length > 2000) {
       logs.removeRange(0, logs.length - 2000);
     }
+    _notifySoon();
+  }
+
+  /// UI 通知节流。
+  ///
+  /// 三阶段跑起来后引擎每秒能吐上百行日志，每行一次 `notifyListeners()` 会让
+  /// 整个 App（首页 + 测试页 + 日志面板）全量 rebuild：实测 800 行日志能在
+  /// 1.8s 内只渲染出 **1 帧**（raster 956ms），用户看到的就是「卡死 + CPU 高」。
+  /// 这里把日志与进度合并成 ~10Hz / ~16Hz 的通知，帧率恢复到正常水平。
+  ///
+  /// `flutter test` 下不节流：测试是同步断言的，延迟通知会让用例变成时序赌博。
+  static final bool _coalesce =
+      Platform.environment['FLUTTER_TEST'] != 'true';
+
+  Timer? _notifyTimer;
+
+  void _notifySoon([Duration delay = const Duration(milliseconds: 100)]) {
+    if (!_coalesce) {
+      notifyListeners();
+      return;
+    }
+    _notifyTimer ??= Timer(delay, () {
+      _notifyTimer = null;
+      notifyListeners();
+    });
+  }
+
+  /// 立刻把攒下的通知发出去（一轮跑完、或需要马上看到结果时调用）。
+  void flushNotifications() {
+    final t = _notifyTimer;
+    if (t == null) return;
+    t.cancel();
+    _notifyTimer = null;
     notifyListeners();
   }
 
+  /// 进度变化的通知入口（供测试探针/页面复用）。进度比日志更「值钱」，16Hz。
+  void notifyProgress() => _notifySoon(const Duration(milliseconds: 60));
+
   void clearLogs() {
     logs.clear();
-    notifyListeners();
+    _notifySoon();
+  }
+
+  @override
+  void dispose() {
+    _notifyTimer?.cancel();
+    _notifyTimer = null;
+    super.dispose();
   }
 
   Vless? get primaryLine {
@@ -385,7 +428,7 @@ class AppState extends ChangeNotifier {
     } finally {
       _runToken = null;
       running = false;
-      notifyListeners();
+      flushNotifications();
     }
   }
 
