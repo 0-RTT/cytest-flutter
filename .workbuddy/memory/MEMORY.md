@@ -18,7 +18,7 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - **CI 只监听 `v*` tag**：push main 不出包，要出包必须打 tag。
 - 本机 v2rayN 只有 **SOCKS 10808**（无 HTTP 入站）→ git 必须 `socks5h://`（`h` 让代理解析域名）。
 - 查 CI/GitHub API：`curl --ssl-no-revoke --socks5-hostname 127.0.0.1:10808`（schannel 吊销检查离线会报 `CRYPT_E_REVOCATION_OFFLINE`）。
-- 现在基线 **v1.0.48**；APK 28.6 MB（27.31 MiB）。
+- 现在基线 **v1.0.82**；APK 27.8 MB。仓库同时含 Windows 桌面工程（本地构建，CI 只出 APK）。
 
 ## 2.1 推送前 / 推送后（2026-11-21 定）
 
