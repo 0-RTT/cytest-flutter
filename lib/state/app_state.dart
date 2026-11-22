@@ -297,6 +297,9 @@ class AppState extends ChangeNotifier {
   }
 
   void pushLog(String line) {
+    _diagSw
+      ..reset()
+      ..start();
     logs.add(line);
     if (logs.length > 2000) {
       logs.removeRange(0, logs.length - 2000);
@@ -317,11 +320,20 @@ class AppState extends ChangeNotifier {
 
   Timer? _notifyTimer;
 
+  /// 诊断计数（性能排查用）。
+  int notifyCount = 0;
+  /// 诊断：通知派发与日志入队各自耗掉多少微秒。
+  int usInNotify = 0;
+  int usInPushLog = 0;
+  final Stopwatch _diagSw = Stopwatch();
+
   /// 诊断开关：置真后所有「合并通知」直接丢弃（探针用来区分
   /// 「UI 刷新太贵」与「别的什么在吃 CPU」）。正常运行时永远为假。
   bool suppressUiNotifications = false;
 
-  void _notifySoon([Duration delay = const Duration(milliseconds: 200)]) {
+  void _notifySoon([
+    Duration delay = const Duration(milliseconds: 1000),
+  ]) {
     if (suppressUiNotifications) return;
     if (!_coalesce) {
       notifyListeners();
@@ -329,7 +341,13 @@ class AppState extends ChangeNotifier {
     }
     _notifyTimer ??= Timer(delay, () {
       _notifyTimer = null;
+      notifyCount++;
+      _diagSw
+        ..reset()
+        ..start();
       notifyListeners();
+      _diagSw.stop();
+      usInNotify += _diagSw.elapsedMicroseconds;
     });
   }
 
@@ -343,7 +361,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// 进度变化的通知入口（供测试探针/页面复用）。进度比日志更「值钱」，16Hz。
-  void notifyProgress() => _notifySoon(const Duration(milliseconds: 120));
+  void notifyProgress() => _notifySoon(const Duration(milliseconds: 500));
 
   void clearLogs() {
     logs.clear();
@@ -422,7 +440,7 @@ class AppState extends ChangeNotifier {
           progressStage = stage;
           // 与日志同一套节流：这里原来每行一次 notifyListeners()，
           // 是「跑测试时 CPU 高」的第二个来源。
-          _notifySoon(const Duration(milliseconds: 120));
+          _notifySoon(const Duration(milliseconds: 500));
         },
       );
       rows = out.rows;

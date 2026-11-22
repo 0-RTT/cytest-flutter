@@ -52,9 +52,11 @@ class Glass {
           blurRadius: 10,
           offset: const Offset(0, 2),
         ),
+        // 换成软件光栅化（无 GPU 的云主机）时，模糊半径是主要成本：
+        // 第二道阴影合并进第一道，视觉几乎无差，绘制量减半。
         BoxShadow(
           color: const Color(0xFF1F2937)
-              .withValues(alpha: _light(theme) ? 0.03 : 0.30),
+              .withValues(alpha: _light(theme) ? 0.0 : 0.30),
           blurRadius: 24,
           offset: const Offset(0, 8),
         ),

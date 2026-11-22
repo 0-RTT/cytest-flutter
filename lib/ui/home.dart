@@ -38,6 +38,22 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
+  /// 设置页是否被访问过。
+  ///
+  /// IndexedStack 会把**所有**子页都 build 一次，而 SettingsPage 是
+  /// `watch<AppState>()` 的重页面 —— 只要它进过树，跑测试时每一批日志
+  /// 都会把它整页重建一遍（几十个输入框/下拉）。实测这就是 cytest.exe
+  /// 占用高的主因：120 目标三阶段，UI 进程 12.3s CPU，静默后只有 2.7s。
+  /// 惰性创建后，没点过「设置」就不会有这棵子树。
+  bool _settingsVisited = false;
+
+  void _select(int i) {
+    setState(() {
+      _index = i;
+      if (i == 1) _settingsVisited = true;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return GlassBackground(
@@ -45,14 +61,15 @@ class _HomeShellState extends State<HomeShell> {
         backgroundColor: Colors.transparent,
         body: IndexedStack(
           index: _index,
-          children: const [
-            _HomeTab(),
-            SettingsPage(),
+          children: [
+            const _HomeTab(),
+            // 没进过设置页就别建它（见 _settingsVisited 的注释）。
+            if (_settingsVisited) const SettingsPage() else const SizedBox.shrink(),
           ],
         ),
         bottomNavigationBar: _BottomNav(
           index: _index,
-          onChanged: (i) => setState(() => _index = i),
+          onChanged: _select,
         ),
       ),
     );
@@ -123,11 +140,15 @@ class _BottomNav extends StatelessWidget {
 }
 
 /// 首页：标题栏 + 主流程 2+1 + 工具双列。
+/// 诊断计数（性能排查用）。
+int homeBuilds = 0;
+
 class _HomeTab extends StatelessWidget {
   const _HomeTab();
 
   @override
   Widget build(BuildContext context) {
+    homeBuilds++;
     // 只订阅首页真正会变的几个值：
     // 跑测试时日志每秒几十次变化，`watch<AppState>()` 会让整个首页跟着重建
     // （实测一次 notify ≈ 80ms，CPU 就是这么吃掉的）。record 是值比较，

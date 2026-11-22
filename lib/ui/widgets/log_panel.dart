@@ -14,6 +14,9 @@ import 'glass.dart';
 ///
 /// 材质：磨砂玻璃（半透明 + 高光描边），**不开** BackdropFilter——
 /// 日志是高频重绘表面，实时模糊是白烧电。
+/// 诊断计数（性能排查用，正式行为不受影响）。
+int logPanelBuilds = 0;
+
 class LogPanel extends StatelessWidget {
   const LogPanel({
     super.key,
@@ -55,6 +58,7 @@ class LogPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    logPanelBuilds++;
     final theme = Theme.of(context);
     return GlassCard(
       radius: Glass.smallRadius,
@@ -156,9 +160,10 @@ class LogPanel extends StatelessWidget {
                         return Text(
                           line,
                           style: TextStyle(
-                            fontFamily: 'monospace',
-                            // monospace 里没有中文字形，必须回落系统字体
-                            fontFamilyFallback: const ['sans-serif'],
+                            // 不用 monospace：它没有中文字形，每行都要走一次
+                            // 「西文等宽 + 系统中文」的字体回退，软件光栅化下
+                            // 重新整形很贵。MiSans 自带 ASCII 与中文，一次成型。
+                            fontFamily: 'MiSans',
                             fontSize: 11.5,
                             color: line.contains('✗') || line.contains('失败')
                                 ? theme.colorScheme.error

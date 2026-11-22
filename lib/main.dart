@@ -9,6 +9,8 @@ import 'app.dart';
 import 'core/bin.dart';
 import 'data/censys_native.dart';
 import 'data/censys_windows.dart';
+import 'ui/home.dart' show homeBuilds;
+import 'ui/widgets/log_panel.dart';
 import 'state/app_state.dart';
 
 void main() {
@@ -97,14 +99,18 @@ Future<void> _runFetchProbe(String query, AppState state) async {
         await trace('silent:on');
       }
       final sw = Stopwatch()..start();
-      final ok = await state.runLocal(mode: 'latency', input: input);
+      final mode = Platform.environment['CYTEST_PROBE_MODE'] ?? 'latency';
+      await trace('local:mode=$mode');
+      final ok = await state.runLocal(mode: mode, input: input);
       sw.stop();
       await trace('local:done ok=$ok rows=${state.rows.length} 耗时=${sw.elapsedMilliseconds}ms');
       for (final row in state.rows.take(3)) {
         await trace('row ${row['IP']}:${row['Port']} '
             'latency=${row['Latency (ms)']} reason=${row['Reason']}');
       }
-      await trace('logs=${state.logs.length}');
+      await trace('logs=${state.logs.length} LogPanel.build=${logPanelBuilds} '
+          'home.build=$homeBuilds notify=${state.notifyCount} '
+          'usInNotify=${state.usInNotify} usInPushLog=${state.usInPushLog}');
       return;
     }
 
