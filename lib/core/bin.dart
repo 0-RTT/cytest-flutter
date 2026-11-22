@@ -16,6 +16,7 @@ class Bins {
   /// 返回可执行的二进制路径。
   /// [name] 为 'pipeline' 或 'xray'。
   static Future<String> path(String name) async {
+    if (Platform.isWindows) return _windowsPath(name);
     if (Platform.isAndroid) {
       _nativeDir ??= await _channel.invokeMethod<String>('nativeLibraryDir');
       final dir = _nativeDir;
@@ -41,6 +42,29 @@ class Bins {
       await Process.run('chmod', ['755', file.path]);
     }
     return file.path;
+  }
+
+  /// Windows：直接找 `name.exe`，**不从 assets 释放、也不 chmod**。
+  ///
+  /// 顺序：程序目录下的 `bin/`（安装包内置，最稳，杀软对 APPDATA 里的自发
+  /// 可执行文件很敏感）→ `%APPDATA%\cytestin\`（用户手动放置）。
+  static Future<String> _windowsPath(String name) async {
+    final candidates = <String>[];
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    candidates.add('$exeDir\bin\$name.exe');
+
+    final appData = Platform.environment['APPDATA'];
+    if (appData != null && appData.isNotEmpty) {
+      candidates.add('$appData\cytest\bin\$name.exe');
+    }
+
+    for (final path in candidates) {
+      if (await File(path).exists()) return path;
+    }
+    throw Exception(
+      'Windows 版缺少 $name.exe（应放在程序目录的 bin/ 下，'
+      '或 %APPDATA%\cytest\bin\）',
+    );
   }
 
   /// 远程执行用的 Linux 版引擎仍走 assets（不上 jniLibs，避免三份二进制）。
