@@ -456,6 +456,31 @@ jobs:
           done
           ls -lh dist/cytest-windows-x64.zip
 
+      # 安装包：Inno Setup 编译 tool/cytest.iss。
+      # 版本必须 >= 6.5：tool/innosetup/ChineseSimplified.isl 是 6.5.0+ 的消息表，
+      # 旧编译器会报一堆「message not found」。所以固定装 6.7.4，不吃 runner 的预装版本
+      # （预装版本不可控，某天 runner 镜像升级就可能把构建打红）。
+      - name: Build Windows installer
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/innosetup.exe" \
+            https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe
+          MSYS_NO_PATHCONV=1 "$RUNNER_TEMP/innosetup.exe" \
+            /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /SP-
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          [[ -x "$ISCC" ]] || { echo "ISCC 安装失败: $ISCC"; exit 1; }
+          # Git Bash 会把 /DAppVersion=... 当成路径转换，报「不能指定多个脚本文件」，
+          # 必须关掉路径转换（本地编译时同样踩过）。
+          MSYS_NO_PATHCONV=1 "$ISCC" /DAppVersion="${BUILD_NAME}" tool/cytest.iss
+          # 体积断言：正常 25MB 左右。太小说明 [Files] 没把 data\ / bin\ 打进去，
+          # 这种「装完能开但缺引擎」的包必须在这里拦住。
+          size=$(stat -c%s dist/cytest-windows-x64-setup.exe)
+          echo "setup.exe = $size 字节"
+          [[ $size -gt 15000000 ]] || { echo "安装包异常小（$size），[Files] 没生效？"; exit 1; }
+          ls -lh dist/cytest-windows-x64-setup.exe
+
       - name: Record versions (windows)
         if: github.event_name != 'pull_request'
         shell: bash
@@ -475,6 +500,7 @@ jobs:
         with:
           name: cytest-windows-x64
           path: |
+            dist/cytest-windows-x64-setup.exe
             dist/cytest-windows-x64.zip
             dist/versions-windows.txt
           if-no-files-found: error
@@ -511,7 +537,8 @@ jobs:
           find dist -mindepth 2 -type f -exec mv -f -t dist {} +
           find dist -mindepth 1 -type d -empty -delete
           [[ -f dist/app-release.apk ]] || { echo "dist 里没有 APK"; find dist -type f; exit 1; }
-          [[ -f dist/cytest-windows-x64.zip ]] || { echo "dist 里没有 Windows 包"; find dist -type f; exit 1; }
+          [[ -f dist/cytest-windows-x64-setup.exe ]] || { echo "dist 里没有安装包"; find dist -type f; exit 1; }
+          [[ -f dist/cytest-windows-x64.zip ]] || { echo "dist 里没有绿色版 zip"; find dist -type f; exit 1; }
           mv dist/app-release.apk dist/cytest-flutter.apk
           ls -lh dist/
 
@@ -520,6 +547,7 @@ jobs:
         with:
           files: |
             dist/cytest-flutter.apk
+            dist/cytest-windows-x64-setup.exe
             dist/cytest-windows-x64.zip
             dist/versions.txt
             dist/versions-windows.txt
