@@ -21,7 +21,7 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
 - **一个 tag 出两个包**：`build`（APK，ubuntu）+ `build-windows`（windows-latest）+ `release`
   （`needs: [build, build-windows]`，把两个 artifact 收进同一个 Release）。
   所以「两个平台一致」是结构性保证：同一 commit、两边各跑一遍 analyze/test，任一边红就发不出去。
-- 现在基线 **v1.0.83**；APK 27.8 MiB / Windows zip 33.2 MiB。
+- 现在基线 **v1.0.84**；APK 27.8 MiB / Windows 安装包 24.4 MiB / 绿色版 zip 33.2 MiB。
 - 不想发版、只想验 Windows job：`workflow_dispatch`（`{"ref":"main"}`），release 因 `if: refs/tags/v*` 自动跳过。
 - Release 直链可匿名下载：`https://github.com/0-RTT/cytest-flutter/releases/download/v1.0.NN/cytest-windows-x64.zip`
   （走 API assets 端点要 `Accept: application/octet-stream`，否则拿到 1.8K 的错误页）。
@@ -173,6 +173,17 @@ git tag -a v1.0.NN -m "..." && git -c http.proxy=socks5h://127.0.0.1:10808 push 
    （Go 标准库，`GO111MODULE=off go run`），并断言 zip 内真实路径。
 4. **CI≠本机的不止编译器版本**：`pub get` 在 Windows 宿主会剔除 android 平台实现，
    lock 文件是 CRLF。测试里读 lock 一律 `readAsLinesSync()` 按行解析，别用带 `\n` 的正则。
+
+### Windows 安装包（2026-11-28 起）
+
+- `tool/cytest.iss`（Inno Setup 6.5+，**UTF-8 with BOM**）+ `tool/innosetup/ChineseSimplified.isl`
+  （Inno 不自带中文语言包）。CI 固定下 6.7.4 编译，不用 runner 预装版本。
+- 每用户安装 `%LOCALAPPDATA%\Programs\cytest`，`PrivilegesRequired=lowest` 不弹 UAC；
+  桌面快捷方式默认创建（`checkedonce` 在静默安装下不生效，所以不写 flags）。
+- 绿色版 zip 一起发，两个产物都在同一个 Release。
+- **`ISCC` 调用必须 `MSYS_NO_PATHCONV=1`**：Git Bash 会把 `/DAppVersion=...` 当路径转换，
+  报「不能指定多个脚本文件」。
+- 未签名 → 首次安装弹 SmartScreen，需点「更多信息 → 仍要运行」。
 
 ### Windows 抓取：Headless WebView2（2026-11-22 实测通过）
 
